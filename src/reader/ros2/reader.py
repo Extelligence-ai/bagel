@@ -1,5 +1,6 @@
 """Base class for ROS2 bag readers."""
 
+import logging
 import pathlib
 from collections.abc import Iterator
 from typing import Any
@@ -103,6 +104,14 @@ class Ros2Reader(reader.Reader):
             for topic, type_name in self.type_names.items()
             if type_name == LOGGING_MESSAGE_TYPE_NAME
         ]
+
+        if not topics:
+            logging.warning(
+                "No logging messages found since %s topic type is not present.",
+                LOGGING_MESSAGE_TYPE_NAME,
+            )
+            return
+
         reader.set_filter(rosbag2_py.StorageFilter(topics))
 
         while reader.has_next():
