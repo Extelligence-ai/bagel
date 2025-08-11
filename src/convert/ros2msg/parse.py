@@ -346,7 +346,7 @@ def struct(lines: list[lark.tree.Tree]) -> definition.Struct:
     return definition.Struct(type_=type_name, fields=fields)
 
 
-def fully_qualified_type_name(
+def fully_qualified_type_name(  # noqa: PLR0911
     type_name: str, namespace: str | None, dependencies: dict[str, definition.Struct]
 ) -> str:
     """Return the fully qualified type name for a given short type name."""
@@ -361,6 +361,12 @@ def fully_qualified_type_name(
         and "builtin_interfaces/msg/Duration" in dependencies
     ):
         return "builtin_interfaces/msg/Duration"
+    elif (
+        "/" in type_name
+        and len(type_name.split("/")) == 2  # noqa: PLR2004
+        and f"{type_name.split('/')[0]}/msg/{type_name.split('/')[1]}" in dependencies
+    ):
+        return f"{type_name.split('/')[0]}/msg/{type_name.split('/')[1]}"
     elif namespace and f"{namespace}/{type_name}" in dependencies:
         return f"{namespace}/{type_name}"
     elif struct_type := next((t for t in dependencies if t.endswith(f"/{type_name}")), None):
