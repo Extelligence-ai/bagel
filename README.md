@@ -120,7 +120,6 @@ V1.5
 -Easy Model Integration
 -Topic Frequency status 
 -MCP Troubleshooting toolkit 
-
 V2
 -Foxglove Integration
 -Rerun Integration 
