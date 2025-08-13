@@ -41,6 +41,7 @@ Bagel works with a wide range of common robotics and sensor log formats out of t
 | ✅ **ROS 2** (`.mcap`, `.db3`) |
 | ✅ **ROS 1** (`.bag`)          |
 | ✅ **PX4** (`.ulg`)            |
+| ✅ **ArduPilot** (`.bin`)      |
 
 Don't forget to join our [Discord server](https://discord.gg/QJDwuDGJsH)!
 
@@ -72,9 +73,10 @@ preferred LLMs with Bagel.
 
 ### Tutorials
 
-- [Claude Code Tutorial with a PX4 ULog](./doc/tutorials/mcp/0_claude_code_px4.ipynb)
-- [Gemini CLI Tutorial with a ROS2 Bag](./doc/tutorials/mcp/1_gemini_cli_ros2.ipynb)
-- [Cursor Tutorial with a PX4 ULog](./doc/tutorials/mcp/2_cursor_px4.ipynb)
+- [Claude Code, PX4 ULog](./doc/tutorials/mcp/0_claude_code_px4.ipynb)
+- [Gemini CLI, ROS2 Bag](./doc/tutorials/mcp/1_gemini_cli_ros2.ipynb)
+- [Cursor, PX4 ULog](./doc/tutorials/mcp/2_cursor_px4.ipynb)
+- [Claude Code, ArduPilot Dataflash](./doc/tutorials/mcp/3_claude_code_ardupilot.ipynb)
 - [Build a Data Pipeline from a PX4 ULog](./doc/tutorials/pipelines/0_basics.ipynb)
 - [Read Topic Messages from a ROS2 Bag](./doc/tutorials/readers/1_read_by_topic.ipynb)
 
@@ -104,32 +106,42 @@ Build and start the Bagel MCP server in a container with this command.
 docker compose run --build --service-ports ros2-kilted uv run main.py up mcp
 ```
 
-#### Roadmap
+## Roadmap
 
-If there's something you have feedback on, or something you'd like to see let us know!
+If there's something you have feedback on, or something you'd like to see, file a
+[feature request](https://github.com/Extelligence-ai/bagel/issues) and let us know!
 
-These are grouped into " Versions" for us to keep track, features will be released regularly. We'll update this readme to indicate which features have shipped. 
+Features are organized into **Versions** for easier tracking. New features will be released regularly, and this README.md will be updated to show which ones have shipped. Strikethrough text indicates completed features.
 
+#### V1
 
+- Computer Vision (CV) Module
+  - Video Language Model
+  - Anomaly detection
+  - Similarity search
+- More Robotics Formats
+  - ~~[Ardupilot](https://ardupilot.org/)~~
+  - [Betaflight](https://betaflight.com/)
+- More LLMs
+  - ~~Cursor~~
+  - OpenAI
+  - Llama
+  - Copilot
 
-V1  
+#### V1.5
 
-- CV Module - Computer vision module to let you search for and detect anomalies in video. 
-- Ardupilot Support 
-- Betaflight Support  
-- Open AI Support  
-- Llama Support  
+- Troubleshooting Toolkit
+- Better User Experience
+  - Message pagination
+  - MCP resources
+  - DSL for querying nested topic messages
+- Easy Model Integration
 
-V1.5 
+#### V2
 
-- Easy Model Integration  
-- Topic Frequency Status 
-- MCP Troubleshooting Toolkit 
-
-V2  
-
-- Foxglove Integration  
-- Rerun Integration 
-- CLI Support 
-- PyPi Support 
-- VSCode Support  
+- Platform Integration
+  - Foxglove
+  - Rerun
+- Better User Experience
+  - Pip install and PyPI package
+  - `bagel` CLI
