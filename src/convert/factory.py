@@ -30,5 +30,10 @@ def make_converter(robolog_path: str | pathlib.Path, type_name: str) -> converte
 
             return px4ulog.MessageConverter(type_name, schema_string)
 
+        case schema.Encoding.ARDUPILOTBIN:
+            from src.convert import ardupilotbin
+
+            return ardupilotbin.MessageConverter(type_name, schema_string)
+
         case encoding:
             raise schema.UnsupportedSchemaEncodingError(encoding)

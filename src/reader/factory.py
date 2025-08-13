@@ -36,6 +36,11 @@ def make_topic_message_reader(
 
             return topic.TopicMessageReader(robolog_path, use_cache=use_cache)
 
+        case robolog.RobologType.ARDUPILOT_BIN_FILE:
+            from src.reader.ardupilot.bin import topic
+
+            return topic.TopicMessageReader(robolog_path, use_cache=use_cache)
+
         case _:
             raise robolog.UnsupportedRobologTypeError(robolog_path)
 

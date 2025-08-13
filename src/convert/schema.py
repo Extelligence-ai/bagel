@@ -25,6 +25,7 @@ class Encoding(Enum):
     ROS2MSG = "ros2msg"  # .db3, .mcap
     PROTOBUF = "protobuf"  # .mcap
     PX4ULOG = "px4ulog"  # .ulg
+    ARDUPILOTBIN = "ardupilotbin"  # .bin
 
 
 class Ros2Schema(Protocol):
@@ -140,6 +141,22 @@ def _px4ulog_strings_from_ulg(robolog_path: str | pathlib.Path) -> dict[str, str
     return schemas
 
 
+@functools.lru_cache(maxsize=128)
+def _ardupilot_strings_from_bin(robolog_path: str | pathlib.Path) -> dict[str, str]:
+    """Return a dictionary of message type names to ArduPilot format strings from a .bin file."""
+    from pymavlink import DFReader
+
+    df_reader = DFReader.DFReader_binary(str(robolog_path))
+    schemas = {}
+    while msg := df_reader.recv_match(type="FMT"):
+        schema = {
+            field_name: field_type
+            for field_name, field_type in zip(msg.Columns.split(","), msg.Format, strict=True)
+        }
+        schemas[msg.Name] = yaml.dump(schema)
+    return schemas
+
+
 def schema_encoding(robolog_path: str | pathlib.Path, type_name: str) -> Encoding:
     """Return the schema encoding of the given message type in the robolog."""
     path = pathlib.Path(robolog_path).absolute()
@@ -163,11 +180,16 @@ def schema_encoding(robolog_path: str | pathlib.Path, type_name: str) -> Encodin
         case robolog.RobologType.PX4_ULG_FILE:
             return Encoding.PX4ULOG
 
+        case robolog.RobologType.ARDUPILOT_BIN_FILE:
+            return Encoding.ARDUPILOTBIN
+
         case _:
             raise robolog.UnsupportedRobologTypeError(robolog_path)
 
 
-def schema_string(robolog_path: str | pathlib.Path, type_name: str) -> str | bytes:
+def schema_string(  # noqa: C901, PLR0912
+    robolog_path: str | pathlib.Path, type_name: str
+) -> str | bytes:
     """Return the schema string/bytes of the given message type in the robolog."""
     path = pathlib.Path(robolog_path).absolute()
 
@@ -198,6 +220,12 @@ def schema_string(robolog_path: str | pathlib.Path, type_name: str) -> str | byt
         case robolog.RobologType.PX4_ULG_FILE:
             try:
                 return _px4ulog_strings_from_ulg(path)[type_name]
+            except KeyError as err:
+                raise SchemaNotFoundError(type_name) from err
+
+        case robolog.RobologType.ARDUPILOT_BIN_FILE:
+            try:
+                return _ardupilot_strings_from_bin(path)[type_name]
             except KeyError as err:
                 raise SchemaNotFoundError(type_name) from err
 

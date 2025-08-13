@@ -26,10 +26,11 @@ class RobologType(Enum):
     ROS2_DB3_DIR = "ros2_db3_dir"  # contain metadata.yaml and .db3 files
     ROS2_MCAP_DIR = "ros2_mcap_dir"  # contain metadata.yaml and .mcap files
     PX4_ULG_FILE = "px4_ulg_file"
+    ARDUPILOT_BIN_FILE = "ardupilot_bin_file"  # ArduPilot Dataflash binary log file
 
 
 @functools.lru_cache(maxsize=128)
-def detect_robolog_type(robolog_path: str | pathlib.Path) -> RobologType:  # noqa: C901
+def detect_robolog_type(robolog_path: str | pathlib.Path) -> RobologType:  # noqa: C901, PLR0911
     """Detect the robolog type by analyzing its path and content."""
     path = pathlib.Path(robolog_path).absolute()
 
@@ -46,6 +47,8 @@ def detect_robolog_type(robolog_path: str | pathlib.Path) -> RobologType:  # noq
                 return RobologType.ROS2_MCAP_FILE
             case ".ulg":
                 return RobologType.PX4_ULG_FILE
+            case ".bin":
+                return RobologType.ARDUPILOT_BIN_FILE
 
     elif path.is_dir() and (path / "metadata.yaml").exists():  # ROS2 bag directory
         metadata = yaml.safe_load((path / "metadata.yaml").read_text())
