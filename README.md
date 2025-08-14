@@ -43,7 +43,7 @@ Bagel works with a wide range of common robotics and sensor log formats out of t
 | ✅ **PX4** (`.ulg`)            |
 | ✅ **ArduPilot** (`.bin`)      |
 
-Don't forget to join our [Discord server](https://discord.gg/QJDwuDGJsH)!
+Don't forget to join our [Discord server](https://discord.gg/QJDwuDGJsH)! (We messed up our Discord invite before. This link should add you as a member automatically.)
 
 ## Quickstart
 
