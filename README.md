@@ -9,9 +9,9 @@
   <a href="https://github.com/shouhengyi/bagel/blob/stage/LICENSE">
     <img alt="Apache" src="https://img.shields.io/badge/license-Apache-blue.svg">
   </a>
-  <a href="https://discord.gg/QJDwuDGJsH">
+<!--   <a href="https://discord.gg/QJDwuDGJsH">
     <img alt="Rerun Discord" src="https://img.shields.io/discord/1392632504908906506?label=Discord">
-  </a>
+  </a> -->
 </h1>
 
 ---
@@ -43,7 +43,7 @@ Bagel works with a wide range of common robotics and sensor log formats out of t
 | ✅ **PX4** (`.ulg`)            |
 | ✅ **ArduPilot** (`.bin`)      |
 
-Don't forget to join our [Discord server](https://discord.gg/QJDwuDGJsH)!
+<!-- Don't forget to join our [Discord server](https://discord.gg/QJDwuDGJsH)! -->
 
 ## Quickstart
 
