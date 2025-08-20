@@ -170,6 +170,23 @@ def answer_prompt(robolog_path: str, prompt: str) -> str:
         "./src/agent/query/messages.poml",
         context={"robolog_path": robolog_path, "prompt": prompt},
     )
+    
+@server.tool(title="Answer user's text prompt about latency of the topic")
+def calculate_latency(robolog_path: str, topic: str) -> str:
+    """Answer user's text prompt about latency of the topic
+
+    Args:
+        robolog_path (str): Path to the robolog.
+        topic (str): The topic the user is interested in.
+
+    Returns:
+        str: The answer to the user's prompt.
+
+    """
+    return poml(
+        "./src/agent/diagnostics/latency.poml",
+        context={"robolog_path": robolog_path, "topic": topic},
+    )
 
 
 if __name__ == "__main__":
