@@ -1,5 +1,9 @@
 import pathlib
 
+import pytest
+
+pytest.importorskip("genpy")
+
 from settings import settings
 from src.reader.ros1.bag.frequency import TopicFrequencyReader
 

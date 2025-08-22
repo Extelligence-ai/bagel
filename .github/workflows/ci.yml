@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - stage
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  tests:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+          pip install pytest
+      - name: Run tests
+        run: pytest
+
+  docker-build:
+    name: Build and Push Docker Images
+    needs: tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # ROS 2
+          - name: ros2-kilted
+            dockerfile: docker/Dockerfile.ros2
+            args: --build-arg ROS_DISTRO=kilted
+          - name: ros2-jazzy
+            dockerfile: docker/Dockerfile.ros2
+            args: --build-arg ROS_DISTRO=jazzy
+          - name: ros2-iron
+            dockerfile: docker/Dockerfile.ros2
+            args: --build-arg ROS_DISTRO=iron
+          - name: ros2-humble
+            dockerfile: docker/Dockerfile.ros2
+            args: --build-arg ROS_DISTRO=humble
+          # ROS 1 
+          - name: ros1-noetic
+            dockerfile: docker/Dockerfile.ros1
+            args: ""
+          # Others
+          - name: px4
+            dockerfile: docker/Dockerfile.px4
+            args: ""
+          - name: ardupilot
+            dockerfile: docker/Dockerfile.ardupilot
+            args: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push ${{ matrix.name }}
+        run: |
+          IMAGE_ID=ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
+          TAG=sha-${{ github.sha }}
+
+          # Build the image
+          docker build \
+            -f ${{ matrix.dockerfile }} \
+            -t $IMAGE_ID:$TAG \
+            -t $IMAGE_ID:latest \
+            ${{ matrix.args }} \
+            . \
+            --build-arg UV_VERSION=0.8.0 \
+            --build-arg DEV_MODE=false \
+            --build-arg BAGEL_LOCAL_HOST=0.0.0.0 \
+            --build-arg BAGEL_WEBAPP_LOCAL_PORT=8501 \
+            --build-arg BAGEL_MCP_LOCAL_PORT=8000
+
+          # Push both tags
+          docker push $IMAGE_ID:$TAG
+          docker push $IMAGE_ID:latest

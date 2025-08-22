@@ -1,5 +1,9 @@
 import pathlib
 
+import pytest
+
+pytest.importorskip("rosbag2_py")
+
 from settings import settings
 from src.reader.ros2.db3.frequency import TopicFrequencyReader
 
