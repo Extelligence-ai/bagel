@@ -10,7 +10,7 @@ on:
       - reopened
 
 jobs:
-  test:
+  tests:
     name: Run Unit Tests with (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
