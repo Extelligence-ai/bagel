@@ -1,4 +1,4 @@
-name: CI
+name: Run Unit Tests and Build Docker Images on Feature Branch
 
 on:
   pull_request:
@@ -11,20 +11,36 @@ on:
 
 jobs:
   tests:
-    name: Run Unit Tests
+    name: Run Unit Tests with (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Install dependencies
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+
+      - name: Install project with uv
         run: |
-          python -m pip install --upgrade pip
-          pip install .
-          pip install pytest
+          uv --version
+          # Create & sync local venv from pyproject (uses .venv by default)
+          uv sync --all-extras
+
       - name: Run tests
-        run: pytest
+        run: |
+          # Use the synced venv to run pytest
+          uv run -m pytest -q
 
   docker-build:
     name: Build and Push Docker Images
@@ -50,7 +66,7 @@ jobs:
           - name: ros1-noetic
             dockerfile: docker/Dockerfile.ros1
             args: ""
-          # Others
+          # Drones
           - name: px4
             dockerfile: docker/Dockerfile.px4
             args: ""
