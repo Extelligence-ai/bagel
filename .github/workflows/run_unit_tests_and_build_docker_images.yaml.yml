@@ -30,7 +30,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-
       - name: Install project with uv
         run: |
           uv --version
@@ -89,6 +88,8 @@ jobs:
       - name: Build and Push ${{ matrix.name }}
         run: |
           IMAGE_ID=ghcr.io/${{ github.repository_owner }}/${{ matrix.name }}
+          # Convert to lowercase for Docker compatibility
+          IMAGE_ID=$(echo $IMAGE_ID | tr '[:upper:]' '[:lower:]')
           TAG=sha-${{ github.sha }}
 
           # Build the image
