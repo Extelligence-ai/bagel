@@ -15,7 +15,6 @@
 </h1>
 
 ---
-
 Bagel lets you **chat with your robotics and drone data**, just as you use ChatGPT.
 
 For example, you can ask Bagel to check a drone's IMU data for hard landings:
@@ -26,10 +25,12 @@ For example, you can ask Bagel to check a drone's IMU data for hard landings:
   </picture>
 </p>
 
-**Don't trust LLM math?** Here is our solution.
+You can also ask bagel **to do calculations on your topic data** and get straightforward answers. 
 
-Whenever Bagel needs to do math on a robotics log, it generates a **deterministic** and
-**transparent** DuckDB SQL query to run against the data.
+LLMs are great at predicting words, not at doing math, 
+because they lack an innate mechanism for precise calculation [1](https://medium.com/@adnanmasood/why-large-language-models-struggle-with-mathematical-reasoning-3dc8e9f964ae) .
+Bagel solves this by generating a **deterministic** and
+**auditable** DuckDB SQL query to run against the data. 
 
 <p align="center">
   <picture>
