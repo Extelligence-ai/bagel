@@ -42,17 +42,21 @@ class LoggingMessage(BaseModel):
 class Reader:
     """Base class for reading data from a robolog."""
 
-    def __init__(self, robolog_path: str | pathlib.Path, use_cache: bool) -> None:
+    def __init__(
+        self, robolog_path: str | pathlib.Path, use_cache: bool, **kwargs: dict[str, Any]
+    ) -> None:
         """Initialize the Reader.
 
         Args:
             robolog_path (str | pathlib.Path): The path to the robolog.
             use_cache (bool): If True, use cached result if available.
+            **kwargs (dict[str, Any]): Additional keyword arguments.
 
         """
         self._path = pathlib.Path(robolog_path).absolute()
         self._use_cache = use_cache
         self._robolog_id = robolog.generate_id(self.path)
+        self._kwargs = kwargs
 
     @property
     def robolog_id(self) -> str:
@@ -136,7 +140,8 @@ class Reader:
     def _converters(self, topics: list[str]) -> dict[str, MessageConverter]:
         """Return message converters for the specified topics."""
         return {
-            topic: factory.make_converter(self.path, self.type_names[topic]) for topic in topics
+            topic: factory.make_converter(self.path, self.type_names[topic], **self._kwargs)
+            for topic in topics
         }
 
     def _estimate_record_batch_size_count(self, record_batch: pa.RecordBatch) -> int:

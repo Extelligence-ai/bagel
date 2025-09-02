@@ -3,7 +3,7 @@
 import functools
 import pathlib
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol
 
 import yaml
 
@@ -26,6 +26,7 @@ class Encoding(Enum):
     PROTOBUF = "protobuf"  # .mcap
     PX4ULOG = "px4ulog"  # .ulg
     ARDUPILOTBIN = "ardupilotbin"  # .bin
+    BETAFLIGHT = "betaflight"  # .bbl, .bfl
 
 
 class Ros2Schema(Protocol):
@@ -153,7 +154,28 @@ def _ardupilot_strings_from_bin(robolog_path: str | pathlib.Path) -> dict[str, s
             field_name: field_type
             for field_name, field_type in zip(msg.Columns.split(","), msg.Format, strict=True)
         }
-        schemas[msg.Name] = yaml.dump(schema)
+        schemas[msg.Name] = yaml.dump(schema, sort_keys=False)
+    return schemas
+
+
+@functools.lru_cache(maxsize=128)
+def _betaflight_strings_from_log(
+    robolog_path: str | pathlib.Path, log_index: int
+) -> dict[str, str]:
+    from orangebox import Parser
+
+    parser = Parser.load(str(robolog_path), log_index=log_index)
+    schemas = {}
+    for frame_type, field_defs in parser.reader.field_defs.items():
+        schema = {
+            field_def.name: {
+                "signed": field_def.signed,
+                "predictor": field_def.predictor,
+                "encoding": field_def.encoding,
+            }
+            for field_def in field_defs
+        }
+        schemas[frame_type.value] = yaml.dump(schema, sort_keys=False)
     return schemas
 
 
@@ -183,12 +205,15 @@ def schema_encoding(robolog_path: str | pathlib.Path, type_name: str) -> Encodin
         case robolog.RobologType.ARDUPILOT_BIN_FILE:
             return Encoding.ARDUPILOTBIN
 
+        case robolog.RobologType.BETAFLIGHT_BBL_FILE | robolog.RobologType.BETAFLIGHT_BFL_FILE:
+            return Encoding.BETAFLIGHT
+
         case _:
             raise robolog.UnsupportedRobologTypeError(robolog_path)
 
 
-def schema_string(  # noqa: C901, PLR0912
-    robolog_path: str | pathlib.Path, type_name: str
+def schema_string(  # noqa: C901, PLR0911, PLR0912
+    robolog_path: str | pathlib.Path, type_name: str, **kwargs: dict[str, Any]
 ) -> str | bytes:
     """Return the schema string/bytes of the given message type in the robolog."""
     path = pathlib.Path(robolog_path).absolute()
@@ -226,6 +251,12 @@ def schema_string(  # noqa: C901, PLR0912
         case robolog.RobologType.ARDUPILOT_BIN_FILE:
             try:
                 return _ardupilot_strings_from_bin(path)[type_name]
+            except KeyError as err:
+                raise SchemaNotFoundError(type_name) from err
+
+        case robolog.RobologType.BETAFLIGHT_BBL_FILE | robolog.RobologType.BETAFLIGHT_BFL_FILE:
+            try:
+                return _betaflight_strings_from_log(path, kwargs["log_index"])[type_name]
             except KeyError as err:
                 raise SchemaNotFoundError(type_name) from err
 

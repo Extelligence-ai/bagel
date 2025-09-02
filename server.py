@@ -17,7 +17,7 @@ server = FastMCP(
 
 
 @server.tool(title="Read metadata from a robolog.")
-def read_metadata(robolog_path: str) -> dict[str, Any]:
+def read_metadata(robolog_path: str, configs: dict[str, Any] | None = None) -> dict[str, Any]:
     """Return metadata of the robolog as a dictionary.
 
     The returned dictionary contains basic information about the robolog in addition
@@ -41,12 +41,13 @@ def read_metadata(robolog_path: str) -> dict[str, Any]:
 
     Args:
         robolog_path (str): Path to the robolog.
+        configs (dict[str, Any] | None): Additional configurations for specific readers.
 
     Returns:
         dict[str, Any]: A dictionary containing metadata extracted from the robolog.
 
     """
-    reader = factory.make_topic_message_reader(robolog_path)
+    reader = factory.make_topic_message_reader(robolog_path, **configs if configs else {})
     return {
         "robolog_id": reader.robolog_id,
         "path": str(reader.path),
@@ -63,7 +64,9 @@ def read_metadata(robolog_path: str) -> dict[str, Any]:
 
 
 @server.tool(title="Read logging messages from a robolog.")
-def read_logging_messages(robolog_path: str) -> list[dict[str, Any]]:
+def read_logging_messages(
+    robolog_path: str, configs: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
     """Return logging messages from the robolog as a list of JSON-serializable dictionaries.
 
     Each dictionary in the list represents a logging message with the following structure:
@@ -80,17 +83,20 @@ def read_logging_messages(robolog_path: str) -> list[dict[str, Any]]:
 
     Args:
         robolog_path (str): Path to the robolog.
+        configs (dict[str, Any] | None): Additional configurations for specific readers.
 
     Returns:
         list[dict[str, Any]]: A list of dictionaries, each representing a logging message.
 
     """
-    reader = factory.make_topic_message_reader(robolog_path)
+    reader = factory.make_topic_message_reader(robolog_path, **configs if configs else {})
     return [msg.to_dict() for msg in reader.logging_messages]
 
 
 @server.tool(title="Describe the content and structure of each topic in a robolog.")
-def describe_topics(robolog_path: str, topics: list[str]) -> dict[str, Any]:
+def describe_topics(
+    robolog_path: str, topics: list[str], configs: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Describe the content and structure of each topic in a robolog.
 
     The description of each topic contains the following keys:
@@ -101,13 +107,14 @@ def describe_topics(robolog_path: str, topics: list[str]) -> dict[str, Any]:
     Args:
         robolog_path (str): Path to the robolog.
         topics (list[str]): List of topics to describe.
+        configs (dict[str, Any] | None): Additional configurations for specific readers.
 
     Returns:
         dict[str, Any]: A dictionary mapping topic names to their descriptions including DuckDB
             table schema, table name, and the meanings of fields and types.
 
     """
-    reader = factory.make_topic_message_reader(robolog_path)
+    reader = factory.make_topic_message_reader(robolog_path, **configs if configs else {})
 
     def _duckdb_schema(topic: str) -> str:
         dataset = reader.read(topics=[topic], peek=True)
@@ -126,12 +133,13 @@ def describe_topics(robolog_path: str, topics: list[str]) -> dict[str, Any]:
 
 
 @server.tool(title="Query topic messages using a DuckDB SQL query.")
-def query_topic_messages(
+def query_topic_messages(  # noqa: PLR0913
     sql: str,
     robolog_path: str,
     topic: str,
     start_seconds: float | None = None,
     end_seconds: float | None = None,
+    configs: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Query topic messages using DuckDB SQL.
 
@@ -141,12 +149,13 @@ def query_topic_messages(
         topic (str): The topic name to query.
         start_seconds (float | None, optional): When to start reading messages.
         end_seconds (float | None, optional): When to stop reading messages.
+        configs (dict[str, Any] | None): Additional configurations for specific readers.
 
     Returns:
         list[dict[str, Any]]: A list of dictionaries representing the query results.
 
     """
-    reader = factory.make_topic_message_reader(robolog_path)
+    reader = factory.make_topic_message_reader(robolog_path, **configs if configs else {})
     dataset = reader.read(topics=[topic], start_seconds=start_seconds, end_seconds=end_seconds)
     relation = duckdb.from_arrow(dataset)
     duckdb.register(topic, relation)

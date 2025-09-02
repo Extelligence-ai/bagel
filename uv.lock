@@ -167,6 +167,9 @@ dependencies = [
 ardupilot = [
     { name = "pymavlink" },
 ]
+betaflight = [
+    { name = "orangebox" },
+]
 dev = [
     { name = "ipykernel" },
     { name = "ipython" },
@@ -211,6 +214,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 ardupilot = [{ name = "pymavlink", specifier = ">=2.4.0,<3.0.0" }]
+betaflight = [{ name = "orangebox", specifier = ">=0.4.0,<1.0.0" }]
 dev = [
     { name = "ipykernel", specifier = ">=6.29.0,<7.0.0" },
     { name = "ipython", specifier = ">=8.0.0,<9.0.0" },
@@ -1677,6 +1681,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ae/ee/89bedf69c36ace1ac8f59e97811c1f5031e179a37e4821c3a230bf750142/numpy-2.3.1-pp311-pypy311_pp73-manylinux_2_28_aarch64.whl", hash = "sha256:c6e0bf9d1a2f50d2b65a7cf56db37c095af17b59f6c132396f7c6d5dd76484df", size = 14399010, upload-time = "2025-06-21T12:26:54.086Z" },
     { url = "https://files.pythonhosted.org/packages/15/08/e00e7070ede29b2b176165eba18d6f9784d5349be3c0c1218338e79c27fd/numpy-2.3.1-pp311-pypy311_pp73-manylinux_2_28_x86_64.whl", hash = "sha256:eabd7e8740d494ce2b4ea0ff05afa1b7b291e978c0ae075487c51e8bd93c0c68", size = 16752042, upload-time = "2025-06-21T12:27:19.018Z" },
     { url = "https://files.pythonhosted.org/packages/48/6b/1c6b515a83d5564b1698a61efa245727c8feecf308f4091f565988519d20/numpy-2.3.1-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:e610832418a2bc09d974cc9fecebfa51e9532d6190223bc5ef6a7402ebf3b5cb", size = 12927246, upload-time = "2025-06-21T12:27:38.618Z" },
+]
+
+[[package]]
+name = "orangebox"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a9/eb/5883112763a30e921c5d206f203b59d736b1c63f8de541e7eca0d5cd4eb8/orangebox-0.4.0.tar.gz", hash = "sha256:982b6dcbb42abe71fe378176ae7ea5b3ca3000a63a69cd29a0827c21752dbdce", size = 28603, upload-time = "2025-03-08T10:08:17.235Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c6/d3/b3a124225e08345cf4f853fea675c4c5acbd93ac0bbdd705badfa2dc83ee/orangebox-0.4.0-py3-none-any.whl", hash = "sha256:4307933cba054db5a2ec1fb0d79ad124ff0673235964f2e8861c946f7af7b5d1", size = 37434, upload-time = "2025-03-08T10:08:15.97Z" },
 ]
 
 [[package]]

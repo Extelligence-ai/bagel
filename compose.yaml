@@ -121,3 +121,20 @@ services:
       - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
     # volumes:
     #   - <path-to-local-data>:/home/ubuntu/data
+
+  betaflight:
+    image: betaflight
+    build:
+      context: ./
+      dockerfile: ./docker/Dockerfile.betaflight
+      args:
+        UV_VERSION: "0.8.0"
+        DEV_MODE: ${DEV_MODE:-false}
+        BAGEL_LOCAL_HOST: ${BAGEL_LOCAL_HOST:-0.0.0.0}
+        BAGEL_WEBAPP_LOCAL_PORT: ${BAGEL_WEBAPP_LOCAL_PORT:-8501}
+        BAGEL_MCP_LOCAL_PORT: ${BAGEL_MCP_LOCAL_PORT:-8000}
+    ports:
+      - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
+      - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
+    # volumes:
+    #   - <path-to-local-data>:/home/ubuntu/data

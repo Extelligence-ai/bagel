@@ -48,12 +48,13 @@ against the data.
 Bagel works with a wide range of common robotics and sensor log formats out of the box.
 Don't see your format? [Open a ticket](https://github.com/shouhengyi/bagel/issues).
 
-| Format                         |
-| ------------------------------ |
-| ✅ **ROS 2** (`.mcap`, `.db3`) |
-| ✅ **ROS 1** (`.bag`)          |
-| ✅ **PX4** (`.ulg`)            |
-| ✅ **ArduPilot** (`.bin`)      |
+| Format                             |
+| ---------------------------------- |
+| ✅ **ROS 2** (`.mcap`, `.db3`)     |
+| ✅ **ROS 1** (`.bag`)              |
+| ✅ **PX4** (`.ulg`)                |
+| ✅ **ArduPilot** (`.bin`)          |
+| ✅ **Betaflight** (`.bbl`, `.BFL`) |
 
 Don't forget to join our [Discord server](https://discord.gg/QJDwuDGJsH)! We'll be there to answer
 your questions about Bagel and will sometimes drop merch!
@@ -90,6 +91,7 @@ preferred LLMs with Bagel.
 - [Gemini CLI, ROS2 Bag](./doc/tutorials/mcp/1_gemini_cli_ros2.ipynb)
 - [Cursor, PX4 ULog](./doc/tutorials/mcp/2_cursor_px4.ipynb)
 - [Claude Code, ArduPilot Dataflash](./doc/tutorials/mcp/3_claude_code_ardupilot.ipynb)
+- [Claude Code, Betaflight](./doc/tutorials/mcp/4_claude_code_betaflight.ipynb)
 - [Build a Data Pipeline from a PX4 ULog](./doc/tutorials/pipelines/0_basics.ipynb)
 - [Read Topic Messages from a ROS2 Bag](./doc/tutorials/readers/1_read_by_topic.ipynb)
 
@@ -137,7 +139,7 @@ Features are organized into **Versions** for easier tracking. New features will 
   - Similarity search
 - More Robotics Formats
   - ~~[Ardupilot](https://ardupilot.org/)~~
-  - [Betaflight](https://betaflight.com/)
+  - ~~[Betaflight](https://betaflight.com/)~~
 - More LLMs
   - ~~Cursor~~
   - OpenAI
