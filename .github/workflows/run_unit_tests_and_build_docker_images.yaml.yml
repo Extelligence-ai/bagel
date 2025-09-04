@@ -1,0 +1,114 @@
+name: Run Unit Tests and Build Docker Images on Feature Branch
+
+on:
+  pull_request:
+    branches:
+      - stage
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  tests:
+    name: Run Unit Tests with (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install project with uv
+        run: |
+          uv --version
+          # Create & sync local venv from pyproject (uses .venv by default)
+          uv sync --all-extras
+
+      - name: Run tests
+        run: |
+          # Use the synced venv to run pytest
+          uv run -m pytest -q
+
+  docker-build:
+    name: Build and Push Docker Images
+    needs: tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # ROS 2
+          - name: ros2-kilted
+            dockerfile: docker/Dockerfile.ros2
+            args: --build-arg ROS_DISTRO=kilted
+          - name: ros2-jazzy
+            dockerfile: docker/Dockerfile.ros2
+            args: --build-arg ROS_DISTRO=jazzy
+          - name: ros2-iron
+            dockerfile: docker/Dockerfile.ros2
+            args: --build-arg ROS_DISTRO=iron
+          - name: ros2-humble
+            dockerfile: docker/Dockerfile.ros2
+            args: --build-arg ROS_DISTRO=humble
+          # ROS 1 
+          - name: ros1-noetic
+            dockerfile: docker/Dockerfile.ros1
+            args: ""
+          # Drones
+          - name: px4
+            dockerfile: docker/Dockerfile.px4
+            args: ""
+          - name: ardupilot
+            dockerfile: docker/Dockerfile.ardupilot
+            args: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push ${{ matrix.name }}
+        run: |
+          IMAGE_ID=ghcr.io/${{ github.repository }}/${{ matrix.name }}
+          # Convert to lowercase for Docker compatibility
+          IMAGE_ID=$(echo $IMAGE_ID | tr '[:upper:]' '[:lower:]')
+          TAG=sha-${{ github.sha }}
+
+          # Build the image
+          docker build \
+            -f ${{ matrix.dockerfile }} \
+            -t $IMAGE_ID:$TAG \
+            -t $IMAGE_ID:latest \
+            ${{ matrix.args }} \
+            . \
+            --build-arg UV_VERSION=0.8.0 \
+            --build-arg DEV_MODE=false \
+            --build-arg BAGEL_LOCAL_HOST=0.0.0.0 \
+            --build-arg BAGEL_WEBAPP_LOCAL_PORT=8501 \
+            --build-arg BAGEL_MCP_LOCAL_PORT=8000
+
+          # Push both tags
+          docker push $IMAGE_ID:$TAG
+          docker push $IMAGE_ID:latest

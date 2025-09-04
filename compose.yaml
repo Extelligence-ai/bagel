@@ -1,16 +1,6 @@
 services:
   ros2-kilted:
-    image: ros2-kilted
-    build:
-      context: ./
-      dockerfile: ./docker/Dockerfile.ros2
-      args:
-        ROS_DISTRO: kilted
-        UV_VERSION: "0.8.0"
-        DEV_MODE: ${DEV_MODE:-false}
-        BAGEL_LOCAL_HOST: ${BAGEL_LOCAL_HOST:-0.0.0.0}
-        BAGEL_WEBAPP_LOCAL_PORT: ${BAGEL_WEBAPP_LOCAL_PORT:-8501}
-        BAGEL_MCP_LOCAL_PORT: ${BAGEL_MCP_LOCAL_PORT:-8000}
+    image: ghcr.io/Extelligence-ai/ros2-kilted:latest
     ports:
       - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
       - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
@@ -18,17 +8,7 @@ services:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   ros2-jazzy:
-    image: ros2-jazzy
-    build:
-      context: ./
-      dockerfile: ./docker/Dockerfile.ros2
-      args:
-        ROS_DISTRO: jazzy
-        UV_VERSION: "0.8.0"
-        DEV_MODE: ${DEV_MODE:-false}
-        BAGEL_LOCAL_HOST: ${BAGEL_LOCAL_HOST:-0.0.0.0}
-        BAGEL_WEBAPP_LOCAL_PORT: ${BAGEL_WEBAPP_LOCAL_PORT:-8501}
-        BAGEL_MCP_LOCAL_PORT: ${BAGEL_MCP_LOCAL_PORT:-8000}
+    image: ghcr.io/Extelligence-ai/ros2-jazzy:latest
     ports:
       - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
       - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
@@ -36,17 +16,7 @@ services:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   ros2-iron:
-    image: ros2-iron
-    build:
-      context: ./
-      dockerfile: ./docker/Dockerfile.ros2
-      args:
-        ROS_DISTRO: iron
-        UV_VERSION: "0.8.0"
-        DEV_MODE: ${DEV_MODE:-false}
-        BAGEL_LOCAL_HOST: ${BAGEL_LOCAL_HOST:-0.0.0.0}
-        BAGEL_WEBAPP_LOCAL_PORT: ${BAGEL_WEBAPP_LOCAL_PORT:-8501}
-        BAGEL_MCP_LOCAL_PORT: ${BAGEL_MCP_LOCAL_PORT:-8000}
+    image: ghcr.io/Extelligence-ai/ros2-iron:latest
     ports:
       - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
       - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
@@ -54,17 +24,7 @@ services:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   ros2-humble:
-    image: ros2-humble
-    build:
-      context: ./
-      dockerfile: ./docker/Dockerfile.ros2
-      args:
-        ROS_DISTRO: humble
-        UV_VERSION: "0.8.0"
-        DEV_MODE: ${DEV_MODE:-false}
-        BAGEL_LOCAL_HOST: ${BAGEL_LOCAL_HOST:-0.0.0.0}
-        BAGEL_WEBAPP_LOCAL_PORT: ${BAGEL_WEBAPP_LOCAL_PORT:-8501}
-        BAGEL_MCP_LOCAL_PORT: ${BAGEL_MCP_LOCAL_PORT:-8000}
+    image: ghcr.io/Extelligence-ai/ros2-humble:latest
     ports:
       - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
       - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
@@ -72,16 +32,7 @@ services:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic:
-    image: ros1-noetic
-    build:
-      context: ./
-      dockerfile: ./docker/Dockerfile.ros1
-      args:
-        UV_VERSION: "0.8.0"
-        DEV_MODE: ${DEV_MODE:-false}
-        BAGEL_LOCAL_HOST: ${BAGEL_LOCAL_HOST:-0.0.0.0}
-        BAGEL_WEBAPP_LOCAL_PORT: ${BAGEL_WEBAPP_LOCAL_PORT:-8501}
-        BAGEL_MCP_LOCAL_PORT: ${BAGEL_MCP_LOCAL_PORT:-8000}
+    image: ghcr.io/Extelligence-ai/ros1-noetic:latest
     ports:
       - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
       - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
@@ -89,16 +40,8 @@ services:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   px4:
-    image: px4
-    build:
-      context: ./
-      dockerfile: ./docker/Dockerfile.px4
-      args:
-        UV_VERSION: "0.8.0"
-        DEV_MODE: ${DEV_MODE:-false}
-        BAGEL_LOCAL_HOST: ${BAGEL_LOCAL_HOST:-0.0.0.0}
-        BAGEL_WEBAPP_LOCAL_PORT: ${BAGEL_WEBAPP_LOCAL_PORT:-8501}
-        BAGEL_MCP_LOCAL_PORT: ${BAGEL_MCP_LOCAL_PORT:-8000}
+    image: ghcr.io/Extelligence-ai/px4:latest
+
     ports:
       - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
       - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
@@ -106,16 +49,7 @@ services:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   ardupilot:
-    image: ardupilot
-    build:
-      context: ./
-      dockerfile: ./docker/Dockerfile.ardupilot
-      args:
-        UV_VERSION: "0.8.0"
-        DEV_MODE: ${DEV_MODE:-false}
-        BAGEL_LOCAL_HOST: ${BAGEL_LOCAL_HOST:-0.0.0.0}
-        BAGEL_WEBAPP_LOCAL_PORT: ${BAGEL_WEBAPP_LOCAL_PORT:-8501}
-        BAGEL_MCP_LOCAL_PORT: ${BAGEL_MCP_LOCAL_PORT:-8000}
+    image: ghcr.io/Extelligence-ai/ardupilot:latest
     ports:
       - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
       - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
