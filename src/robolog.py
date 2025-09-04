@@ -80,7 +80,7 @@ def _md5_first_64mb(file: str | pathlib.Path) -> str:
 
 @functools.lru_cache(maxsize=128)
 def generate_id(robolog_path: str | pathlib.Path) -> str:
-    """Generate a deterministic UUID for a robolog based on its absolute path and content."""
+    """Generate a deterministic UUID for a robolog based on its content."""
     absolute_path = pathlib.Path(robolog_path).absolute()
 
     content_hashes = []
