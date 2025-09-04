@@ -1,54 +1,15 @@
-name: Run Unit Tests and Build Docker Images on Feature Branch
+name: publish
 
-# on:
-#   pull_request:
-#     branches:
-#       - stage
-#     types:
-#       - opened
-#       - synchronize
-#       - reopened
-
-permissions:
-  contents: read
-  packages: write
+on:
+  push:
+    branches:
+      - stage
 
 jobs:
-  tests:
-    name: Run Unit Tests with (Python ${{ matrix.python-version }})
+  docker:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Install project with uv
-        run: |
-          uv --version
-          # Create & sync local venv from pyproject (uses .venv by default)
-          uv sync --all-extras
-
-      - name: Run tests
-        run: |
-          # Use the synced venv to run pytest
-          uv run -m pytest -q
-
-  docker-build:
-    name: Build and Push Docker Images
-    needs: tests
-    runs-on: ubuntu-latest
+    permissions:
+      packages: write
     strategy:
       matrix:
         include:
@@ -76,24 +37,20 @@ jobs:
           - name: ardupilot
             dockerfile: docker/Dockerfile.ardupilot
             args: ""
+          - name: betaflight
+            dockerfile: docker/Dockerfile.betaflight
+            args: ""
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and Push ${{ matrix.name }}
+      - name: Build and push ${{ matrix.name }}
         run: |
-          IMAGE_ID=ghcr.io/${{ github.repository }}/${{ matrix.name }}
-          # Convert to lowercase for Docker compatibility
-          IMAGE_ID=$(echo $IMAGE_ID | tr '[:upper:]' '[:lower:]')
+          IMAGE_ID=ghcr.io/extelligence-ai/bagel/${{ matrix.name }}
           TAG=sha-${{ github.sha }}
 
           # Build the image

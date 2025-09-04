@@ -1,0 +1,22 @@
+name: test
+
+on:
+  pull_request:
+    branches:
+      - stage
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: pyproject.toml
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras
+      - run: uv run pytest .
