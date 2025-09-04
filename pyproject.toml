@@ -41,6 +41,7 @@ ros2 = [
     "mcap-ros1-support >=0.7.0,<1.0.0",
     "mcap-ros2-support >=0.5.0,<1.0.0",
     "mcap-protobuf-support >=0.5.0,<1.0.0",
+    "zstandard >=0.24.0,<1.0.0",
 ]
 px4 = ["pyulog >=1.2.0,<2.0.0"]
 ardupilot = ["pymavlink >=2.4.0,<3.0.0"]
