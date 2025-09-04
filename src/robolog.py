@@ -13,9 +13,6 @@ KB = 1024 * BYTE
 MB = 1024 * KB
 
 
-<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-
-
 class UnsupportedRobologTypeError(Exception):
     """Raised when a robolog type is not supported."""
 
