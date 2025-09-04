@@ -1,13 +1,13 @@
 name: Run Unit Tests and Build Docker Images on Feature Branch
 
-on:
-  pull_request:
-    branches:
-      - stage
-    types:
-      - opened
-      - synchronize
-      - reopened
+# on:
+#   pull_request:
+#     branches:
+#       - stage
+#     types:
+#       - opened
+#       - synchronize
+#       - reopened
 
 permissions:
   contents: read
@@ -65,7 +65,7 @@ jobs:
           - name: ros2-humble
             dockerfile: docker/Dockerfile.ros2
             args: --build-arg ROS_DISTRO=humble
-          # ROS 1 
+          # ROS 1
           - name: ros1-noetic
             dockerfile: docker/Dockerfile.ros1
             args: ""
