@@ -62,3 +62,8 @@ def frequency_arrow_file(
         _snippet_path(robolog_path, start_seconds, end_seconds)
         / f"frequency_{_short_digest(seeds)}.arrow"
     )
+
+
+def git_clone_directory() -> pathlib.Path:
+    """Generate a directory path for cloning git repositories."""
+    return pathlib.Path(settings.CACHE_DIRECTORY) / "repos"

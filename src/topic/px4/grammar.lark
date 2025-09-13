@@ -1,0 +1,50 @@
+// Grammar for parsing PX4 uORB message definition (.msg) files.
+//
+// Based on the official PX4 documentation:
+// https://docs.px4.io/main/en/middleware/uorb#message-definitions
+//
+// NOTE: This is a simplified grammar. It does not support structs or
+// nested structs; it will result in a parsing error. See example:
+// https://docs.px4.io/main/en/msg_docs/PositionSetpointTriplet.html
+
+start: line*
+
+line: COMMENT EOL                                               -> comment
+    | CONSTANT_TYPE CONSTANT_NAME "=" SIGNED_INT COMMENT? EOL   -> constant
+    | FIELD_TYPE ARRAY? FIELD_NAME COMMENT? EOL                 -> field
+    | NEWLINE                                                   -> empty
+
+// Types
+
+CONSTANT_TYPE: INT_TYPE | UINT_TYPE
+
+FIELD_TYPE: BOOL_TYPE | UINT_TYPE | INT_TYPE | FLOAT_TYPE | CHAR_TYPE
+
+BOOL_TYPE: /bool/
+
+UINT_TYPE: /uint8|uint16|uint32|uint64/
+
+INT_TYPE: /int8|int16|int32|int64/
+
+FLOAT_TYPE: /float32|float64/
+
+CHAR_TYPE: /char/
+
+// Other IDL tokens
+
+CONSTANT_NAME: /[A-Z_]\w*/
+
+FIELD_NAME: /[a-z_]\w*/
+
+ARRAY: "[" INT "]"
+
+COMMENT: /#.*/
+
+EOL: /(\r?\n)/
+
+%import common.NEWLINE
+%import common.WS_INLINE
+%import common.INT
+%import common.SIGNED_INT
+
+%ignore WS_INLINE
