@@ -3,6 +3,7 @@
 import abc
 
 import pyarrow as pa
+from pydantic import BaseModel
 
 DESCRIPTION_KEY = "description"
 UNITS_KEY = "units"
@@ -10,6 +11,14 @@ UNITS_KEY = "units"
 
 class TopicNotFoundError(Exception):
     """Raised when a topic does not exist in the timeseries data source."""
+
+
+class FieldAccessPath(BaseModel):
+    """Represents a field access path within a topic's data structure."""
+
+    path: str
+    field_type: str
+    description: str | None
 
 
 class TopicRegistry(abc.ABC):
@@ -132,32 +141,31 @@ class TopicRegistry(abc.ABC):
 
         """
 
+    def access_paths(self, topic: str, data_source: object) -> list[FieldAccessPath]:
+        """Return a list of possible field access paths for the given topic.
 
-def unnest_struct(struct: pa.StructType) -> list[tuple[str, str, str | None]]:
-    """Unnest a PyArrow StructType into a list of field access paths, types, and descriptions.
+        Args:
+            topic (str): The name of the topic.
+            data_source (object): The timeseries data source instance.
 
-    Args:
-        struct (pa.StructType): The PyArrow StructType to unnest.
+        Returns:
+            list[FieldAccessPath]: A list of possible field access paths for the given topic.
 
-    Returns:
-        list[tuple[str, str, str | None]]: A list of tuples, each containing the field access path,
-            the field type as a string, and the field description (if available).
-
-    """
-    stack = [(field.name, field.type, field.metadata) for field in struct.fields]
-    results = []
-    while stack:
-        access_path, pa_type, metadata = stack.pop()
-        if pa.types.is_struct(pa_type):
-            for i in range(pa_type.num_fields):
-                field = pa_type.field(i)
-                stack.append((f"{access_path}.{field.name}", field.type, field.metadata))
-        else:
-            results.append(
-                (
-                    access_path,
-                    str(pa_type),
-                    metadata[DESCRIPTION_KEY.encode()].decode() if metadata else None,
+        """
+        struct = self.struct(topic, data_source)
+        stack = [(field.name, field.type, field.metadata) for field in struct.fields]
+        results = []
+        while stack:
+            access_path, pa_type, metadata = stack.pop()
+            if pa.types.is_struct(pa_type):
+                for i in range(pa_type.num_fields):
+                    field = pa_type.field(i)
+                    stack.append((f"{access_path}.{field.name}", field.type, field.metadata))
+            else:
+                description = metadata[DESCRIPTION_KEY.encode()].decode() if metadata else None
+                results.append(
+                    FieldAccessPath(
+                        path=access_path, field_type=str(pa_type), description=description
+                    )
                 )
-            )
-    return results[::-1]
+        return results[::-1]
