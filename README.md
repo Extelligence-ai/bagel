@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/extelligence-ai-bagel-badge.png)](https://mseep.ai/app/extelligence-ai-bagel)
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/bagel_logo_dark_mode.png">
