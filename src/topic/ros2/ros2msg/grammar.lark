@@ -1,0 +1,115 @@
+// Grammar for parsing ROS2 message type definition file.
+//
+// Very similar to the ROS1 grammar, but with some differences in default values, arrays, and more.
+//
+// References:
+// - https://design.ros2.org/articles/legacy_interface_definition.html
+// - https://docs.ros.org/en/<ros-version>/Concepts/Basic/About-Interfaces.html
+// - https://github.com/ros2/rosidl/tree/rolling/rosidl_adapter/rosidl_adapter
+// - https://mcap.dev/spec/registry#ros2msg
+
+start: line*
+
+line: "MSG:" COMPLEX_TYPE COMMENT? EOL                                          -> type
+    | BOOL_TYPE FIELD_NAME BOOL_VALUE? COMMENT? EOL                             -> builtin
+    | BOOL_TYPE ARRAY FIELD_NAME (B_L [_bools] B_R)? COMMENT? EOL               -> builtin
+    | UINT_TYPE FIELD_NAME INT? COMMENT? EOL                                    -> builtin
+    | UINT_TYPE ARRAY FIELD_NAME (B_L [_uints] B_R)? COMMENT? EOL               -> builtin
+    | INT_TYPE FIELD_NAME SIGNED_INT? COMMENT? EOL                              -> builtin
+    | INT_TYPE ARRAY FIELD_NAME (B_L [_ints] B_R)? COMMENT? EOL                 -> builtin
+    | FLOAT_TYPE FIELD_NAME FLOAT_VALUE? COMMENT? EOL                           -> builtin
+    | FLOAT_TYPE ARRAY FIELD_NAME (B_L [_floats] B_R)? COMMENT? EOL             -> builtin
+    | CHAR_TYPE FIELD_NAME INT? COMMENT? EOL                                    -> builtin
+    | CHAR_TYPE ARRAY FIELD_NAME (B_L [_chars] B_R)? COMMENT? EOL               -> builtin
+    | BYTE_TYPE FIELD_NAME SIGNED_INT? COMMENT? EOL                             -> builtin
+    | BYTE_TYPE ARRAY FIELD_NAME (B_L [_bytes] B_R)? COMMENT? EOL               -> builtin
+    | STRING_TYPE BOUND? FIELD_NAME STRING? COMMENT? EOL                        -> builtin
+    | STRING_TYPE BOUND? ARRAY FIELD_NAME (B_L [_strings] B_R)? COMMENT? EOL    -> builtin
+    | BOOL_TYPE CONSTANT_NAME "=" BOOL_VALUE COMMENT? EOL                       -> constant
+    | UINT_TYPE CONSTANT_NAME "=" INT COMMENT? EOL                              -> constant
+    | INT_TYPE CONSTANT_NAME "=" SIGNED_INT COMMENT? EOL                        -> constant
+    | FLOAT_TYPE CONSTANT_NAME "=" FLOAT_VALUE COMMENT? EOL                     -> constant
+    | CHAR_TYPE CONSTANT_NAME "=" INT COMMENT? EOL                              -> constant
+    | BYTE_TYPE CONSTANT_NAME "=" SIGNED_INT COMMENT? EOL                       -> constant
+    | STRING_TYPE BOUND? CONSTANT_NAME "=" STRING? COMMENT? EOL                 -> constant
+    | COMPLEX_TYPE ARRAY? FIELD_NAME COMMENT? EOL                               -> complex
+    | COMMENT EOL                                                               -> comment
+    | SEPARATOR EOL                                                             -> separator
+    | NEWLINE                                                                   -> empty
+
+// Types
+
+COMPLEX_TYPE: MESSAGE_NAME | PACKAGE_NAME MESSAGE_NAME
+
+BOOL_TYPE: /bool/
+
+UINT_TYPE: /uint8|uint16|uint32|uint64/
+
+INT_TYPE: /int8|int16|int32|int64/
+
+FLOAT_TYPE: /float32|float64/
+
+CHAR_TYPE: /char/
+
+BYTE_TYPE: /byte/
+
+STRING_TYPE: /string|wstring/
+
+// Values
+
+_bools: BOOL_VALUE ("," BOOL_VALUE)*
+
+BOOL_VALUE: "true" | "false" | "True" | "False" | "1" | "0"
+
+_uints: INT ("," INT)*
+
+_ints: SIGNED_INT ("," SIGNED_INT)*
+
+_floats: FLOAT_VALUE ("," FLOAT_VALUE)*
+
+FLOAT_VALUE: INT | SIGNED_INT | FLOAT | SIGNED_FLOAT
+
+_chars: INT ("," INT)*
+
+_bytes: SIGNED_INT ("," SIGNED_INT)*
+
+_strings: STRING ("," STRING)*
+
+STRING: (QUOTED_STRING | UNQUOTED_STRING)
+
+QUOTED_STRING: /"(?:[^"\\]|\\.)*"/ | /'(?:[^'\\]|\\.)*'/
+
+UNQUOTED_STRING: /[^#\n\r]+/
+
+// Other IDL tokens
+
+ARRAY: B_L (BOUND | INT)? B_R
+
+B_L: "["  // Left bracket
+
+B_R: "]"  // Right bracket
+
+BOUND: "<=" INT
+
+PACKAGE_NAME: /([a-z][a-z0-9_]*(?<!_)\/)+/
+
+MESSAGE_NAME: /[A-Z][a-zA-Z0-9]*/
+
+FIELD_NAME: /(?!.*__)(?!.*_$)[a-z][a-z0-9_]*/
+
+CONSTANT_NAME: /[A-Z]([A-Z0-9_]?[A-Z0-9]+)*/
+
+SEPARATOR: /={2,}/
+
+COMMENT: /#[^\n]*/
+
+EOL: /(\r?\n)/
+
+%import common.NEWLINE
+%import common.WS_INLINE
+%import common.INT
+%import common.SIGNED_INT
+%import common.FLOAT
+%import common.SIGNED_FLOAT
+
+%ignore WS_INLINE
