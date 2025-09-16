@@ -1,5 +1,8 @@
 """A topic registry for ArduPilot Dataflash logs."""
 
+import pathlib
+
+import lxml
 import pyarrow as pa
 from pymavlink import DFReader
 
@@ -38,6 +41,8 @@ class TopicRegistry(base.TopicRegistry):
         if topic not in self.available_topics(data_source):
             raise base.TopicNotFoundError(topic)
 
+        self._download_metadata(data_source.metadata)
+
         fmt_id = data_source.name_to_id[topic]
         fmt = data_source.formats[fmt_id]
         return schema.to_pa_struct(fmt, data_source.metadata)
@@ -47,7 +52,14 @@ class TopicRegistry(base.TopicRegistry):
         if topic not in self.available_topics(data_source):
             raise base.TopicNotFoundError(topic)
 
+        self._download_metadata(data_source.metadata)
+
         fmt_id = data_source.name_to_id[topic]
         fmt = data_source.formats[fmt_id]
         node = data_source.metadata.metadata_tree().get(fmt.name)
-        return node.description.text if node is not None and node.description else None
+        return lxml.etree.tostring(node, pretty_print=True, encoding="unicode")
+
+    def _download_metadata(self, metadata: DFReader.DFMetaData) -> None:
+        dot_pymavlink_path = pathlib.Path(metadata.dot_pymavlink())
+        if not dot_pymavlink_path.exists() or not any(dot_pymavlink_path.iterdir()):
+            metadata.download()
