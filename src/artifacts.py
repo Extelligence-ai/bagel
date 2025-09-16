@@ -78,7 +78,7 @@ def arrow_file(
     return (
         pathlib.Path(settings.CACHE_DIRECTORY)
         / "arrow_files"
-        / f"source={source_uuid}"
+        / f"source_id={source_uuid}"
         / f"{stem}.arrow"
     )
 
