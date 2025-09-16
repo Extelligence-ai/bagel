@@ -64,6 +64,25 @@ def frequency_arrow_file(
     )
 
 
+def arrow_file(
+    source_uuid: str,
+    topics: list[str] | None,
+    start_seconds: float | None,
+    end_seconds: float | None,
+    prefix: str | None = None,
+) -> pathlib.Path:
+    """Generate an Apache Arrow file path for caching purposes."""
+    seeds = [str(start_seconds), str(end_seconds), *(topics or [str(None)])]
+    digest = _short_digest(seeds)
+    stem = f"{prefix}_{digest}" if prefix else digest
+    return (
+        pathlib.Path(settings.CACHE_DIRECTORY)
+        / "arrow_files"
+        / f"source={source_uuid}"
+        / f"{stem}.arrow"
+    )
+
+
 def git_clone_directory() -> pathlib.Path:
     """Generate a directory path for cloning git repositories."""
     return pathlib.Path(settings.CACHE_DIRECTORY) / "repos"
