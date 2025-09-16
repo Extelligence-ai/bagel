@@ -1,12 +1,14 @@
 """An abstract base class for topic registries."""
 
 import abc
+from typing import Final
 
 import pyarrow as pa
 from pydantic import BaseModel
 
-DESCRIPTION_KEY = "description"
-UNITS_KEY = "units"
+DESCRIPTION_KEY: Final[str] = "description"
+UNITS_KEY: Final[str] = "units"
+DEFAULT_KEY: Final[str] = "default"
 
 
 class TopicNotFoundError(Exception):
