@@ -1,5 +1,7 @@
 """Provide a data source for reading ArduPilot Dataflash logs."""
 
+from typing import Any
+
 from pymavlink import DFReader
 
 from src.source import base, errors
@@ -23,6 +25,44 @@ class SourceFactory(base.LocalFileSystemSourceFactory):
         """
         super().__init__(path)
         self._zero_time_base = zero_time_base
+
+        reader = DFReader.DFReader_binary(filename=path, zero_time_base=zero_time_base)
+
+        # gather message count, start and end seconds
+        reader.rewind()
+        self._start_seconds = reader.recv_msg()._timestamp
+        self._end_seconds = reader.last_timestamp()
+        self._total_message_count = sum(reader.counts)
+
+        # gather PARM messages
+        reader.rewind()
+        self._params = {}
+        while msg := reader.recv_match(type=["PARM"]):
+            d = msg.to_dict()
+            self._params[d["Name"]] = d["Value"]
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return metadata about the Dataflash log."""
+        return {
+            **super().metadata,
+            **self._params,
+        }
+
+    @property
+    def total_message_count(self) -> int:
+        """Return the total number of messages."""
+        return self._total_message_count
+
+    @property
+    def start_seconds(self) -> float:
+        """Return the start timestamp in seconds."""
+        return self._start_seconds
+
+    @property
+    def end_seconds(self) -> float:
+        """Return the end timestamp in seconds."""
+        return self._end_seconds
 
     def build(self) -> DFReader.DFReader_binary:
         """Return an ArduPilot DFReader_binary object."""

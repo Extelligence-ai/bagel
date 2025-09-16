@@ -1,6 +1,9 @@
 """Provide a data source for reading ROS1 bags."""
 
+from typing import Any
+
 import rosbag
+import yaml
 
 from src.source import base, errors
 
@@ -21,15 +24,50 @@ class SourceFactory(base.LocalFileSystemSourceFactory):
 
         """
         super().__init__(path)
-        self._allow_unindexed = allow_unindexed
+        self._bag = rosbag.Bag(f=path, mode="r", allow_unindexed=allow_unindexed)
+        self._metadata = yaml.safe_load(self._bag._get_yaml_info())
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return metadata about the ROS1 bag."""
+        return {
+            **super().metadata,
+            **self._metadata,
+        }
+
+    @property
+    def total_message_count(self) -> int:
+        """Return the total number of messages."""
+        return self._metadata["messages"]
+
+    @property
+    def start_seconds(self) -> float:
+        """Return the start timestamp in seconds."""
+        return self._bag.get_start_time()
+
+    @property
+    def end_seconds(self) -> float:
+        """Return the end timestamp in seconds."""
+        return self._bag.get_end_time()
+
+    @property
+    def version(self) -> str:
+        """Return the bag version."""
+        return str(self._metadata["version"])
+
+    @property
+    def indexed(self) -> bool:
+        """Return whether the bag is indexed."""
+        return self._metadata["indexed"]
+
+    @property
+    def compression(self) -> str:
+        """Return the compression type."""
+        return self._metadata["compression"]
 
     def build(self) -> rosbag.Bag:
         """Return a ROS1 Bag object."""
-        return rosbag.Bag(
-            f=str(self.path),
-            mode="r",
-            allow_unindexed=self._allow_unindexed,
-        )
+        return self._bag
 
     def validate_path(self) -> tuple[bool, Exception | None]:
         """Validate the ROS1 bag file path."""
