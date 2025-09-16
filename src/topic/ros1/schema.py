@@ -75,9 +75,9 @@ def cast_builtin_field(field: definition.BuiltInField) -> pa.DataType:  # noqa: 
         case definition.BuiltInField(type_="string"):
             pa_type = pa.string()
         case definition.BuiltInField(type_="time"):
-            pa_type = pa.struct({"secs": pa.uint32(), "nsec": pa.uint32()})
+            pa_type = pa.struct({"secs": pa.uint32(), "nsecs": pa.uint32()})
         case definition.BuiltInField(type_="duration"):
-            pa_type = pa.struct({"secs": pa.int32(), "nsec": pa.int32()})
+            pa_type = pa.struct({"secs": pa.int32(), "nsecs": pa.int32()})
         case _:
             raise ValueError(f"Unsupported built-in field type: {field.type_}")
 
@@ -94,11 +94,14 @@ def cast_field(field: definition.Field, dependencies: dict[str, definition.Struc
     """Cast a ROS1 Field to its corresponding PyArrow Field."""
     match field:
         case definition.Constant():
+            metadata = {base.DEFAULT_KEY: str(field.value)}
+            if field.description:
+                metadata[base.DESCRIPTION_KEY] = field.description
             return pa.field(
                 field.name,
                 cast_constant(field),
                 nullable=False,
-                metadata={base.DESCRIPTION_KEY: field.description} if field.description else None,
+                metadata=metadata,
             )
 
         case definition.BuiltInField():

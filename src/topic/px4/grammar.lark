@@ -18,7 +18,9 @@ line: COMMENT EOL                                               -> comment
 
 CONSTANT_TYPE: INT_TYPE | UINT_TYPE
 
-FIELD_TYPE: BOOL_TYPE | UINT_TYPE | INT_TYPE | FLOAT_TYPE | CHAR_TYPE
+FIELD_TYPE: BOOL_TYPE | UINT_TYPE | INT_TYPE | FLOAT_TYPE | CHAR_TYPE | STRUCT_TYPE
+
+STRUCT_TYPE: /[a-zA-Z_]\w*/
 
 BOOL_TYPE: /bool/
 

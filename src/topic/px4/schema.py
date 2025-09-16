@@ -37,7 +37,7 @@ def name_and_index(field_name: str) -> tuple[str, int | None]:
         tuple[str, int | None]: A tuple containing the field name and the array index, if any.
 
     """
-    pattern = re.compile(r"^([a-zA-Z_]\w*)(?:\[(\d+)\])?$")
+    pattern = re.compile(r"^([a-zA-Z_]\w*)(?:\[(\d+)\])?(?:(?:\.[a-zA-Z_]\w*|\[\d+\])+)?$")
     match = pattern.match(field_name.strip())
     name, index = match.group(1), match.group(2)
     return name, int(index) if index else None

@@ -19,7 +19,7 @@ FORMAT_CHARACTER_TO_PYARROW_TYPE = {
     "d": pa.float64(),
     "n": pa.string(),
     "N": pa.string(),
-    "Z": pa.string(),
+    "Z": pa.binary(),
     "L": pa.int32(),
     "M": pa.uint8(),
     "q": pa.int64(),

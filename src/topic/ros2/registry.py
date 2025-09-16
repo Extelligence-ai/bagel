@@ -1,6 +1,8 @@
 """A topic registry for ROS2 bags."""
 
+import collections
 import functools
+import pathlib
 
 import pyarrow as pa
 import rosbag2_py
@@ -25,6 +27,51 @@ class MessageDefinition(BaseModel):
 
 
 @functools.lru_cache
+def locally_installed_ros2msg(type_name: str) -> str:
+    """Return the ros2msg string of the given message type from locally installed packages.
+
+    If packages are not installed or sourced locally, this will throw an error.
+
+    """
+    from rosidl_parser.definition import NamespacedType
+    from rosidl_runtime_py import get_interface_path
+    from rosidl_runtime_py.utilities import get_message
+
+    def resolve(name: str) -> str:
+        match tuple(name.split("/")):
+            case (package, "msg", class_):
+                return name
+            case (package, class_):
+                return f"{package}/msg/{class_}"
+            case _:
+                raise ValueError(f"Invalid type name: {name}")
+
+    visited = set()
+    dependencies = []
+    stack = collections.deque([resolve(type_name)])
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        dependencies.append(current)
+        for slot_type in get_message(current).SLOT_TYPES:
+            if isinstance(slot_type, NamespacedType):
+                stack.append("/".join(slot_type.namespaced_name()))
+
+    sections = []
+    for dependency_type_name in dependencies:
+        msg_file = get_interface_path(dependency_type_name)
+        section = pathlib.Path(msg_file).read_text(encoding="utf-8")
+        if sections:
+            section = f"MSG: {dependency_type_name}\n{section}"
+        sections.append(section)
+
+    separator = "=" * 80
+    return f"\n{separator}\n".join(sections)
+
+
+@functools.lru_cache
 def message_definitions(
     data_source: McapRos2Bag | rosbag2_py.SequentialReader,
 ) -> dict[str, MessageDefinition]:
@@ -44,11 +91,11 @@ def message_definitions(
         }
     else:
         return {
-            d.topic_type: MessageDefinition(
-                encoding=d.encoding,
-                definition=d.encoded_message_definition,
+            topic_metadata.type: MessageDefinition(
+                encoding="ros2msg",
+                definition=locally_installed_ros2msg(topic_metadata.type),
             )
-            for d in data_source.get_all_message_definitions()
+            for topic_metadata in data_source.get_all_topics_and_types()
         }
 
 

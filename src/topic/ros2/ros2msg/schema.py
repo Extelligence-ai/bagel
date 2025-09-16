@@ -96,11 +96,14 @@ def cast_field(field: definition.Field, dependencies: dict[str, definition.Struc
     """Cast a ROS2 Field to its corresponding PyArrow Field."""
     match field:
         case definition.Constant():
+            metadata = {base.DEFAULT_KEY: str(field.value)}
+            if field.description:
+                metadata[base.DESCRIPTION_KEY] = field.description
             return pa.field(
                 field.name,
                 cast_constant(field),
                 nullable=False,
-                metadata={base.DESCRIPTION_KEY: field.description} if field.description else None,
+                metadata=metadata,
             )
 
         case definition.BuiltInField():
