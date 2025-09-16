@@ -4,7 +4,6 @@ import abc
 from typing import Final
 
 import pyarrow as pa
-from pydantic import BaseModel
 
 DESCRIPTION_KEY: Final[str] = "description"
 UNITS_KEY: Final[str] = "units"
@@ -13,14 +12,6 @@ DEFAULT_KEY: Final[str] = "default"
 
 class TopicNotFoundError(Exception):
     """Raised when a topic does not exist in the timeseries data source."""
-
-
-class FieldAccessPath(BaseModel):
-    """Represents a field access path within a topic's data structure."""
-
-    path: str
-    field_type: str
-    description: str | None
 
 
 class TopicRegistry(abc.ABC):
@@ -142,32 +133,3 @@ class TopicRegistry(abc.ABC):
             '''
 
         """
-
-    def access_paths(self, topic: str, data_source: object) -> list[FieldAccessPath]:
-        """Return a list of possible field access paths for the given topic.
-
-        Args:
-            topic (str): The name of the topic.
-            data_source (object): The timeseries data source instance.
-
-        Returns:
-            list[FieldAccessPath]: A list of possible field access paths for the given topic.
-
-        """
-        struct = self.struct(topic, data_source)
-        stack = [(field.name, field.type, field.metadata) for field in struct.fields]
-        results = []
-        while stack:
-            access_path, pa_type, metadata = stack.pop()
-            if pa.types.is_struct(pa_type):
-                for i in range(pa_type.num_fields):
-                    field = pa_type.field(i)
-                    stack.append((f"{access_path}.{field.name}", field.type, field.metadata))
-            else:
-                description = metadata[DESCRIPTION_KEY.encode()].decode() if metadata else None
-                results.append(
-                    FieldAccessPath(
-                        path=access_path, field_type=str(pa_type), description=description
-                    )
-                )
-        return results[::-1]
