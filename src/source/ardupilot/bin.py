@@ -4,6 +4,7 @@ from typing import Any
 
 from pymavlink import DFReader
 
+from src import di
 from src.source import base, errors
 
 
@@ -84,3 +85,8 @@ class SourceFactory(base.LocalFileSystemSourceFactory):
             return False, errors.InvalidFileExtensionError(".bin", self.path)
 
         return True, None
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = SourceFactory

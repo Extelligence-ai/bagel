@@ -5,6 +5,7 @@ import pathlib
 import rosbag2_py
 from pydantic import BaseModel, ConfigDict
 
+from src import di
 from src.source.ros2 import base
 
 
@@ -40,3 +41,8 @@ class SourceFactory(base.SourceFactory):
     def build(self) -> McapRos2Bag:
         """Return an McapRos2Bag object."""
         return McapRos2Bag(path=self.path, metadata=self._metadata)
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = SourceFactory

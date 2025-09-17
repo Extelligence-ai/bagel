@@ -10,6 +10,7 @@ from rosidl_parser.definition import NamespacedType
 from rosidl_runtime_py import get_interface_path
 from rosidl_runtime_py.utilities import get_message
 
+from src import di
 from src.topic.ros2 import base
 from src.topic.ros2.ros2msg import parse, schema
 
@@ -95,3 +96,8 @@ class TopicRegistry(base.TopicRegistry):
 
     def _metadata(self, data_source: rosbag2_py.SequentialReader) -> rosbag2_py.BagMetadata:
         return data_source.get_metadata()
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = TopicRegistry

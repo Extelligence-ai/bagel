@@ -4,6 +4,7 @@ import pathlib
 
 import rosbag2_py
 
+from src import di
 from src.source.ros2 import base
 
 
@@ -34,3 +35,8 @@ class SourceFactory(base.SourceFactory):
         reader = rosbag2_py.SequentialReader()
         reader.open(storage_options, converter_options)
         return reader
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = SourceFactory

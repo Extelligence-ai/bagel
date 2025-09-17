@@ -1,5 +1,6 @@
 """Provide a data source for reading Betaflight Blackbox logs."""
 
+from src import di
 from src.source import errors
 from src.source.betaflight import bbl
 
@@ -32,3 +33,8 @@ class SourceFactory(bbl.SourceFactory):
             return False, errors.InvalidFileExtensionError(".BFL", self.path)
 
         return True, None
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = SourceFactory

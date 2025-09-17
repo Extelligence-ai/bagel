@@ -7,6 +7,7 @@ import orangebox
 import pyarrow as pa
 import yaml
 
+from src import di
 from src.topic import base
 from src.topic.betaflight import schema
 
@@ -84,3 +85,8 @@ class TopicRegistry(base.TopicRegistry):
             lines.append(" ".join(line))
 
         return "\n".join(lines)
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = TopicRegistry

@@ -6,6 +6,7 @@ import lxml
 import pyarrow as pa
 from pymavlink import DFReader
 
+from src import di
 from src.topic import base
 from src.topic.ardupilot import schema
 
@@ -63,3 +64,8 @@ class TopicRegistry(base.TopicRegistry):
         dot_pymavlink_path = pathlib.Path(metadata.dot_pymavlink())
         if not dot_pymavlink_path.exists() or not any(dot_pymavlink_path.iterdir()):
             metadata.download()
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = TopicRegistry

@@ -7,6 +7,7 @@ import orangebox
 import pyarrow as pa
 from orangebox.types import Frame, FrameType
 
+from src import di
 from src.message import base
 
 MICROSECOND = 1
@@ -51,3 +52,8 @@ class MessageDataset(base.MessageDataset):
     def _to_json(self, message: Frame, struct: pa.StructType) -> dict[str, Any]:
         """Cast a Frame into a JSON-serializable dictionary."""
         return {name: value for name, value in zip(struct.names, message.data, strict=False)}
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = MessageDataset

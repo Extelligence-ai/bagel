@@ -5,6 +5,7 @@ import logging
 import pyarrow as pa
 from pyulog import core
 
+from src import di
 from src.topic import base
 from src.topic.px4 import parse, schema
 
@@ -61,3 +62,8 @@ class TopicRegistry(base.TopicRegistry):
             if data.name == type_name and str(data.multi_id) == multi_id:
                 return data
         raise base.TopicNotFoundError(topic)
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = TopicRegistry

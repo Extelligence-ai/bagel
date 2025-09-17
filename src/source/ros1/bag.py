@@ -5,6 +5,7 @@ from typing import Any
 import rosbag
 import yaml
 
+from src import di
 from src.source import base, errors
 
 
@@ -81,3 +82,8 @@ class SourceFactory(base.LocalFileSystemSourceFactory):
             return False, errors.InvalidFileExtensionError(".bag", self.path)
 
         return True, None
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = SourceFactory

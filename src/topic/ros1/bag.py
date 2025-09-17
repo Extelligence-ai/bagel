@@ -6,6 +6,7 @@ import pyarrow as pa
 import rosbag
 import yaml
 
+from src import di
 from src.topic import base
 from src.topic.ros1 import parse, schema
 
@@ -48,3 +49,8 @@ class TopicRegistry(base.TopicRegistry):
             if info["topic"] == topic:
                 return info
         raise base.TopicNotFoundError(topic)
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = TopicRegistry

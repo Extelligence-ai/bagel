@@ -6,6 +6,7 @@ from typing import Any
 import orangebox
 from orangebox.types import Frame, FrameType
 
+from src import di
 from src.source import base, errors
 
 MICROSECOND = 1
@@ -93,3 +94,8 @@ class SourceFactory(base.LocalFileSystemSourceFactory):
                 case _:
                     continue
         return count, end_time
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = SourceFactory

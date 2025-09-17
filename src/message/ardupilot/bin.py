@@ -6,6 +6,7 @@ from typing import Any
 import pyarrow as pa
 from pymavlink import DFReader
 
+from src import di
 from src.message import base
 
 
@@ -31,3 +32,8 @@ class MessageDataset(base.MessageDataset):
     def _to_json(self, message: DFReader.DFMessage, struct: pa.StructType) -> dict[str, Any]:
         """Cast a DFMessage into a JSON-serializable dictionary."""
         return message.to_dict()
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    di.module_registry[__name__] = MessageDataset
