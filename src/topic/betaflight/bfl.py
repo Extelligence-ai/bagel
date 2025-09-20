@@ -1,6 +1,6 @@
 """A topic registry for Betaflight Blackbox logs."""
 
-from src import di
+from src.di import module
 from src.topic.betaflight import bbl
 
 
@@ -10,4 +10,4 @@ class TopicRegistry(bbl.TopicRegistry):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = TopicRegistry
+    module.global_registry[__name__] = TopicRegistry

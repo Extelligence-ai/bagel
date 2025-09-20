@@ -5,11 +5,11 @@ from typing import Any
 import rosbag
 import yaml
 
-from src import di
+from src.di import module
 from src.source import base, errors
 
 
-class SourceFactory(base.LocalFileSystemSourceFactory):
+class SourceFactory(base.FileBasedSourceFactory):
     """A data source factory for reading from ROS1 bags."""
 
     def __init__(
@@ -86,4 +86,4 @@ class SourceFactory(base.LocalFileSystemSourceFactory):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = SourceFactory
+    module.global_registry[__name__] = SourceFactory

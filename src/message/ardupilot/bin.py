@@ -6,7 +6,7 @@ from typing import Any
 import pyarrow as pa
 from pymavlink import DFReader
 
-from src import di
+from src.di import module
 from src.message import base
 
 
@@ -36,4 +36,4 @@ class MessageDataset(base.MessageDataset):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = MessageDataset
+    module.global_registry[__name__] = MessageDataset

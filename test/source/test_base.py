@@ -4,7 +4,7 @@ import tempfile
 from src.source import base
 
 
-class MockLocalFileSystemSourceFactory(base.LocalFileSystemSourceFactory):
+class MockLocalFileSystemSourceFactory(base.FileBasedSourceFactory):
     def build(self) -> object: ...
 
     def validate_path(self) -> tuple[bool, Exception | None]:

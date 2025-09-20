@@ -14,7 +14,7 @@ MILLISECOND = 1_000 * MICROSECOND
 SECOND = 1_000 * MILLISECOND
 
 
-class SourceFactory(base.LocalFileSystemSourceFactory):
+class SourceFactory(base.FileBasedSourceFactory):
     """A base class for factories of ROS2 bag data source."""
 
     def __init__(self, path: str) -> None:

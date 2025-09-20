@@ -82,7 +82,7 @@ class BoundedSourceFactory(SourceFactory):
         return self.end_seconds - self.start_seconds
 
 
-class LocalFileSystemSourceFactory(BoundedSourceFactory):
+class FileBasedSourceFactory(BoundedSourceFactory):
     """A base class for factories of data source from local file system."""
 
     def __init__(self, path: str) -> None:

@@ -9,7 +9,7 @@ from mcap_protobuf.decoder import DecoderFactory as ProtobufDecoderFactory
 from mcap_ros1.decoder import DecoderFactory as Ros1DecoderFactory
 from mcap_ros2.decoder import DecoderFactory as Ros2DecoderFactory
 
-from src import di
+from src.di import module
 from src.message import base
 from src.message.ros2 import convert
 from src.source.ros2.mcap import McapRos2Bag
@@ -55,4 +55,4 @@ class MessageDataset(base.MessageDataset):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = MessageDataset
+    module.global_registry[__name__] = MessageDataset

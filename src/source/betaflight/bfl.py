@@ -1,6 +1,6 @@
 """Provide a data source for reading Betaflight Blackbox logs."""
 
-from src import di
+from src.di import module
 from src.source import errors
 from src.source.betaflight import bbl
 
@@ -37,4 +37,4 @@ class SourceFactory(bbl.SourceFactory):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = SourceFactory
+    module.global_registry[__name__] = SourceFactory

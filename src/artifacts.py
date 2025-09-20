@@ -64,17 +64,9 @@ def frequency_arrow_file(
     )
 
 
-def arrow_file(
-    source_uuid: str,
-    topics: list[str] | None,
-    start_seconds: float | None,
-    end_seconds: float | None,
-    prefix: str | None = None,
-) -> pathlib.Path:
+def arrow_file(source_uuid: str, seeds: list[str], prefix: str) -> pathlib.Path:
     """Generate an Apache Arrow file path for caching purposes."""
-    seeds = [str(start_seconds), str(end_seconds), *(topics or [str(None)])]
-    digest = _short_digest(seeds)
-    stem = f"{prefix}_{digest}" if prefix else digest
+    stem = f"{prefix}_{_short_digest(seeds)}"
     return (
         pathlib.Path(settings.CACHE_DIRECTORY)
         / "arrow_files"

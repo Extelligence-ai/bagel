@@ -7,7 +7,7 @@ import genpy
 import pyarrow as pa
 import rosbag
 
-from src import di
+from src.di import module
 from src.message import base
 from src.message.ros1 import convert
 
@@ -38,4 +38,4 @@ class MessageDataset(base.MessageDataset):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = MessageDataset
+    module.global_registry[__name__] = MessageDataset

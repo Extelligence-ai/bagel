@@ -10,7 +10,7 @@ from rosidl_parser.definition import NamespacedType
 from rosidl_runtime_py import get_interface_path
 from rosidl_runtime_py.utilities import get_message
 
-from src import di
+from src.di import module
 from src.topic.ros2 import base
 from src.topic.ros2.ros2msg import parse, schema
 
@@ -100,4 +100,4 @@ class TopicRegistry(base.TopicRegistry):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = TopicRegistry
+    module.global_registry[__name__] = TopicRegistry

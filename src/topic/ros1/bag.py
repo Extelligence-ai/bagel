@@ -6,7 +6,7 @@ import pyarrow as pa
 import rosbag
 import yaml
 
-from src import di
+from src.di import module
 from src.topic import base
 from src.topic.ros1 import parse, schema
 
@@ -53,4 +53,4 @@ class TopicRegistry(base.TopicRegistry):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = TopicRegistry
+    module.global_registry[__name__] = TopicRegistry

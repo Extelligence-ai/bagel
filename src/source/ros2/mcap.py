@@ -5,7 +5,7 @@ import pathlib
 import rosbag2_py
 from pydantic import BaseModel, ConfigDict
 
-from src import di
+from src.di import module
 from src.source.ros2 import base
 
 
@@ -45,4 +45,4 @@ class SourceFactory(base.SourceFactory):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = SourceFactory
+    module.global_registry[__name__] = SourceFactory

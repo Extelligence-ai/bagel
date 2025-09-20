@@ -6,7 +6,7 @@ import lxml
 import pyarrow as pa
 from pymavlink import DFReader
 
-from src import di
+from src.di import module
 from src.topic import base
 from src.topic.ardupilot import schema
 
@@ -58,7 +58,11 @@ class TopicRegistry(base.TopicRegistry):
         fmt_id = data_source.name_to_id[topic]
         fmt = data_source.formats[fmt_id]
         node = data_source.metadata.metadata_tree().get(fmt.name)
-        return lxml.etree.tostring(node, pretty_print=True, encoding="unicode")
+        return (
+            lxml.etree.tostring(node, pretty_print=True, encoding="unicode")
+            if node is not None
+            else None
+        )
 
     def _download_metadata(self, metadata: DFReader.DFMetaData) -> None:
         dot_pymavlink_path = pathlib.Path(metadata.dot_pymavlink())
@@ -68,4 +72,4 @@ class TopicRegistry(base.TopicRegistry):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = TopicRegistry
+    module.global_registry[__name__] = TopicRegistry

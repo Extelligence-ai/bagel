@@ -4,7 +4,7 @@ from typing import Any
 
 from pyulog import core
 
-from src import di
+from src.di import module
 from src.source import base, errors
 
 MICROSECOND = 1
@@ -12,7 +12,7 @@ MILLISECOND = 1_000 * MICROSECOND
 SECOND = 1_000 * MILLISECOND
 
 
-class SourceFactory(base.LocalFileSystemSourceFactory):
+class SourceFactory(base.FileBasedSourceFactory):
     """A data source factory for reading from PX4 ULogs."""
 
     def __init__(
@@ -146,4 +146,4 @@ class SourceFactory(base.LocalFileSystemSourceFactory):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = SourceFactory
+    module.global_registry[__name__] = SourceFactory

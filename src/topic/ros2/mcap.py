@@ -8,7 +8,7 @@ from google.protobuf import descriptor_pb2
 from google.protobuf.descriptor_pool import DescriptorPool
 from mcap.reader import make_reader
 
-from src import di
+from src.di import module
 from src.source.ros2.mcap import McapRos2Bag
 from src.topic.ros2 import base
 from src.topic.ros2.protobuf import schema as protobuf_schema
@@ -72,4 +72,4 @@ class TopicRegistry(base.TopicRegistry):
 
 def register() -> None:
     """Register module for dependency injection."""
-    di.module_registry[__name__] = TopicRegistry
+    module.global_registry[__name__] = TopicRegistry

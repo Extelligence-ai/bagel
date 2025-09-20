@@ -1,11 +1,12 @@
 """An abstract base class for topic message datasets."""
 
 import abc
-import pathlib
 from collections.abc import Iterator
 from typing import Any
 
+import duckdb
 import pyarrow as pa
+import pyarrow.dataset as ds
 from pydantic import BaseModel, ConfigDict
 
 from settings import settings
@@ -24,7 +25,7 @@ class AccessPath(BaseModel):
 
     @property
     def duckdb_path(self) -> str:
-        """Return the DuckDB-compatible field access path."""
+        """Return the DuckDB-compatible field access path using dot notation."""
         return ".".join([f'"{p}"' for p in self.path])
 
     @property
@@ -53,11 +54,11 @@ class AccessPath(BaseModel):
 class MessageDataset(abc.ABC):
     """An abstract base class for topic message datasets."""
 
-    def __init__(self, use_cache: bool) -> None:
+    def __init__(self, use_cache: bool = True) -> None:
         """Initialize the MessageDataset.
 
         Args:
-            use_cache (bool): Whether to use cached Apache Arrow files if available.
+            use_cache (bool, optional): Whether to use cached Apache Arrow files if available.
 
         """
         self._use_cache = use_cache
@@ -99,7 +100,7 @@ class MessageDataset(abc.ABC):
 
         """
 
-    def save(  # noqa: PLR0913
+    def to_duckdb(  # noqa: PLR0913
         self,
         factory: SourceFactory,
         registry: TopicRegistry,
@@ -107,8 +108,8 @@ class MessageDataset(abc.ABC):
         start_seconds: float | None = None,
         end_seconds: float | None = None,
         ffill: bool = False,
-    ) -> pathlib.Path:
-        """Save the message dataset to a cached Apache Arrow file and return its path.
+    ) -> duckdb.DuckDBPyRelation:
+        """Return a DuckDB relation of the message dataset for the given topics and time range.
 
         Args:
             factory (SourceFactory): The source factory for creating the data source.
@@ -123,21 +124,21 @@ class MessageDataset(abc.ABC):
                 last known value for a topic if a message is missing at a timestamp.
 
         Returns:
-            pathlib.Path: The file path to the Apache Arrow file.
+            duckdb.DuckDBPyRelation: A DuckDB relation of the message dataset.
 
         """
-        arrow_file = artifacts.arrow_file(
-            factory.uuid, topics, start_seconds, end_seconds, "topics"
-        )
+        seeds = [*(topics or [str(None)]), str(start_seconds), str(end_seconds), str(ffill)]
+        arrow_file = artifacts.arrow_file(factory.uuid, seeds, "topics")
         if arrow_file.exists() and self._use_cache:
-            return arrow_file
+            dataset = ds.dataset(arrow_file, format="arrow")
+            return duckdb.from_arrow(dataset)
         arrow_file.unlink(missing_ok=True)
         arrow_file.parent.mkdir(parents=True, exist_ok=True)
 
         data_source = factory.build()
         topics = topics or registry.available_topics(data_source)
         messages = self._messages(data_source, topics, start_seconds, end_seconds)
-        schema = self.schema(factory, registry, topics)
+        schema = self._schema(factory, registry, topics)
 
         try:
             with (
@@ -146,13 +147,39 @@ class MessageDataset(abc.ABC):
             ):
                 for record_batch in self._record_batches(messages, schema, ffill):
                     writer.write_batch(record_batch)
-            return arrow_file
-
+            dataset = ds.dataset(arrow_file, format="arrow")
+            return duckdb.from_arrow(dataset)
         except Exception as e:
             arrow_file.unlink(missing_ok=True)
             raise e
 
-    def schema(
+    def to_empty_duckdb(
+        self,
+        factory: SourceFactory,
+        registry: TopicRegistry,
+        topics: list[str] | None = None,
+    ) -> duckdb.DuckDBPyRelation:
+        """Return an empty DuckDB relation based on the schema of the given topics.
+
+        Note:
+            This is used for understanding the DuckDB table schema without loading any topic
+            messages. The DuckDB schema is useful for LLMs to generate valid SQL queries.
+
+        Args:
+            factory (SourceFactory): The source factory for creating the data source.
+            registry (TopicRegistry): The topic registry for looking up topic schemas.
+            topics (list[str] | None, optional): The list of topics to include in the dataset.
+                If None, all available topics will be included.
+
+        Returns:
+            duckdb.DuckDBPyRelation: An empty DuckDB relation with no topic messages.
+
+        """
+        topics = topics or registry.available_topics(factory.build())
+        schema = self._schema(factory, registry, topics)
+        return duckdb.from_arrow(schema.empty_table())
+
+    def _schema(
         self,
         factory: SourceFactory,
         registry: TopicRegistry,
@@ -175,36 +202,6 @@ class MessageDataset(abc.ABC):
             struct = registry.struct(topic, data_source)
             fields.append(pa.field(topic, struct, nullable=True))
         return pa.schema(fields)
-
-    def access_paths(
-        self,
-        factory: SourceFactory,
-        registry: TopicRegistry,
-        topics: list[str],
-    ) -> list[AccessPath]:
-        """Return a list of all possible field access paths in the message dataset.
-
-        Args:
-            factory (SourceFactory): The source factory for creating the data source.
-            registry (TopicRegistry): The topic registry for looking up topic schemas.
-            topics (list[str]): The list of topics to include in the schema.
-
-        Returns:
-            list[AccessPath]: A list of all possible field access paths in the message dataset.
-
-        """
-        schema = self.schema(factory, registry, topics)
-        stack = [([name], type_) for name, type_ in zip(schema.names, schema.types, strict=True)]
-        results = []
-        while stack:
-            access_path, pa_type = stack.pop()
-            if pa.types.is_struct(pa_type):
-                for i in range(pa_type.num_fields):
-                    field = pa_type.field(i)
-                    stack.append(([*access_path, field.name], field.type))
-            else:
-                results.append(AccessPath(path=access_path, pa_type=pa_type))
-        return results[::-1]
 
     def _record_batches(
         self, messages: Iterator[str, float, object], schema: pa.Schema, ffill: bool
