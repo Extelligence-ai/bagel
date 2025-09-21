@@ -108,6 +108,7 @@ class MessageDataset(abc.ABC):
         start_seconds: float | None = None,
         end_seconds: float | None = None,
         ffill: bool = False,
+        empty: bool = False,
     ) -> duckdb.DuckDBPyRelation:
         """Return a DuckDB relation of the message dataset for the given topics and time range.
 
@@ -122,11 +123,18 @@ class MessageDataset(abc.ABC):
                 If None, reads until the end.
             ffill (bool, optional): Whether to forward-fill missing values, i.e., use the
                 last known value for a topic if a message is missing at a timestamp.
+            empty (bool, optional): Whether to return an empty DuckDB relation with no messages.
+                This is useful for LLMs to understand the DuckDB schema.
 
         Returns:
             duckdb.DuckDBPyRelation: A DuckDB relation of the message dataset.
 
         """
+        if empty:
+            topics = topics or registry.available_topics(factory.build())
+            schema = self._schema(factory, registry, topics)
+            return duckdb.from_arrow(schema.empty_table())
+
         seeds = [*(topics or [str(None)]), str(start_seconds), str(end_seconds), str(ffill)]
         arrow_file = artifacts.arrow_file(factory.uuid, seeds, "topics")
         if arrow_file.exists() and self._use_cache:
@@ -152,32 +160,6 @@ class MessageDataset(abc.ABC):
         except Exception as e:
             arrow_file.unlink(missing_ok=True)
             raise e
-
-    def to_empty_duckdb(
-        self,
-        factory: SourceFactory,
-        registry: TopicRegistry,
-        topics: list[str] | None = None,
-    ) -> duckdb.DuckDBPyRelation:
-        """Return an empty DuckDB relation based on the schema of the given topics.
-
-        Note:
-            This is used for understanding the DuckDB table schema without loading any topic
-            messages. The DuckDB schema is useful for LLMs to generate valid SQL queries.
-
-        Args:
-            factory (SourceFactory): The source factory for creating the data source.
-            registry (TopicRegistry): The topic registry for looking up topic schemas.
-            topics (list[str] | None, optional): The list of topics to include in the dataset.
-                If None, all available topics will be included.
-
-        Returns:
-            duckdb.DuckDBPyRelation: An empty DuckDB relation with no topic messages.
-
-        """
-        topics = topics or registry.available_topics(factory.build())
-        schema = self._schema(factory, registry, topics)
-        return duckdb.from_arrow(schema.empty_table())
 
     def _schema(
         self,
