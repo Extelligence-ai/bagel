@@ -63,7 +63,6 @@ jobs:
             --build-arg UV_VERSION=0.8.0 \
             --build-arg DEV_MODE=false \
             --build-arg BAGEL_LOCAL_HOST=0.0.0.0 \
-            --build-arg BAGEL_WEBAPP_LOCAL_PORT=8501 \
             --build-arg BAGEL_MCP_LOCAL_PORT=8000
 
           # Push both tags
