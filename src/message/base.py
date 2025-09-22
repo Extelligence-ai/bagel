@@ -52,7 +52,17 @@ class AccessPath(BaseModel):
 
 
 class MessageDataset(abc.ABC):
-    """An abstract base class for topic message datasets."""
+    """An abstract base class for topic message datasets.
+
+    This ABC provides a common contract for implementing readers of topic messages,
+    e.g., sensor data, vehicle states, control commands.
+
+    Note:
+        Constructors of all subclasses must only accept primitive types (e.g.,
+        str, int, bool). This ensures instances can be reliably serialized and
+        recreated via dependency injection.
+
+    """
 
     def __init__(self, use_cache: bool = True) -> None:
         """Initialize the MessageDataset.

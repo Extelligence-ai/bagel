@@ -27,7 +27,7 @@ class TopicRegistry(base.TopicRegistry):
         if topic not in self.available_topics(data_source):
             raise base.TopicNotFoundError(topic)
 
-        return str(data_source.name_to_id[topic])
+        return topic
 
     def message_count(self, topic: str, data_source: DFReader.DFReader) -> int:
         """Return the number of messages for the given format name."""
