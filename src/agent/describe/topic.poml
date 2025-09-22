@@ -1,0 +1,78 @@
+<poml>
+    <task>
+        Generate a high-level summary of the topic in the data source.
+        <stepwise-instructions>
+            <list listStyle="decimal">
+                <item>
+                    Create a "Summary" section (under 200 words) describing the purpose of the
+                    topic and the type of data it contains.
+                </item>
+                <item>
+                    Create a "DuckDB Schema" section. Display the provided DuckDB schema as a code
+                    block without modification.
+                </item>
+                <item>
+                    Create a "Topic Definition" section. Display the provided topic definition as a
+                    code block without modification.
+                </item>
+                <item>
+                    Create a "Guidelines for DuckDB SQL Generation" section with the these points:
+                    <list>
+                        <item>
+                            The table name in the `FROM` clause <b>MUST</b> be `{{topic_name}}`.
+                        </item>
+                        <item>
+                            The DuckDB schema is a JSON dictionary where keys are column names and
+                            values are DuckDB types as strings.
+                        </item>
+                        <item>
+                            The `{{topic_name}}` column is a DuckDB `STRUCT` containing the actual
+                            topic messages and their nested fields.
+                        </item>
+                        <item>
+                            To interpret the nested structure and field meanings, refer to the
+                            "Topic Definition" section. Comments may provide context such as meaning
+                            and units.
+                        </item>
+                        <item>
+                            When generating a SQL query from a user prompt, identify which fields
+                            inside `{{topic_name}}` are required to answer it.
+                        </item>
+                        <item>
+                            Use the DuckDB schema to form the `SELECT` clause and any required
+                            `WHERE`, `GROUP BY`, or `ORDER BY` clauses.
+                        </item>
+                        <item>
+                            Ensure the SQL query is valid and free of syntax errors. For example,
+                            the `WINDOW` clause is not allowed in `FROM` or `WHERE` clauses.
+                        </item>
+                    </list>
+                </item>
+            </list>
+        </stepwise-instructions>
+    </task>
+
+    <human-msg>
+        <cp caption="Topic Name">
+            <p>{{topic_name}}</p>
+        </cp>
+        <cp caption="Type Name">
+            <p>{{type_name}}</p>
+        </cp>
+        <cp caption="Message Count">
+            <p>{{message_count}}</p>
+        </cp>
+        <cp caption="DuckDB Schema">
+            <object syntax="json" data="{{duckdb_schema}}" />
+        </cp>
+        <cp caption="Topic Definition">
+            <code inline="false" syntax="text">{{topic_definition}}</code>
+        </cp>
+    </human-msg>
+
+    <output-format>
+        Respond with a markdown document containing the "Summary", "DuckDB Schema",
+        "Topic Definition", and "Guidelines for DuckDB SQL Generation" sections, with no extra
+        characters or punctuation.
+    </output-format>
+</poml>
