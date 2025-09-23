@@ -28,6 +28,12 @@
 
 <p align="center">
   <picture>
+    <img src="./doc/assets/drone_rolling.gif" width="80%">
+  </picture>
+</p>
+
+<p align="center">
+  <picture>
     <img src="./doc/assets/llm_math.png" width="60%">
   </picture>
 </p>
