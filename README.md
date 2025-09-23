@@ -26,6 +26,16 @@
   </picture>
 </p>
 
+Bagel lets you **chat with your physical data**, just as you use ChatGPT. It works with a wide
+range of common log formats out of the box. Don't see your format?
+[Open a ticket](https://github.com/shouhengyi/bagel/issues)
+
+| Industry     | Format                     |
+| ------------ | -------------------------- |
+| **Robotics** | ROS1, ROS2                 |
+| **Drone**    | PX4, ArduPilot, Betaflight |
+| **IoT**      | coming soon...             |
+
 <p align="center">
   <picture>
     <img src="./doc/assets/drone_rolling.gif" width="80%">
@@ -37,9 +47,3 @@
     <img src="./doc/assets/llm_math.png" width="80%">
   </picture>
 </p>
-
-| Industry     | Format                     |
-| ------------ | -------------------------- |
-| **Robotics** | ROS1, ROS2                 |
-| **Drone**    | PX4, ArduPilot, Betaflight |
-| **IoT**      | coming soon...             |
