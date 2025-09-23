@@ -28,7 +28,7 @@
 
 <p align="center">
   <picture>
-    <img src="./doc/assets/llm_math.png" width="40%">
+    <img src="./doc/assets/llm_math.png" width="60%">
   </picture>
 </p>
 
