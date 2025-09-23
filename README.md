@@ -7,44 +7,28 @@
 
 <h1 align="center">
   <a href="https://github.com/shouhengyi/bagel/blob/stage/LICENSE">
-    <img alt="Apache" src="https://img.shields.io/badge/license-Apache-blue.svg">
+    <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square">
+  </a>
+  <a>
+    <img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square">
   </a>
   <a href="https://github.com/Extelligence-ai/bagel/actions/workflows/publish.yaml">
-    <img alt="Health" src="https://img.shields.io/github/actions/workflow/status/Extelligence-ai/bagel/publish.yaml?branch=stage&label=publish">
+    <img src="https://img.shields.io/github/actions/workflow/status/Extelligence-ai/bagel/publish.yaml?branch=stage&label=publish&style=flat-square">
   </a>
   <a href="https://discord.gg/QJDwuDGJsH">
-    <img alt="Rerun Discord" src="https://img.shields.io/discord/1392632504908906506?label=Discord">
+    <img src="https://img.shields.io/discord/1392632504908906506?label=Discord&style=flat-square">
   </a>
 </h1>
 
----
-
-Bagel lets you **chat with your robotics and drone data**, just as you use ChatGPT.
-
-For example, you can ask Bagel to check a drone's IMU data for hard landings:
-
 <p align="center">
   <picture>
-    <img src="./doc/assets/hard_landings.gif" width="90%">
+    <img src="./doc/assets/hero.png" width="90%">
   </picture>
 </p>
 
-You can also ask Bagel to calculate the maximum velocity:
-
 <p align="center">
   <picture>
-    <img src="./doc/assets/max_velocity.gif" width="90%">
-  </picture>
-</p>
-
-LLMs are great at predicting words, not at doing math, because they lack an innate mechanism for
-precise calculation [[1](https://medium.com/@adnanmasood/why-large-language-models-struggle-with-mathematical-reasoning-3dc8e9f964ae)].
-Bagel solves this by generating a **deterministic** and **auditable** DuckDB SQL query to run
-against the data.
-
-<p align="center">
-  <picture>
-    <img src="./doc/assets/architecture_overview.png" width="90%">
+    <img src="./doc/assets/llm_math.png" width="40%">
   </picture>
 </p>
 
