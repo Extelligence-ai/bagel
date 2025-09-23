@@ -44,7 +44,7 @@
                         </item>
                         <item>
                             Ensure the SQL query is valid and free of syntax errors. For example,
-                            the `WINDOW` clause is not allowed in `FROM` or `WHERE` clauses.
+                            the `WINDOW` and `UNNEST` are not allowed in `FROM` or `WHERE` clauses.
                         </item>
                     </list>
                 </item>
