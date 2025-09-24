@@ -120,8 +120,9 @@ INFO:     172.18.0.1:63286 - "GET /sse HTTP/1.1" 200 OK
 
 #### 🔗 Connect to an LLM
 
-Once the Bagel MCP server is running, connect to the LLM of your choice. Bagel should work
-with any MCP-enabled LLM.
+Once the Bagel MCP server is running, connect it to your preferred LLM.
+Bagel should work with any MCP-enabled LLM, though some setup may be required.
+We’ve tested a few LLMs—see the runbooks below for guidance.
 
 <details>
   <summary>📚 Runbooks for tested LLMs</summary>
