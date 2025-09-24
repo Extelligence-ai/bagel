@@ -60,7 +60,7 @@ Time to put Bagel to the test: can it catch a drone doing barrel rolls? Spoiler:
 
 <p align="center">
   <picture>
-    <img src="./doc/assets/drone_rolling.gif" width="80%">
+    <img src="./doc/assets/drone_rolls.gif" width="80%">
   </picture>
 </p>
 
