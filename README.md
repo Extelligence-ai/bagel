@@ -1,7 +1,13 @@
-<p align="center">
+<!-- <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/bagel_logo_dark_mode.png">
     <img src="./doc/assets/bagel_logo_light_mode.png" width="400">
+  </picture>
+</p> -->
+
+<p align="center">
+  <picture>
+    <img src="./doc/assets/header.png" width="100%">
   </picture>
 </p>
 
@@ -30,7 +36,7 @@ Bagel lets you chat with your physical data — just like you do with ChatGPT. F
 
 > What’s the highest temperature in my log?
 
-### 🪄 Key Features
+### 🥯 Key Features
 
 - **Ask in plain language**: No deep domain expertise needed.
 - **Transparent calculations**: Deterministic SQL queries. No black-box LLM math.
@@ -85,8 +91,12 @@ LLMs excel at language but struggle with math. Bagel overcomes this by generatin
 DuckDB SQL queries. These queries are displayed for you to **audit**, and you can guide Bagel to
 correct any errors.
 
-## ⚙️ Installation
-
 ## ⚡️ Quickstart
 
-## 💻 Development
+## 🐶 Teach Bagel a New Trick
+
+## 📚 Tutorials
+
+## 🫶 Contributing
+
+## 📄 License
