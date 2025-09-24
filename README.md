@@ -36,6 +36,7 @@ Bagel lets you chat with your physical data — just like you do with ChatGPT. F
 - **Transparent calculations**: Deterministic SQL queries. No black-box LLM math.
 - **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, and more.
 - **Dockerized environments**: No local dependencies required.
+- **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
 - **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/shouhengyi/bagel/issues).
 
 ### ✅ Supported Data Formats
@@ -70,22 +71,54 @@ When you ask a question, Bagel analyzes your data source’s **metadata** and **
 build a high-level understanding. Based on your prompt, it identifies the most relevant topics
 and **interprets their meaning and structure**.
 
+Bagel then processes this data in a local cache. It writes the relevant topic messages to an
+**Apache Arrow file** and uses **DuckDB** to generate and execute queries against it.
+This process is repeated as needed, running new queries until Bagel finds the best possible
+answer to your question.
+
 <p align="center">
   <picture>
     <img src="./doc/assets/llm_math.png" width="80%">
   </picture>
 </p>
 
-Bagel then processes this data in a local cache. It writes the relevant topic messages to an
-**Apache Arrow file** and uses **DuckDB** to generate and execute queries against it.
-This process is repeated as needed, running new queries until Bagel finds the best possible
-answer to your question.
-
 LLMs excel at language but struggle with math. Bagel overcomes this by generating **deterministic**
 DuckDB SQL queries. These queries are displayed for you to **audit**, and you can guide Bagel to
 correct any errors.
 
 ## ⚡️ Quickstart
+
+#### 📋 Prerequisites
+
+Install [Docker Desktop](https://docs.docker.com/get-started/get-docker/), then clone this repo:
+
+```bash
+git clone https://github.com/Extelligence-ai/bagel.git; cd bagel
+```
+
+#### 🐳 Run with Docker
+
+Open [compose.yaml](./compose.yaml) and pick a service (e.g., `ros2-kilted`).
+
+```bash
+docker compose run --service-ports ros2-kilted
+```
+
+> [!TIP]
+> To give Bagel access to your local files, edit `compose.yaml` before starting Docker:
+> uncomment and update the `volumes` section under your chosen service.
+
+Your terminal should show output similar to:
+
+```
+INFO:     Started server process [86]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     172.18.0.1:63286 - "GET /sse HTTP/1.1" 200 OK
+```
+
+You can verify it’s running by opening [http://0.0.0.0:8000/sse](http://0.0.0.0:8000/sse) in your browser.
 
 ## 🐶 Teach Bagel a New Trick
 
