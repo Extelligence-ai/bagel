@@ -129,6 +129,7 @@ We’ve tested a few LLMs—see the runbooks below for guidance.
 
 - [Claude Code](./doc/runbooks/setup/claude_code.md)
 - [Gemini CLI](./doc/runbooks/setup/gemini_cli.md)
+- [Cursor](./doc/runbooks/setup/cursor.md)
 
 </details>
 
