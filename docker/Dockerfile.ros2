@@ -56,6 +56,7 @@ COPY --chown=${USERNAME}:${USERNAME} src/source/ros2 ./src/source/ros2
 COPY --chown=${USERNAME}:${USERNAME} src/topic/ros2 ./src/topic/ros2
 COPY --chown=${USERNAME}:${USERNAME} src/message/ros2 ./src/message/ros2
 COPY --chown=${USERNAME}:${USERNAME} src/logging/ros2 ./src/logging/ros2
+COPY --chown=${USERNAME}:${USERNAME} data/sample/ros2 ./data/sample/ros2
 
 # Assign default local host
 ARG BAGEL_LOCAL_HOST
