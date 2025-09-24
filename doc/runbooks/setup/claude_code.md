@@ -21,7 +21,7 @@ data: /messages/?session_id=d3daa0110c1041dead46bc6646dc4dc7
 > [!NOTE]
 > Claude Code requires a paid subscription from Anthropic.
 
-Install Claude Code with:
+Install Claude Code:
 
 ```bash
 npm install -g @anthropic-ai/claude-code
