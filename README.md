@@ -30,11 +30,11 @@ Bagel lets you chat with your physical data — just like you do with ChatGPT.
 
 ### 🪄 Key Features
 
-- **Understand your data effortlessly**: Ask complex questions without deep domain expertise.
-- **Transparent and reliable calculations**: No black-box LLM math.
-- **Broad LLM support**: Works with most MCP-enabled LLMs (e.g., Claude Code, Gemini, Cursor, Codex, etc.).
-- **Simple setup**: Fully containerized with Docker—no local dependencies needed.
-- **Wide data format coverage**: Don’t see your format? [Open a ticket](https://github.com/shouhengyi/bagel/issues).
+- **Ask in plain language**: No deep domain expertise needed.
+- **Transparent calculations**: Deterministic SQL queries. No black-box LLM math.
+- **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, and more.
+- **Dockerized environments**: No local dependencies needed.
+- **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/shouhengyi/bagel/issues).
 
 ### ✅ Supported Data Formats
 
@@ -44,17 +44,17 @@ Bagel lets you chat with your physical data — just like you do with ChatGPT.
 | **Drones**   | PX4, ArduPilot, Betaflight |
 | **IoT**      | Coming soon...             |
 
-## 💬 Let's Prompt
+## 💬 What Can I Prompt?
 
 You can ask Bagel almost anything. For example:
 
 > What’s the correlation between current and voltage in the `/spot/status/battery_states` topic?
 
-> I suspect the IMU overheated at the end of the log. Can you check the `HEAT` topic?
+> I think the IMU overheated at the end. Can you check the `HEAT` topic to confirm?
 
 > Can you help me tune the PID of my drone?
 
-Time to put Bagel to the test: can it catch a drone doing barrel rolls? Spoiler: 🎉 Absolutely.
+Time to put Bagel to the test: can it catch a drone doing barrel rolls? Spoiler: 🎉 It totally can.
 
 <p align="center">
   <picture>
