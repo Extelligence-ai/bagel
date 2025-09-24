@@ -1,14 +1,7 @@
-<!-- <p align="center">
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/bagel_logo_dark_mode.png">
     <img src="./doc/assets/bagel_logo_light_mode.png" width="400">
-  </picture>
-</p> -->
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/header_dark.png">
-    <img src="./doc/assets/header_light.png" width="100%">
   </picture>
 </p>
 
