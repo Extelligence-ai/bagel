@@ -118,7 +118,13 @@ INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 INFO:     172.18.0.1:63286 - "GET /sse HTTP/1.1" 200 OK
 ```
 
-You can verify it’s running by opening [http://0.0.0.0:8000/sse](http://0.0.0.0:8000/sse) in your browser.
+You can verify it’s running by opening [http://0.0.0.0:8000/sse](http://0.0.0.0:8000/sse) in
+your browser. If successful, you should see output like:
+
+```
+event: endpoint
+data: /messages/?session_id=d3daa0110c1041dead46bc6646dc4dc7
+```
 
 ## 🐶 Teach Bagel a New Trick
 
