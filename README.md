@@ -128,6 +128,7 @@ We’ve tested a few LLMs—see the runbooks below for guidance.
   <summary>📚 Runbooks for tested LLMs</summary>
 
 - [Claude Code](./doc/runbooks/setup/claude_code.md)
+- [Gemini CLI](./doc/runbooks/setup/gemini_cli.md)
 
 </details>
 
@@ -138,7 +139,7 @@ and we’ll create a runbook for it.
 
 Now you're ready to launch your LLM and begin prompting. For example:
 
-> Summarize the metadata of the ROS2 bag "./data/sample/ros2/mcap".
+> Summarize the metadata of the ROS2 bag "/home/ubuntu/runtime/data/sample/ros2/mcap".
 
 ## 🐶 Teach Bagel a New Trick
 
