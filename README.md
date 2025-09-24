@@ -79,7 +79,8 @@ answer to your question.
 
 <p align="center">
   <picture>
-    <img src="./doc/assets/llm_math.png" width="80%">
+    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/llm_math_dark_mode.png">
+    <img src="./doc/assets/llm_math_light_mode.png" width="80%">
   </picture>
 </p>
 
