@@ -48,15 +48,13 @@ Bagel lets you chat with your physical data — just like you do with ChatGPT.
 
 You can ask Bagel almost anything. For example:
 
-> How many topics are in this ROS2 bag?
-
 > What’s the correlation between current and voltage in the `/spot/status/battery_states` topic?
 
-> I suspect mechanical loosening caused my drone to crash. Can you check the `VIBE` topic?
+> I suspect the IMU overheated at the end of the log. Can you check the `HEAT` topic?
 
 > Can you help me tune the PID of my drone?
 
-Now, let’s see if Bagel can identify a drone performing rolls during a flight:
+Time to put Bagel to the test: can it catch a drone doing barrel rolls? Spoiler: 🎉 Absolutely.
 
 <p align="center">
   <picture>
