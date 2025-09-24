@@ -7,7 +7,8 @@
 
 <p align="center">
   <picture>
-    <img src="./doc/assets/header.png" width="100%">
+    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/header_dark.png">
+    <img src="./doc/assets/header_light.png" width="100%">
   </picture>
 </p>
 
