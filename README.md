@@ -125,7 +125,9 @@ with any MCP-enabled LLM.
 
 <details>
   <summary>📚 Runbooks for tested LLMs</summary>
-  - [Claude Code](./doc/runbooks/setup/claude_code.md)
+
+- [Claude Code](./doc/runbooks/setup/claude_code.md)
+
 </details>
 
 Can't find your favorite LLM? [Open a ticket](https://github.com/shouhengyi/bagel/issues),
