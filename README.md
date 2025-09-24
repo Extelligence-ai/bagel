@@ -26,7 +26,7 @@
   </picture>
 </p>
 
-Bagel lets you **chat with your physical data** — just like you do with ChatGPT.
+Bagel lets you chat with your physical data — just like you do with ChatGPT.
 
 ### 🪄 Key Features
 
@@ -36,7 +36,9 @@ Bagel lets you **chat with your physical data** — just like you do with ChatGP
 - **Simple setup**: Fully containerized with Docker—no local dependencies needed.
 - **Wide data format coverage**: Don’t see your format? [Open a ticket](https://github.com/shouhengyi/bagel/issues).
 
-| Industry     | ✅ Formats                 |
+### ✅ Supported Data Formats
+
+| Industry     | Formats                    |
 | ------------ | -------------------------- |
 | **Robotics** | ROS1, ROS2                 |
 | **Drones**   | PX4, ArduPilot, Betaflight |
