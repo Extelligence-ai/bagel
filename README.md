@@ -22,7 +22,8 @@
 
 <p align="center">
   <picture>
-    <img src="./doc/assets/hero.png" width="90%">
+    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/hero_dark_mode.png">
+    <img src="./doc/assets/hero_light_mode.png" width="100%">
   </picture>
 </p>
 
