@@ -68,18 +68,16 @@ When you ask a question, Bagel analyzes your data source’s **metadata** and **
 build a high-level understanding. Based on your query, it identifies the most relevant topics
 and **interprets their meaning and structure**.
 
-Bagel then processes this data in a local cache. It writes the relevant topic messages to an
-**Apache Arrow file** and uses **DuckDB** to generate and execute queries against it.
-This process is repeated as needed, running new queries until Bagel finds the best possible
-answer to your question.
-
-The diagram below illustrates this process:
-
 <p align="center">
   <picture>
     <img src="./doc/assets/llm_math.png" width="80%">
   </picture>
 </p>
+
+Bagel then processes this data in a local cache. It writes the relevant topic messages to an
+**Apache Arrow file** and uses **DuckDB** to generate and execute queries against it.
+This process is repeated as needed, running new queries until Bagel finds the best possible
+answer to your question.
 
 LLMs excel at language but struggle with math. Bagel overcomes this by generating **deterministic**
 DuckDB SQL queries. These queries are displayed for you to **audit**, and you can guide Bagel to
