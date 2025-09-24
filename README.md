@@ -26,7 +26,9 @@
   </picture>
 </p>
 
-Bagel lets you chat with your physical data — just like you do with ChatGPT.
+Bagel lets you chat with your physical data — just like you do with ChatGPT. For example:
+
+> What’s the highest temperature in my log?
 
 ### 🪄 Key Features
 
@@ -65,7 +67,7 @@ Time to put Bagel to the test: can it catch a drone doing barrel rolls? Spoiler:
 ## 💡 How Bagel Works
 
 When you ask a question, Bagel analyzes your data source’s **metadata** and **topics** to
-build a high-level understanding. Based on your query, it identifies the most relevant topics
+build a high-level understanding. Based on your prompt, it identifies the most relevant topics
 and **interprets their meaning and structure**.
 
 <p align="center">
