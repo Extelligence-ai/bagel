@@ -26,15 +26,21 @@
   </picture>
 </p>
 
-Bagel lets you **chat with your physical data**, just as you use ChatGPT. It works with a wide
-range of common log formats out of the box. Don't see your format?
-[Open a ticket](https://github.com/shouhengyi/bagel/issues)
+Bagel lets you **chat with your physical data** — just like you do with ChatGPT.
 
-| Industry     | Format                     |
+### 🪄 Key Features
+
+- **Understand your data effortlessly**: Ask complex questions without deep domain expertise.
+- **Transparent and reliable calculations**: No black-box LLM math.
+- **Broad LLM support**: Works with most MCP-enabled LLMs (e.g., Claude Code, Gemini, Cursor, Codex, etc.).
+- **Simple setup**: Fully containerized with Docker—no local dependencies needed.
+- **Wide data format coverage**: Don’t see your format? [Open a ticket](https://github.com/shouhengyi/bagel/issues).
+
+| Industry     | ✅ Formats                 |
 | ------------ | -------------------------- |
 | **Robotics** | ROS1, ROS2                 |
-| **Drone**    | PX4, ArduPilot, Betaflight |
-| **IoT**      | coming soon...             |
+| **Drones**   | PX4, ArduPilot, Betaflight |
+| **IoT**      | Coming soon...             |
 
 <p align="center">
   <picture>
@@ -47,3 +53,9 @@ range of common log formats out of the box. Don't see your format?
     <img src="./doc/assets/llm_math.png" width="80%">
   </picture>
 </p>
+
+# ⚙️ Installation
+
+# ⚡️ Quickstart
+
+# 💻 Development
