@@ -33,7 +33,7 @@ Bagel lets you chat with your physical data — just like you do with ChatGPT.
 - **Ask in plain language**: No deep domain expertise needed.
 - **Transparent calculations**: Deterministic SQL queries. No black-box LLM math.
 - **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, and more.
-- **Dockerized environments**: No local dependencies needed.
+- **Dockerized environments**: No local dependencies required.
 - **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/shouhengyi/bagel/issues).
 
 ### ✅ Supported Data Formats
@@ -62,11 +62,24 @@ Time to put Bagel to the test: can it catch a drone doing barrel rolls? Spoiler:
   </picture>
 </p>
 
+## 💡 How Bagel Works
+
+When you ask a question, Bagel analyzes your data source’s metadata and topics to build a high-level
+understanding. Based on your query, it identifies the most relevant topics and interprets their
+meaning and structure.
+
+Bagel then processes this data in a local cache. It writes the relevant topic messages to an Apache
+Arrow file and uses DuckDB to generate and execute queries against it. This process is repeated as
+needed, running new queries until Bagel finds the best possible answer to your question.
+
 <p align="center">
   <picture>
     <img src="./doc/assets/llm_math.png" width="80%">
   </picture>
 </p>
+
+LLMs are great at predicting words, but not at doing math. Bagel solves this by generating a
+**deterministic** and **auditable** DuckDB SQL query to run against your data.
 
 ## ⚙️ Installation
 
