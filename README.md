@@ -44,6 +44,20 @@ Bagel lets you chat with your physical data — just like you do with ChatGPT.
 | **Drones**   | PX4, ArduPilot, Betaflight |
 | **IoT**      | Coming soon...             |
 
+# 💬 Let's Prompt
+
+You can ask Bagel almost anything. For example:
+
+> How many topics are in this ROS2 bag?
+
+> What’s the correlation between current and voltage in the `/spot/status/battery_states` topic?
+
+> I suspect mechanical loosening caused my drone to crash. Can you check the `VIBE` topic?
+
+> Can you help me tune the PID of my drone?
+
+Now, let’s see if Bagel can identify a drone performing rolls during a flight:
+
 <p align="center">
   <picture>
     <img src="./doc/assets/drone_rolling.gif" width="80%">
