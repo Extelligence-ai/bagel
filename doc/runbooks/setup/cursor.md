@@ -24,7 +24,7 @@ data: /messages/?session_id=d3daa0110c1041dead46bc6646dc4dc7
 
 Open the Cursor app and navigate to **Cursor Settings > MCP**. Then click **Add Custom MCP**.
 
-> [!NOTE]  
+> [!NOTE]
 > The UI may differ depending on your operating system. The screenshot below shows Cursor on Ubuntu.
 
 <p align="center">

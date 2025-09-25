@@ -117,14 +117,13 @@ INFO:     Started server process [86]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     172.18.0.1:63286 - "GET /sse HTTP/1.1" 200 OK
 ```
 
 #### 🔗 Connect to an LLM
 
 Once the Bagel MCP server is running, connect it to your preferred LLM.
 Bagel should work with any MCP-enabled LLM, though some setup may be required.
-We’ve tested a few LLMs—see the runbooks below for guidance.
+We’ve tested several LLMs—see the runbooks below for setup instructions.
 
 <details>
   <summary>📚 Runbooks for tested LLMs</summary>
@@ -132,6 +131,7 @@ We’ve tested a few LLMs—see the runbooks below for guidance.
 - [Claude Code](./doc/runbooks/setup/claude_code.md)
 - [Gemini CLI](./doc/runbooks/setup/gemini_cli.md)
 - [Cursor](./doc/runbooks/setup/cursor.md)
+- [Copilot](./doc/runbooks/setup/copilot.md)
 
 </details>
 
