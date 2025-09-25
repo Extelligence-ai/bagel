@@ -6,7 +6,7 @@
 </p>
 
 <h1 align="center">
-  <a href="https://github.com/shouhengyi/bagel/blob/stage/LICENSE">
+  <a href="https://github.com/Extelligence-ai/bagel/blob/stage/LICENSE">
     <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square">
   </a>
   <a>
@@ -38,7 +38,7 @@ Bagel lets you chat with your physical data — just like you do with ChatGPT. F
 - **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, and more.
 - **Dockerized environments**: No local dependencies required.
 - **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
-- **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/shouhengyi/bagel/issues).
+- **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues).
 
 ### ✅ Supported Data Formats
 
@@ -136,7 +136,7 @@ We’ve tested several LLMs—see the runbooks below for setup instructions.
 
 </details>
 
-Can't find your favorite LLM? [Open a ticket](https://github.com/shouhengyi/bagel/issues),
+Can't find your favorite LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues),
 and we’ll create a runbook for it.
 
 #### 🚀 Launch and Prompt
