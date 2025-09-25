@@ -1,5 +1,6 @@
 """Entry point for the Bagel MCP server."""
 
+import pathlib
 import textwrap
 from typing import Any
 
@@ -54,7 +55,7 @@ def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[
     registry = module.provide(BaseModule.TOPIC_REGISTRY, ds_type, {})
     return poml(
         "./src/agent/describe/data_source.poml",
-        {
+        context={
             "metadata": factory.metadata,
             "topics": registry.available_topics(factory.build()),
         },
@@ -101,7 +102,7 @@ def describe_topic(
 
     return poml(
         "./src/agent/describe/topic.poml",
-        {
+        context={
             "topic_name": topic,
             "type_name": registry.native_type_name(topic, data_source),
             "message_count": registry.message_count(topic, data_source),
@@ -193,6 +194,41 @@ def read_loggings(
     dataset = module.provide(BaseModule.LOGGING_DATASET, ds_type, {})
     relation = dataset.to_duckdb(factory, registry, start_seconds, end_seconds)
     return relation.to_df().to_dict(orient="records")
+
+
+@server.tool(
+    title="Execute a POML-defined capability.",
+    description=(
+        "Run a capability defined in a .poml file. The POML file provides structured instructions "
+        "that the LLM will interpret and execute.."
+    ),
+)
+def run_poml_capability(
+    poml_path: str,
+    poml_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Execute a capability defined in a POML file.
+
+    This function loads a `.poml` file containing structured instructions and
+    returns a formatted prompt for LLM execution. Optional context data can be
+    injected into the POML template to parameterize its behavior.
+
+    Args:
+        poml_path (str): The path to the `.poml` file that defines the capability instructions.
+        poml_context (dict[str, Any] | None, optional): Key-value pairs to inject
+            into the POML template for dynamic parameterization. Defaults to None.
+
+    Raises:
+        FileNotFoundError: If the specified `.poml` file does not exist.
+
+    Returns:
+        list[dict[str, Any]]: The formatted prompt to send to the LLMs.
+
+    """
+    poml_file = pathlib.Path(poml_path)
+    if not poml_file.exists():
+        raise FileNotFoundError(poml_file)
+    return poml(poml_file, context=poml_context)
 
 
 if __name__ == "__main__":

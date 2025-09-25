@@ -100,7 +100,7 @@ git clone https://github.com/Extelligence-ai/bagel.git; cd bagel
 
 #### 🐳 Run with Docker
 
-Open [compose.yaml](./compose.yaml) and pick a service (e.g., `ros2-kilted`).
+Open [compose.yaml](./compose.yaml) and pick a service based on your need (e.g., `ros2-kilted`).
 
 ```bash
 docker compose run --service-ports ros2-kilted
@@ -147,8 +147,55 @@ Now you're ready to launch your LLM and begin prompting. For example:
 
 ## 🐶 Teach Bagel a New Trick
 
-## 📚 Tutorials
+Bagel learns new capabilities through [POML](https://microsoft.github.io/poml/latest/)
+files—a structured set of instructions that describe a “trick,”
+such as [computing latency statistics](./src/agent/diagnose/latency.poml).
+
+#### ✍️ Create a .poml file
+
+For example, let’s define `./src/agent/examples/woof.poml`.
+
+```poml
+<poml>
+    <task>
+        Count the topics in the data source.
+        If the count is odd, say "woof", else say "meow".
+    </task>
+
+    <output-format>
+        Return the sound, the topic count, and a few cute emojis. Nothing else.
+    </output-format>
+</poml>
+```
+
+#### 🗣️ Use the capability
+
+Prompt Bagel:
+
+> Run the POML capability "./src/agent/examples/woof.poml" on the ROS2 bag "/home/ubuntu/runtime/data/sample/ros2/mcap".
+
+Result:
+
+```
+meow 🐱 4 topics 🐱💤🎯
+```
 
 ## 🫶 Contributing
 
+We’d love your help! The easiest way to support the project is by giving it a ⭐ on GitHub.
+
+Other great ways to contribute:
+
+- Request new features
+- Report bugs
+- Improve documentation
+- Add new capabilities
+
+Before contributing, please review the [guidelines](./CONTRIBUTING.md).
+
+Join the conversation in our [Discord server](https://discord.com/invite/QJDwuDGJsH) —
+we hang out there regularly.
+
 ## 📄 License
+
+Bagel is open source under the [Apache License 2.0](./LICENSE).
