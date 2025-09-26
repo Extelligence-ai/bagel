@@ -112,7 +112,6 @@ class SourceFactory(base.FileBasedSourceFactory):
                 "topic_metadata": {
                     "name": info.topic_metadata.name,
                     "type": info.topic_metadata.type,
-                    "type_description_hash": info.topic_metadata.type_description_hash,
                     "serialization_format": info.topic_metadata.serialization_format,
                 },
             }
