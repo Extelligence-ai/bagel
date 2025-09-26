@@ -13,7 +13,7 @@ def test_message_dataset() -> None:
     relation = dataset.to_duckdb(factory, registry)
 
     # THEN
-    assert relation.to_df().shape == (15, 5)
+    assert relation.shape == (15, 5)
 
 
 def test_can_select_topic() -> None:
@@ -26,7 +26,7 @@ def test_can_select_topic() -> None:
     relation = dataset.to_duckdb(factory, registry, topics=["/fluid_pressure"])
 
     # THEN
-    assert relation.to_df().shape == (7, 2)
+    assert relation.shape == (7, 2)
 
 
 def test_can_select_time_range() -> None:
@@ -41,7 +41,7 @@ def test_can_select_time_range() -> None:
     )
 
     # THEN
-    assert relation.to_df().shape == (2, 5)
+    assert relation.shape == (2, 5)
 
 
 def test_can_create_empty_table() -> None:
@@ -54,4 +54,4 @@ def test_can_create_empty_table() -> None:
     relation = dataset.to_duckdb(factory, registry, empty=True)
 
     # THEN
-    assert relation.to_df().shape == (0, 5)
+    assert relation.shape == (0, 5)

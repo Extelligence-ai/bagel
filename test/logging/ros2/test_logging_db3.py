@@ -13,7 +13,7 @@ def test_logging_dataset() -> None:
     relation = dataset.to_duckdb(factory, registry)
 
     # THEN
-    assert relation.to_df().shape == (8, 3)
+    assert relation.shape == (8, 3)
 
 
 def test_can_select_time_range() -> None:
@@ -28,4 +28,4 @@ def test_can_select_time_range() -> None:
     )
 
     # THEN
-    assert relation.to_df().shape == (2, 3)
+    assert relation.shape == (2, 3)
