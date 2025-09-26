@@ -6,7 +6,7 @@ from src.topic.px4.ulg import TopicRegistry
 def test_logging_dataset() -> None:
     # GIVEN
     factory = SourceFactory("data/sample/px4/sample.ulg")
-    registry = TopicRegistry()
+    registry = TopicRegistry(download_description=False)
     dataset = LoggingDataset()
 
     # WHEN
@@ -19,7 +19,7 @@ def test_logging_dataset() -> None:
 def test_can_select_time_range() -> None:
     # GIVEN
     factory = SourceFactory("data/sample/px4/sample.ulg")
-    registry = TopicRegistry()
+    registry = TopicRegistry(download_description=False)
     dataset = LoggingDataset()
 
     # WHEN

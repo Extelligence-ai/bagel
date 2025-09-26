@@ -8,7 +8,7 @@ def test_topic_registry() -> None:
     data_source = factory.build()
 
     # WHEN
-    registry = TopicRegistry()
+    registry = TopicRegistry(download_description=False)
 
     # THEN
     assert registry.available_topics(data_source) == [
