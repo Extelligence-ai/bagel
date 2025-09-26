@@ -41,6 +41,7 @@ RUN if [ "_${DEV_MODE}" = "_true" ]; then \
     fi
 
 # Copy source code
+<<<<<<< HEAD
 COPY --chown=${USERNAME}:${USERNAME} main.py ./
 COPY --chown=${USERNAME}:${USERNAME} app.py ./
 COPY --chown=${USERNAME}:${USERNAME} server.py ./
@@ -48,6 +49,24 @@ COPY --chown=${USERNAME}:${USERNAME} settings.py ./
 COPY --chown=${USERNAME}:${USERNAME} src ./src
 COPY --chown=${USERNAME}:${USERNAME} test ./test
 RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test; fi
+=======
+COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
+COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
+COPY --chown=${USERNAME}:${USERNAME} src/artifacts.py ./src/artifacts.py
+COPY --chown=${USERNAME}:${USERNAME} src/source/base.py ./src/source/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/source/errors.py ./src/source/errors.py
+COPY --chown=${USERNAME}:${USERNAME} src/topic/base.py ./src/topic/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/message/base.py ./src/message/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/logging/base.py ./src/logging/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/di ./src/di
+COPY --chown=${USERNAME}:${USERNAME} src/agent ./src/agent
+
+COPY --chown=${USERNAME}:${USERNAME} src/source/ros2 ./src/source/ros2
+COPY --chown=${USERNAME}:${USERNAME} src/topic/ros2 ./src/topic/ros2
+COPY --chown=${USERNAME}:${USERNAME} src/message/ros2 ./src/message/ros2
+COPY --chown=${USERNAME}:${USERNAME} src/logging/ros2 ./src/logging/ros2
+COPY --chown=${USERNAME}:${USERNAME} data/sample/ros2 ./data/sample/ros2
+>>>>>>> 641433b (Added runbook for claude code)
 
 # Assign default local host
 ARG BAGEL_LOCAL_HOST

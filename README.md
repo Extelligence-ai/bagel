@@ -118,13 +118,24 @@ INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 INFO:     172.18.0.1:63286 - "GET /sse HTTP/1.1" 200 OK
 ```
 
-You can verify it’s running by opening [http://0.0.0.0:8000/sse](http://0.0.0.0:8000/sse) in
-your browser. If successful, you should see output like:
+#### 🔗 Connect to an LLM
 
-```
-event: endpoint
-data: /messages/?session_id=d3daa0110c1041dead46bc6646dc4dc7
-```
+Once the Bagel MCP server is running, connect to the LLM of your choice. Bagel should work
+with any MCP-enabled LLM.
+
+<details>
+  <summary>📚 Runbooks for tested LLMs</summary>
+  - [Claude Code](./doc/runbooks/setup/claude_code.md)
+</details>
+
+Can't find your favorite LLM? [Open a ticket](https://github.com/shouhengyi/bagel/issues),
+and we’ll create a runbook for it.
+
+#### 🚀 Launch and Prompt
+
+Now you're ready to launch your LLM and begin prompting. For example:
+
+> Summarize the metadata of the ROS2 bag "./data/sample/ros2/mcap".
 
 ## 🐶 Teach Bagel a New Trick
 
