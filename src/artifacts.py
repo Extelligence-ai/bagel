@@ -9,6 +9,8 @@ from src import robolog
 
 def _short_digest(seeds: list[str]) -> str:
     """Generate a short SHA-256 digest from a list of seeds."""
+    if not seeds:
+        raise ValueError("Seeds list must not be empty.")
     return hashlib.sha256("_".join(seeds).encode("utf8")).hexdigest()[:8]
 
 
