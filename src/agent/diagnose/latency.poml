@@ -1,0 +1,36 @@
+<poml>
+    <task>
+        Generate step-by-step instructions to analyze message latency in the topic.
+        <stepwise-instructions>
+            <list listStyle="decimal">
+                <item>
+                    Calculate time differences between consecutive message timestamps
+                    in the `timestamp_seconds` column of the topic table.
+                    For example:
+                    <code lang="sql">
+                        SELECT
+                            timestamp_seconds,
+                            timestamp_seconds - LAG(timestamp_seconds) OVER (ORDER BY timestamp_seconds) AS latency
+                        FROM /topic_table
+                    </code>
+                </item>
+                <item>
+                    Summarize latency statistics, including minimum, maximum, average,
+                    median, and standard deviation, etc.
+                </item>
+                <item>
+                    Estimate message frequency. Determine whether messages are published
+                    at fixed intervals or if the topic is event-driven.
+                </item>
+                <item>
+                    Detect and describe any abnormalities or anomalies in the latency data.
+                </item>
+            </list>
+        </stepwise-instructions>
+    </task>
+
+    <output-format>
+        Provide an analysis report that includes the SQL query, computed latency statistics,
+        frequency estimation, and any identified anomalies.
+    </output-format>
+</poml>

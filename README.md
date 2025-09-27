@@ -6,163 +6,207 @@
 </p>
 
 <h1 align="center">
-  <a href="https://github.com/shouhengyi/bagel/blob/stage/LICENSE">
-    <img alt="Apache" src="https://img.shields.io/badge/license-Apache-blue.svg">
+  <a href="https://github.com/Extelligence-ai/bagel/blob/stage/LICENSE">
+    <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square">
+  </a>
+  <a>
+    <img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square">
   </a>
   <a href="https://github.com/Extelligence-ai/bagel/actions/workflows/publish.yaml">
-    <img alt="Health" src="https://img.shields.io/github/actions/workflow/status/Extelligence-ai/bagel/publish.yaml?branch=stage&label=publish">
+    <img src="https://img.shields.io/github/actions/workflow/status/Extelligence-ai/bagel/publish.yaml?branch=stage&label=publish&style=flat-square">
   </a>
   <a href="https://discord.gg/QJDwuDGJsH">
-    <img alt="Rerun Discord" src="https://img.shields.io/discord/1392632504908906506?label=Discord">
+    <img src="https://img.shields.io/discord/1392632504908906506?label=Discord&style=flat-square">
   </a>
 </h1>
 
----
-
-Bagel lets you **chat with your robotics and drone data**, just as you use ChatGPT.
-
-For example, you can ask Bagel to check a drone's IMU data for hard landings:
-
 <p align="center">
   <picture>
-    <img src="./doc/assets/hard_landings.gif" width="90%">
+    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/hero_dark_mode.png">
+    <img src="./doc/assets/hero_light_mode.png" width="100%">
   </picture>
 </p>
 
-You can also ask Bagel to calculate the maximum velocity:
+Unlike cat videos, most data are trapped in the physical world. Bagel unlocks them and
+**lets you chat with your physical data**—just like you do with ChatGPT. For example:
+
+> Is my IMU sensor overheating?
+
+Can’t wait to try it out? 👉 Check out the [Quickstart](#️-quickstart).
+
+### 🥯 Key Features
+
+- **Ask in plain language**: No deep domain expertise needed.
+- **Transparent calculations**: Deterministic SQL queries. No black-box LLM math.
+- **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, and more.
+- **Dockerized environments**: No local dependencies required.
+- **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
+- **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues).
+
+### ✅ Supported Data Formats
+
+| Industry     | Formats                    |
+| ------------ | -------------------------- |
+| **Robotics** | ROS1, ROS2                 |
+| **Drones**   | PX4, ArduPilot, Betaflight |
+| **IoT**      | Coming soon...             |
+
+## 💬 What Can I Prompt?
+
+You can ask Bagel almost anything. For example:
+
+> What’s the correlation between current and voltage in the `/spot/status/battery_states` topic?
+
+> I think the robot hit a pothole. Can you check for sudden deceleration on the z-axis to confirm?
+
+> Can you help me tune the PID of my drone?
+
+Time to put Bagel to the test: can it catch a drone doing barrel rolls? Spoiler: 🎉 It totally can.
 
 <p align="center">
   <picture>
-    <img src="./doc/assets/max_velocity.gif" width="90%">
+    <img src="./doc/assets/drone_rolls.gif" width="80%">
   </picture>
 </p>
 
-LLMs are great at predicting words, not at doing math, because they lack an innate mechanism for
-precise calculation [[1](https://medium.com/@adnanmasood/why-large-language-models-struggle-with-mathematical-reasoning-3dc8e9f964ae)].
-Bagel solves this by generating a **deterministic** and **auditable** DuckDB SQL query to run
-against the data.
+## 💡 How Bagel Works
+
+When you ask a question, Bagel analyzes your data source’s **metadata** and **topics** to
+build a high-level understanding.
 
 <p align="center">
   <picture>
-    <img src="./doc/assets/architecture_overview.png" width="90%">
+    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/high_level_dark_mode.png">
+    <img src="./doc/assets/high_level_light_mode.png" width="80%">
   </picture>
 </p>
 
-Bagel works with a wide range of common robotics and sensor log formats out of the box.
-Don't see your format? [Open a ticket](https://github.com/shouhengyi/bagel/issues).
+Based on your prompt, if further inspection is needed, Bagel identifies the most relevant topics
+and **interprets their meaning and structure**. Bagel then writes the relevant topic messages
+to an **Apache Arrow file** and uses **DuckDB** to generate and execute queries against it.
 
-| Format                             |
-| ---------------------------------- |
-| ✅ **ROS 2** (`.mcap`, `.db3`)     |
-| ✅ **ROS 1** (`.bag`)              |
-| ✅ **PX4** (`.ulg`)                |
-| ✅ **ArduPilot** (`.bin`)          |
-| ✅ **Betaflight** (`.bbl`, `.BFL`) |
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/llm_math_dark_mode.png">
+    <img src="./doc/assets/llm_math_light_mode.png" width="80%">
+  </picture>
+</p>
 
-Don't forget to join our [Discord server](https://discord.gg/QJDwuDGJsH)! We'll be there to answer
-your questions about Bagel and will sometimes drop merch!
+This process is repeated as needed, running new queries until Bagel finds the best answer
+to your question.
 
-## Quickstart
+LLMs excel at language but struggle with math. Bagel overcomes this by generating **deterministic**
+DuckDB SQL queries. These queries are displayed for you to **audit**, and you can guide Bagel to
+correct any errors.
 
-We are using ROS2 Kilted and Claude Code as example.
+## ⚡️ Quickstart
 
-```sh
-source /opt/ros/kilted/setup.sh  # Source ROS2 dependencies
-uv sync --group ros2             # Install PyPI packages
-uv run main.py up mcp            # Start Bagel MCP server
+#### 📋 Prerequisites
+
+Install [Docker Desktop](https://docs.docker.com/get-started/get-docker/), then clone this repo:
+
+```bash
+git clone https://github.com/Extelligence-ai/bagel.git; cd bagel
 ```
 
-Open another terminal and run:
+#### 🐳 Run with Docker
 
-```sh
-# Add Bagel MCP server to Claude Code
-claude mcp add --transport sse bagel http://localhost:8000/sse
+Open [compose.yaml](./compose.yaml) and pick a service based on your need (e.g., `ros2-kilted`).
 
-# Launch Claude Code
-claude
-
-# Happy prompting
-> Summarize the metadata of robolog "./doc/tutorials/data/ros2".
+```bash
+docker compose run --service-ports ros2-kilted
 ```
 
-The Bagel MCP server is **not exclusively tied to Claude**. You're free to integrate your
-preferred LLMs with Bagel.
+> [!TIP]
+> To give Bagel access to your local files, edit `compose.yaml` before starting Docker:
+> uncomment and update the `volumes` section under your chosen service.
 
-### Tutorials
+Your terminal should show output similar to:
 
-- [Claude Code, PX4 ULog](./doc/tutorials/mcp/0_claude_code_px4.ipynb)
-- [Gemini CLI, ROS2 Bag](./doc/tutorials/mcp/1_gemini_cli_ros2.ipynb)
-- [Cursor, PX4 ULog](./doc/tutorials/mcp/2_cursor_px4.ipynb)
-- [Claude Code, ArduPilot Dataflash](./doc/tutorials/mcp/3_claude_code_ardupilot.ipynb)
-- [Claude Code, Betaflight](./doc/tutorials/mcp/4_claude_code_betaflight.ipynb)
-- [Build a Data Pipeline from a PX4 ULog](./doc/tutorials/pipelines/0_basics.ipynb)
-- [Read Topic Messages from a ROS2 Bag](./doc/tutorials/readers/1_read_by_topic.ipynb)
-
-### Running in Docker 🐳
-
-To run Bagel without installing local dependencies like ROS, you can use our provided Docker images. Make sure you have [Docker Desktop](https://docs.docker.com/desktop/) installed. This example uses ROS 2 Kilted.
-
-#### Mount Your Data
-
-First, give the container access to your robolog files. Open the [compose.yaml](./compose.yaml) file and find the service you want to use (e.g., ros2-kilted). Edit the volumes section to link your local data folder to the container's data folder.
-
-```yaml
-services:
-  ros2-kilted:
-    ...
-    # volumes:                                     <-- ✅ Uncomment
-    #   - <path-to-local-data>:/home/ubuntu/data   <-- ✅ Uncomment & Replace
+```
+INFO:     Started server process [86]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
-Your local robolog files will be accessible inside the container at `/home/ubuntu/data`.
+#### 🔗 Connect to an LLM
 
-#### Launch the MCP Server
+Once the Bagel MCP server is running, connect it to your preferred LLM.
+Bagel should work with any MCP-enabled LLM, though some setup may be required.
+We’ve tested several LLMs—expand the runbooks below for setup instructions.
 
-Build and start the Bagel MCP server in a container with these commands:
+<details>
+  <summary>📚 Setup runbooks for tested LLMs</summary>
 
-```sh
-docker compose build ros2-kilted
-docker compose run --service-ports ros2-kilted uv run main.py up mcp
+- [Claude Code](./doc/runbooks/setup/claude_code.md)
+- [Gemini CLI](./doc/runbooks/setup/gemini_cli.md)
+- [Codex](./doc/runbooks/setup/codex.md)
+- [Cursor](./doc/runbooks/setup/cursor.md)
+- [Copilot](./doc/runbooks/setup/copilot.md)
+
+</details>
+
+Can't find your favorite LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues),
+and we’ll create a runbook for it.
+
+#### 🚀 Launch and Prompt
+
+Now you're ready to launch your LLM and begin prompting. For example:
+
+> Summarize the metadata of the ROS2 bag "./data/sample/ros2/mcap".
+
+## 🐶 Teach Bagel a New Trick
+
+Bagel learns new capabilities through [POML](https://microsoft.github.io/poml/latest/)
+files—a structured set of instructions that describe a “trick,”
+such as [computing latency statistics](./src/agent/diagnose/latency.poml).
+
+#### ✍️ Create a .poml file
+
+For example, let’s define `./src/agent/examples/woof.poml`.
+
+```poml
+<poml>
+    <task>
+        Count the topics in the data source.
+        If the count is odd, say "woof", else say "meow".
+    </task>
+
+    <output-format>
+        Return the sound, the topic count, and a few cute emojis. Nothing else.
+    </output-format>
+</poml>
 ```
 
-Once you run this, if you don't want to rebuild the container, you can just run the second command.
+#### 🗣️ Use the capability
 
-## Roadmap
+Prompt Bagel:
 
-If there's something you have feedback on, or something you'd like to see, file a
-[feature request](https://github.com/Extelligence-ai/bagel/issues) and let us know!
+> Run the POML capability "./src/agent/examples/woof.poml" on the ROS2 bag "./data/sample/ros2/mcap".
 
-Features are organized into **Versions** for easier tracking. New features will be released regularly, and this README.md will be updated to show which ones have shipped. Strikethrough text indicates completed features.
+Result:
 
-#### V1
+```
+meow 🐱 4 topics 🐱💤🎯
+```
 
-- Computer Vision (CV) Module
-  - Video Language Model
-  - Anomaly detection
-  - Similarity search
-- More Robotics Formats
-  - ~~[Ardupilot](https://ardupilot.org/)~~
-  - ~~[Betaflight](https://betaflight.com/)~~
-- More LLMs
-  - ~~Cursor~~
-  - OpenAI
-  - Llama
-  - Copilot
+## 🫶 Contributing
 
-#### V1.5
+We’d love your help! The easiest way to support the project is by giving it a ⭐ on GitHub.
 
-- Troubleshooting Toolkit
-- Better User Experience
-  - Message pagination
-  - MCP resources
-  - DSL for querying nested topic messages
-- Easy Model Integration
+Other great ways to contribute:
 
-#### V2
+- Request new features
+- Report bugs
+- Improve documentation
+- Add new capabilities
 
-- Platform Integration
-  - Foxglove
-  - Rerun
-- Better User Experience
-  - Pip install and PyPI package
-  - `bagel` CLI
+Before contributing, please review the [guidelines](./CONTRIBUTING.md).
+
+Join the conversation in our [Discord server](https://discord.com/invite/QJDwuDGJsH) —
+we hang out there regularly.
+
+## 📄 License
+
+Bagel is open source under the [Apache License 2.0](./LICENSE).

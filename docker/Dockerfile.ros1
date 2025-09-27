@@ -19,8 +19,8 @@ RUN rm -f \
     /usr/share/keyrings/ros-archive-keyring.gpg
 
 # Remove the expired GPG key associated with Open Robotics, if present
-ARG GPG_KEY=F42ED6FBAB17C654
-RUN if apt-key list | grep -q "${GPG_KEY}"; then \
+RUN GPG_KEY=F42ED6FBAB17C654; \
+    if apt-key list | grep -q "${GPG_KEY}"; then \
     apt-key del "${GPG_KEY}"; \
     else \
     echo "GPG Key ${GPG_KEY} not found, skipping deletion."; \
@@ -89,28 +89,48 @@ RUN if [ "_${DEV_MODE}" = "_true" ]; then \
     uv sync --no-dev --group ros1; \
     fi
 
-# Copy source code
-COPY --chown=${USERNAME}:${USERNAME} main.py ./
-COPY --chown=${USERNAME}:${USERNAME} app.py ./
-COPY --chown=${USERNAME}:${USERNAME} server.py ./
-COPY --chown=${USERNAME}:${USERNAME} settings.py ./
-COPY --chown=${USERNAME}:${USERNAME} src ./src
-COPY --chown=${USERNAME}:${USERNAME} test ./test
-RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test; fi
-
 # Assign default local host
 ARG BAGEL_LOCAL_HOST
 ENV BAGEL_LOCAL_HOST=${BAGEL_LOCAL_HOST}
-
-# Expose webapp port
-ARG BAGEL_WEBAPP_LOCAL_PORT
-ENV BAGEL_WEBAPP_LOCAL_PORT=${BAGEL_WEBAPP_LOCAL_PORT}
-EXPOSE ${BAGEL_WEBAPP_LOCAL_PORT}
 
 # Expose MCP server port
 ARG BAGEL_MCP_LOCAL_PORT
 ENV BAGEL_MCP_LOCAL_PORT=${BAGEL_MCP_LOCAL_PORT}
 EXPOSE ${BAGEL_MCP_LOCAL_PORT}
+
+# Copy common source code
+COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
+COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
+COPY --chown=${USERNAME}:${USERNAME} src/artifacts.py ./src/artifacts.py
+COPY --chown=${USERNAME}:${USERNAME} src/source/base.py ./src/source/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/source/errors.py ./src/source/errors.py
+COPY --chown=${USERNAME}:${USERNAME} src/topic/base.py ./src/topic/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/message/base.py ./src/message/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/logging/base.py ./src/logging/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/di ./src/di
+COPY --chown=${USERNAME}:${USERNAME} src/agent ./src/agent
+
+# Copy common test code
+COPY --chown=${USERNAME}:${USERNAME} test/test_artifacts.py ./test/test_artifacts.py
+COPY --chown=${USERNAME}:${USERNAME} test/di ./test/di
+COPY --chown=${USERNAME}:${USERNAME} test/source/test_source_base.py ./test/source/test_source_base.py
+
+# Copy sample data
+COPY --chown=${USERNAME}:${USERNAME} data/sample/ ./data/sample/
+
+# Copy ROS2 specific source code
+COPY --chown=${USERNAME}:${USERNAME} src/source/ros1 ./src/source/ros1
+COPY --chown=${USERNAME}:${USERNAME} src/topic/ros1 ./src/topic/ros1
+COPY --chown=${USERNAME}:${USERNAME} src/message/ros1 ./src/message/ros1
+COPY --chown=${USERNAME}:${USERNAME} src/logging/ros1 ./src/logging/ros1
+
+# Copy ROS2 specific test code
+COPY --chown=${USERNAME}:${USERNAME} test/source/ros1 ./test/source/ros1
+COPY --chown=${USERNAME}:${USERNAME} test/topic/ros1 ./test/topic/ros1
+COPY --chown=${USERNAME}:${USERNAME} test/message/ros1 ./test/message/ros1
+COPY --chown=${USERNAME}:${USERNAME} test/logging/ros1 ./test/logging/ros1
+
+RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test ./data; fi
 
 # By default, the webapp will be launched
 CMD ["uv", "run", "main.py", "up", "webapp"]

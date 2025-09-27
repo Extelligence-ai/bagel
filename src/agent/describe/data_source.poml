@@ -1,0 +1,36 @@
+<poml>
+    <task>
+        Generate a high-level summary of the data source.
+        <stepwise-instructions>
+            <list listStyle="decimal">
+                <item>
+                    Create a "Summary" section that describes the overall purpose of the data
+                    source. Under 200 words.
+                </item>
+                <item>
+                    Create a "Metadata" section. Group related metadata fields together by their
+                    semantic meaning (e.g., time-related fields, setting parameters, etc.), and
+                    list each group with its fields and values.
+                </item>
+                <item>
+                    Create a "Topics" section. Group the available topics by their semantic meaning
+                    (e.g., control, sensor, camera, etc.), list each group with its topics.
+                </item>
+            </list>
+        </stepwise-instructions>
+    </task>
+
+    <human-msg>
+        <cp caption="Metadata in the Data Source">
+            <object syntax="json" data="{{metadata}}" />
+        </cp>
+        <cp caption="Available Topics in the Data Source">
+            <object syntax="json" data="{{topics}}" />
+        </cp>
+    </human-msg>
+
+    <output-format>
+        Respond with the markdown document with the "Summary", "Metadata", and "Topics" sections
+        included without additional characters or punctuations.
+    </output-format>
+</poml>
