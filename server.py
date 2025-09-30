@@ -199,5 +199,85 @@ def calculate_latency(robolog_path: str, topic: str) -> list[dict[str, Any]]:
     )
 
 
+@server.tool(title="Parse topic structure and show message schema with samples.")
+def parse_message_structure(robolog_path: str, topic: str | None = None) -> list[dict[str, Any]]:
+    """Parse a topic in a robotics log and emit a human-readable message schema with samples.
+
+    Args:
+        robolog_path (str): Path to the robolog.
+        topic (str | None): The topic to analyze. If None, will show available topics.
+
+    Returns:
+        list[dict[str, Any]]: The formatted prompt to send to the LLMs.
+
+    """
+    return poml(
+        "./src/agent/diagnostics/message_structure.poml",
+        context={"robolog_path": robolog_path, "topic": topic},
+    )
+
+
+@server.tool(title="Analyze trajectory data and generate comprehensive trajectory analysis.")
+def analyze_trajectory(
+    robolog_path: str, 
+    start_seconds: float | None = None, 
+    end_seconds: float | None = None
+) -> list[dict[str, Any]]:
+    """Analyze trajectory data from a robotics log and generate comprehensive analysis.
+
+    Args:
+        robolog_path (str): Path to the robolog.
+        start_seconds (float | None): Start time for analysis in seconds. If None, analyze from beginning.
+        end_seconds (float | None): End time for analysis in seconds. If None, analyze to end.
+
+    Returns:
+        list[dict[str, Any]]: The formatted prompt to send to the LLMs.
+
+    """
+    # Create a custom POML context that includes time filtering instructions
+    context = {
+        "robolog_path": robolog_path,
+        "has_time_filter": start_seconds is not None or end_seconds is not None,
+        "start_seconds": start_seconds,
+        "end_seconds": end_seconds
+    }
+    
+    return poml(
+        "./src/agent/diagnostics/trajectory_analysis.poml",
+        context=context,
+    )
+
+
+@server.tool(title="Inspect trajectory data and generate visual insights from robotics log data.")
+def inspect_trajectory(
+    robolog_path: str, 
+    start_seconds: float | None = None, 
+    end_seconds: float | None = None
+) -> list[dict[str, Any]]:
+    """Inspect trajectory data and generate visual insights from robotics log data.
+
+    Args:
+        robolog_path (str): Path to the robolog.
+        start_seconds (float | None): Start time for analysis in seconds. If None, analyze from beginning.
+        end_seconds (float | None): End time for analysis in seconds. If None, analyze to end.
+
+    Returns:
+        list[dict[str, Any]]: The formatted prompt to send to the LLMs.
+
+    """
+    # Create a custom POML context that includes time filtering instructions
+    context = {
+        "robolog_path": robolog_path,
+        "has_time_filter": start_seconds is not None or end_seconds is not None,
+        "start_seconds": start_seconds,
+        "end_seconds": end_seconds
+    }
+    
+    return poml(
+        "./src/agent/diagnostics/inspect_trajectory.poml",
+        context=context,
+    )
+
+
 if __name__ == "__main__":
     server.run(transport="sse")
