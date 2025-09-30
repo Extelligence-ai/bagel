@@ -1,0 +1,151 @@
+<poml>
+    <task>
+        Analyze trajectory data from a robotics log and generate comprehensive trajectory analysis including path metrics, waypoints, profiles, and constraints.
+        <stepwise-instructions>
+            <list>
+                <item>
+                    Verify that the robolog file exists at the path: {{robolog_path}}.
+                </item>
+                <item>
+                    If time filtering is requested ({{has_time_filter}} is true), use the start_seconds={{start_seconds}} and end_seconds={{end_seconds}} parameters when calling query_topic_messages to filter the data to the specified time window.
+                </item>
+                <item>
+                    Use Bagel's `read_metadata` function to get basic information about the log and identify available topics.
+                </item>
+                <item>
+                    Use Bagel's `describe_topics` function to identify topics containing position/pose data (look for topics like vehicle_local_position, vehicle_global_position, vehicle_attitude, trajectory_setpoint, etc.).
+                </item>
+                <item>
+                    Use Bagel's `query_topic_messages` function to extract trajectory data using SQL queries like:
+                    - "SELECT timestamp_seconds, x, y, z, vx, vy, vz, yaw FROM vehicle_local_position ORDER BY timestamp_seconds"
+                    - "SELECT timestamp_seconds, x, y, z, vx, vy, vz, yaw FROM vehicle_global_position ORDER BY timestamp_seconds"
+                    - "SELECT timestamp_seconds, x, y, z, vx, vy, vz, yaw FROM trajectory_setpoint ORDER BY timestamp_seconds"
+                </item>
+                <item>
+                    Calculate trajectory metrics:
+                    - n_samples: total number of data points
+                    - duration_s: time span from first to last sample
+                    - path_length_m: cumulative distance along the path
+                    - avg_speed_mps: average speed over the trajectory
+                    - max_speed_mps: maximum instantaneous speed
+                    - max_accel_mps2: maximum acceleration magnitude
+                    - max_curvature_minv: maximum curvature (1/radius of curvature)
+                </item>
+                <item>
+                    Identify waypoints and key trajectory events:
+                    - start: first position with timestamp 0 or earliest
+                    - corners: significant direction changes (high curvature points)
+                    - stops: periods where speed &lt; 0.05 m/s for &gt; 1.0 seconds
+                    - goal: final position in the trajectory
+                    - For each waypoint, calculate position (x, y), orientation (yaw), timestamp (t), and curvature (kappa) where applicable
+                </item>
+                <item>
+                    Generate trajectory profiles by extracting time series data:
+                    - t: timestamps
+                    - x, y: position coordinates
+                    - yaw: orientation
+                    - v: speed magnitude
+                    - a: acceleration magnitude
+                    - omega: angular velocity
+                    - kappa: curvature
+                </item>
+                <item>
+                    Check for constraint violations:
+                    - overspeed_events: count of speed limit violations
+                    - overaccel_events: count of acceleration limit violations
+                    - overcurv_events: count of curvature limit violations
+                    - tracking_rmse_m: root mean square error from reference trajectory (if available)
+                </item>
+                <item>
+                    Generate artifacts (plots and data files):
+                    - Create path visualization (x vs y plot)
+                    - Create speed profile (speed vs time)
+                    - Create acceleration profile (acceleration vs time)
+                    - Export trajectory data as CSV
+                </item>
+                <item>
+                    Format the output as a structured JSON object with summary, waypoints, profiles, constraints, and artifacts sections.
+                </item>
+                <item>
+                    If no trajectory data is found in the log, inform the user and suggest alternative topics to analyze.
+                </item>
+            </list>
+        </stepwise-instructions>
+        <example>
+            <output>
+                {
+                  "summary": {
+                    "n_samples": 1500,
+                    "duration_s": 30.0,
+                    "path_length_m": 21.4,
+                    "avg_speed_mps": 0.71,
+                    "max_speed_mps": 1.32,
+                    "max_accel_mps2": 0.9,
+                    "max_curvature_minv": 0.42
+                  },
+                  "waypoints": [
+                    {
+                      "type": "start",
+                      "t": 0.0,
+                      "x": 0.0, "y": 0.0, "yaw": 0.0,
+                      "notes": "Trajectory start"
+                    },
+                    {
+                      "type": "corner",
+                      "t": 8.4,
+                      "x": 5.1, "y": 2.0, "yaw": 1.57,
+                      "kappa": 0.38,
+                      "notes": "Left turn detected"
+                    },
+                    {
+                      "type": "stop",
+                      "t": 15.7,
+                      "x": 8.4, "y": 6.2, "yaw": 1.55,
+                      "notes": "Robot paused &lt;0.05 m/s for &gt;1.0 s"
+                    },
+                    {
+                      "type": "goal",
+                      "t": 29.8,
+                      "x": 10.2, "y": 10.0, "yaw": 0.0,
+                      "notes": "Trajectory end"
+                    }
+                  ],
+                  "profiles": {
+                    "t": [0.0, 0.02, 0.04, "..."],
+                    "x": [0.0, 0.01, 0.02, "..."],
+                    "y": [0.0, 0.0, 0.01, "..."],
+                    "yaw": [0.0, 0.01, 0.01, "..."],
+                    "v": [0.0, 0.6, 0.62, "..."],
+                    "a": [0.1, 0.0, -0.05, "..."],
+                    "omega": [0.0, 0.0, 0.02, "..."],
+                    "kappa": [0.0, 0.01, 0.01, "..."]
+                  },
+                  "constraints": {
+                    "overspeed_events": 0,
+                    "overaccel_events": 1,
+                    "overcurv_events": 0,
+                    "tracking_rmse_m": 0.12
+                  },
+                  "artifacts": [
+                    {
+                      "kind": "plot",
+                      "path": "artifacts/path_xy.png",
+                      "preview": "![Path](artifacts/path_xy.png)"
+                    },
+                    {
+                      "kind": "plot",
+                      "path": "artifacts/speed_profile.png"
+                    },
+                    {
+                      "kind": "csv",
+                      "path": "artifacts/trajectory.csv"
+                    }
+                  ]
+                }
+            </output>
+        </example>
+    </task>
+    <output-format>
+        Respond with a structured JSON object containing trajectory analysis results including summary metrics, waypoints, profiles, constraints, and artifacts.
+    </output-format>
+</poml>

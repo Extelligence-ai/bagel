@@ -1,0 +1,113 @@
+<poml>
+    <task>
+        Create comprehensive trajectory visualizations and insights from robotics log data, focusing on visual analysis and key metrics extraction.
+        <stepwise-instructions>
+            <list>
+                <item>
+                    Verify that the robolog file exists at the path: {{robolog_path}}.
+                </item>
+                <item>
+                    If time filtering is requested ({{has_time_filter}} is true), use the start_seconds={{start_seconds}} and end_seconds={{end_seconds}} parameters when calling query_topic_messages to filter the data to the specified time window.
+                </item>
+                <item>
+                    Use Bagel's `read_metadata` function to get basic information about the log and identify available topics.
+                </item>
+                <item>
+                    Use Bagel's `describe_topics` function to identify topics containing position/pose data (look for topics like vehicle_local_position, vehicle_global_position, vehicle_attitude, trajectory_setpoint, etc.).
+                </item>
+                <item>
+                    Use Bagel's `query_topic_messages` function to extract trajectory data using SQL queries like:
+                    - "SELECT timestamp_seconds, vehicle_local_position_0.x, vehicle_local_position_0.y, vehicle_local_position_0.z, vehicle_local_position_0.vx, vehicle_local_position_0.vy, vehicle_local_position_0.vz, vehicle_local_position_0.heading FROM vehicle_local_position_0 ORDER BY timestamp_seconds"
+                    - "SELECT timestamp_seconds, vehicle_global_position_0.lat, vehicle_global_position_0.lon, vehicle_global_position_0.alt FROM vehicle_global_position_0 ORDER BY timestamp_seconds"
+                    - "SELECT timestamp_seconds, vehicle_attitude_0.q[0], vehicle_attitude_0.q[1], vehicle_attitude_0.q[2], vehicle_attitude_0.q[3] FROM vehicle_attitude_0 ORDER BY timestamp_seconds"
+                </item>
+                <item>
+                    Calculate key trajectory metrics:
+                    - total_distance: cumulative path length
+                    - max_altitude: highest point reached
+                    - min_altitude: lowest point reached
+                    - altitude_range: max_altitude - min_altitude
+                    - avg_speed: average velocity magnitude
+                    - max_speed: peak velocity
+                    - flight_duration: total time span
+                    - publication_rate: messages per second
+                </item>
+                <item>
+                    Identify key flight phases:
+                    - takeoff: initial ascent phase
+                    - cruise: steady flight phase
+                    - maneuvers: turns, altitude changes
+                    - landing: final descent phase
+                </item>
+                <item>
+                    Generate trajectory insights:
+                    - flight_pattern: straight, circular, figure-8, etc.
+                    - altitude_profile: climbing, descending, hovering
+                    - speed_profile: acceleration, deceleration, steady
+                    - orientation_changes: yaw, pitch, roll variations
+                </item>
+                <item>
+                    Create visualization descriptions:
+                    - 3D_trajectory: "3D path showing altitude changes and horizontal movement"
+                    - 2D_top_view: "Bird's eye view of the flight path"
+                    - altitude_plot: "Height over time showing climb/descent phases"
+                    - speed_plot: "Velocity magnitude over time"
+                    - orientation_plot: "Attitude angles (yaw, pitch, roll) over time"
+                </item>
+                <item>
+                    Generate summary statistics:
+                    - flight_efficiency: distance vs. time ratio
+                    - stability_metrics: position and velocity variance
+                    - performance_indicators: max acceleration, max angular velocity
+                </item>
+                <item>
+                    Return the visualization analysis in the specified JSON format.
+                </item>
+            </list>
+        </stepwise-instructions>
+        <output-format>
+            Respond in JSON, with the following structure:
+            {
+              "summary": {
+                "total_distance_m": float,
+                "max_altitude_m": float,
+                "min_altitude_m": float,
+                "altitude_range_m": float,
+                "avg_speed_mps": float,
+                "max_speed_mps": float,
+                "flight_duration_s": float,
+                "publication_rate_hz": float
+              },
+              "flight_phases": [
+                {
+                  "phase": "takeoff" | "cruise" | "maneuver" | "landing",
+                  "start_time_s": float,
+                  "end_time_s": float,
+                  "duration_s": float,
+                  "description": string
+                }
+              ],
+              "trajectory_insights": {
+                "flight_pattern": string,
+                "altitude_profile": string,
+                "speed_profile": string,
+                "orientation_changes": string
+              },
+              "visualizations": [
+                {
+                  "type": "3D_trajectory" | "2D_top_view" | "altitude_plot" | "speed_plot" | "orientation_plot",
+                  "description": string,
+                  "key_insights": string
+                }
+              ],
+              "performance_metrics": {
+                "flight_efficiency": float,
+                "position_stability": float,
+                "velocity_stability": float,
+                "max_acceleration_mps2": float,
+                "max_angular_velocity_radps": float
+              }
+            }
+        </output-format>
+    </task>
+</poml>
