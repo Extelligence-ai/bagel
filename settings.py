@@ -14,10 +14,10 @@ class Settings(BaseSettings):
     """Settings for Bagel."""
 
     model_config = SettingsConfigDict(
-        env_prefix="BAGEL_",
         case_sensitive=True,
         env_file=".env",
         env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     # Directory for caching intermediate artifacts
@@ -35,11 +35,19 @@ class Settings(BaseSettings):
     # Column name for timestamps in arrow files, i.e., when messages were recorded
     TIMESTAMP_SECONDS_COLUMN_NAME: str = "timestamp_seconds"
 
-    # Local host of bagel
-    LOCAL_HOST: str = "0.0.0.0"  # noqa: S104
+    ################################################
+    # The default values of the following settings #
+    # are specified via the ".env" file.           #
+    ################################################
 
-    # Port of the MCP server (port to listen on for SSE transport)
-    MCP_LOCAL_PORT: int = 8000
+    # Whether running in a container
+    CONTAINER_MODE: bool
+
+    # Host of the MCP server
+    MCP_SERVER_HOST: str
+
+    # Port of the MCP server
+    MCP_SERVER_PORT: int
 
 
 settings = Settings()
