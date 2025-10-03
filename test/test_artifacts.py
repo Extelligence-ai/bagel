@@ -18,7 +18,7 @@ def test_should_return_arrow_file() -> None:
     # THEN
     assert str(result) == str(
         pathlib.Path(settings.CACHE_DIRECTORY)
-        / "arrow_files"
+        / "data"
         / "source_id=00000000-1111-2222-3333-444444444444"
         / "topic_f3aebf10.arrow"
     )

@@ -23,7 +23,7 @@ class MessageDataset(base.MessageDataset):
         topics: list[str],
         start_seconds_inclusive: float | None,
         end_seconds_exclusive: float | None,
-    ) -> Iterator[str, float, dict[str, Any]]:
+    ) -> Iterator[tuple[str, float, dict[str, Any]]]:
         """Return an iterator of topic name, timestamp in seconds, and message dictionary."""
         timestamps_and_indices, datasets = {}, {}
         for topic in topics:
@@ -68,7 +68,7 @@ class MessageDataset(base.MessageDataset):
 
     def _to_json(self, message: dict[str, Any], struct: pa.StructType) -> dict[str, Any]:
         """Cast a message dictionary into a JSON-serializable dictionary."""
-        return message  # identity function since message is already a dict
+        return message  # no-op, already JSON-serializable
 
 
 def register() -> None:

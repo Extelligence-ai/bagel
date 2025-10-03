@@ -12,7 +12,7 @@ MILLISECOND = 1_000 * MICROSECOND
 SECOND = 1_000 * MILLISECOND
 
 
-class SourceFactory(base.FileBasedSourceFactory):
+class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
     """A data source factory for reading from PX4 ULogs."""
 
     def __init__(
@@ -42,7 +42,8 @@ class SourceFactory(base.FileBasedSourceFactory):
     def metadata(self) -> dict[str, Any]:
         """Return metadata about the ULog."""
         return {
-            **super().metadata,
+            **self._bounded_metadata,
+            **self._file_based_metadata,
             "msg_info_dict": self.msg_info_dict,
             "default_parameters": self.default_parameters,
             "initial_parameters": self.initial_parameters,

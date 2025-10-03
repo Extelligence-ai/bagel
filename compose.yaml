@@ -1,65 +1,140 @@
 services:
   ros2-kilted:
     image: ghcr.io/extelligence-ai/bagel/ros2-kilted:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ros2
+      args:
+        ROS_DISTRO: kilted
+        UV_VERSION: 0.8.0
+        DEV_MODE: false
+        MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+    environment:
+      CONTAINER_MODE: true
     ports:
-      - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
-      - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
+      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # volumes:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   ros2-jazzy:
     image: ghcr.io/extelligence-ai/bagel/ros2-jazzy:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ros2
+      args:
+        ROS_DISTRO: jazzy
+        UV_VERSION: 0.8.0
+        DEV_MODE: false
+        MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+    environment:
+      CONTAINER_MODE: true
     ports:
-      - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
-      - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
+      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # volumes:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   ros2-iron:
     image: ghcr.io/extelligence-ai/bagel/ros2-iron:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ros2
+      args:
+        ROS_DISTRO: iron
+        UV_VERSION: 0.8.0
+        DEV_MODE: false
+        MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+    environment:
+      CONTAINER_MODE: true
     ports:
-      - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
-      - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
+      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # volumes:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   ros2-humble:
     image: ghcr.io/extelligence-ai/bagel/ros2-humble:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ros2
+      args:
+        ROS_DISTRO: humble
+        UV_VERSION: 0.8.0
+        DEV_MODE: false
+        MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+    environment:
+      CONTAINER_MODE: true
     ports:
-      - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
-      - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
+      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # volumes:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic:
     image: ghcr.io/extelligence-ai/bagel/ros1-noetic:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ros1
+      args:
+        UV_VERSION: 0.8.0
+        DEV_MODE: false
+        MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+    environment:
+      CONTAINER_MODE: true
     ports:
-      - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
-      - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
+      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
     # volumes:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   px4:
     image: ghcr.io/extelligence-ai/bagel/px4:latest
-
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.px4
+      args:
+        UV_VERSION: 0.8.0
+        DEV_MODE: false
+        MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+    environment:
+      CONTAINER_MODE: true
     ports:
-      - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
-      - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
+      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
     # volumes:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   ardupilot:
     image: ghcr.io/extelligence-ai/bagel/ardupilot:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ardupilot
+      args:
+        UV_VERSION: 0.8.0
+        DEV_MODE: false
+        MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+    environment:
+      CONTAINER_MODE: true
     ports:
-      - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
-      - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
+      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
     # volumes:
     #   - <path-to-local-data>:/home/ubuntu/data
 
   betaflight:
     image: ghcr.io/extelligence-ai/bagel/betaflight:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.betaflight
+      args:
+        UV_VERSION: 0.8.0
+        DEV_MODE: false
+        MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+    environment:
+      CONTAINER_MODE: true
     ports:
-      - "${BAGEL_WEBAPP_LOCAL_PORT:-8501}:${BAGEL_WEBAPP_LOCAL_PORT:-8501}"
-      - "${BAGEL_MCP_LOCAL_PORT:-8000}:${BAGEL_MCP_LOCAL_PORT:-8000}"
+      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
     # volumes:
     #   - <path-to-local-data>:/home/ubuntu/data

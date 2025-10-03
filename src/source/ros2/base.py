@@ -14,7 +14,7 @@ MILLISECOND = 1_000 * MICROSECOND
 SECOND = 1_000 * MILLISECOND
 
 
-class SourceFactory(base.FileBasedSourceFactory):
+class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
     """A base class for factories of ROS2 bag data source."""
 
     def __init__(self, path: str) -> None:
@@ -32,7 +32,8 @@ class SourceFactory(base.FileBasedSourceFactory):
     def metadata(self) -> dict[str, Any]:
         """Return metadata about the ROS2 bag."""
         return {
-            **super().metadata,
+            **self._bounded_metadata,
+            **self._file_based_metadata,
             "version": self.version,
             "storage_identifier": self.storage_identifier,
             "compression_format": self.compression_format,

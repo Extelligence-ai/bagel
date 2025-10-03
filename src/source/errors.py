@@ -21,3 +21,7 @@ class InvalidFileExtensionError(Exception):
     def __init__(self, extension: str, path: pathlib.Path) -> None:
         """Initialize the error."""
         super().__init__(f"Expected a file with extension {extension} but got: {path}")
+
+
+class InvalidPathError(Exception):
+    """Raised when a path is invalid."""

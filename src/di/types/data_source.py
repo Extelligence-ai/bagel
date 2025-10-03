@@ -17,6 +17,7 @@ class DataSource(Enum):
     ARDUPILOT_BIN = "ardupilot.bin"
     BETAFLIGHT_BBL = "betaflight.bbl"
     BETAFLIGHT_BFL = "betaflight.bfl"
+    BAGEL_SINK = "bagel.sink"
 
 
 def resolve(path: str) -> DataSource:
@@ -33,7 +34,9 @@ def resolve(path: str) -> DataSource:
 def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # noqa: PLR0911
     """Resolve the data source type from the given file or directory path."""
     path = pathlib.Path(path)
-    if is_ros1_bag_file(path):
+    if is_bagel_sink_directory(path):
+        return DataSource.BAGEL_SINK
+    elif is_ros1_bag_file(path):
         return DataSource.ROS1_BAG
     elif is_ros2_db3_file(path) or is_ros2_db3_zstd_file(path) or is_ros2_db3_directory(path):
         return DataSource.ROS2_DB3
@@ -154,3 +157,20 @@ def is_betaflight_bbl_file(path: pathlib.Path) -> bool:
 def is_betaflight_bfl_file(path: pathlib.Path) -> bool:
     """Check if the given path is a Betaflight .BFL file."""
     return has_magic_bytes(path, b"H Product:") and path.suffix.lower() == ".bfl"
+
+
+def is_bagel_sink_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing a Bagel topic sink."""
+    if not path.is_dir():
+        return False
+
+    metadata_file = path / "metadata.yaml"
+    if not metadata_file.exists():
+        return False
+    metadata = yaml.safe_load(metadata_file.read_text())
+
+    magic = metadata.get("magic")
+    if magic != "BAGEL_SINK":
+        return False
+
+    return True

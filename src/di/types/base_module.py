@@ -10,3 +10,4 @@ class BaseModule(Enum):
     TOPIC_REGISTRY = "src.topic"
     MESSAGE_DATASET = "src.message"
     LOGGING_DATASET = "src.logging"
+    MESSAGE_SINK = "src.sink"

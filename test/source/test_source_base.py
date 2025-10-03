@@ -1,4 +1,5 @@
 import pathlib
+from typing import Any
 
 from src.source import base
 
@@ -23,6 +24,10 @@ class MockBoundedSourceFactory(base.BoundedSourceFactory):
     def end_seconds(self) -> float:
         return 10.0
 
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return self._bounded_metadata
+
 
 class MockFileBasedSourceFactory(base.FileBasedSourceFactory):
     def build(self) -> object:
@@ -39,6 +44,10 @@ class MockFileBasedSourceFactory(base.FileBasedSourceFactory):
     @property
     def end_seconds(self) -> float:
         return 10.0
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return self._file_based_metadata
 
     def validate_path(self) -> tuple[bool, Exception | None]:
         return True, None

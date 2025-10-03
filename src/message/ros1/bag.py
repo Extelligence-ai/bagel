@@ -21,7 +21,7 @@ class MessageDataset(base.MessageDataset):
         topics: list[str],
         start_seconds_inclusive: float | None,
         end_seconds_exclusive: float | None,
-    ) -> Iterator[str, float, object]:
+    ) -> Iterator[tuple[str, float, object]]:
         """Return an iterator of topic name, timestamp in seconds, and deserialized ROS1 message."""
         messages = data_source.read_messages(
             topics,

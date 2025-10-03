@@ -14,7 +14,7 @@ MILLISECOND = 1_000 * MICROSECOND
 SECOND = 1_000 * MILLISECOND
 
 
-class SourceFactory(base.FileBasedSourceFactory):
+class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
     """A data source factory for reading from Betaflight Blackbox logs."""
 
     def __init__(
@@ -44,7 +44,8 @@ class SourceFactory(base.FileBasedSourceFactory):
     def metadata(self) -> dict[str, Any]:
         """Return metadata about the Blackbox log."""
         return {
-            **super().metadata,
+            **self._bounded_metadata,
+            **self._file_based_metadata,
             **self._headers,
         }
 

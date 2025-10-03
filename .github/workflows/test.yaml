@@ -15,50 +15,23 @@ jobs:
     strategy:
       matrix:
         include:
-          # ROS 2
-          - name: ros2-kilted
-            dockerfile: docker/Dockerfile.ros2
-            args: --build-arg ROS_DISTRO=kilted
-          - name: ros2-jazzy
-            dockerfile: docker/Dockerfile.ros2
-            args: --build-arg ROS_DISTRO=jazzy
-          - name: ros2-iron
-            dockerfile: docker/Dockerfile.ros2
-            args: --build-arg ROS_DISTRO=iron
-          - name: ros2-humble
-            dockerfile: docker/Dockerfile.ros2
-            args: --build-arg ROS_DISTRO=humble
-          # ROS 1
-          - name: ros1-noetic
-            dockerfile: docker/Dockerfile.ros1
-            args: ""
+          # ROS
+          - service: ros2-kilted
+          - service: ros2-jazzy
+          - service: ros2-iron
+          - service: ros2-humble
+          - service: ros1-noetic
           # Drones
-          - name: px4
-            dockerfile: docker/Dockerfile.px4
-            args: ""
-          - name: ardupilot
-            dockerfile: docker/Dockerfile.ardupilot
-            args: ""
-          - name: betaflight
-            dockerfile: docker/Dockerfile.betaflight
-            args: ""
+          - service: px4
+          - service: ardupilot
+          - service: betaflight
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Build and test ${{ matrix.name }}
+      - name: Build and test ${{ matrix.service }}
         run: |
-          IMAGE_ID=ghcr.io/extelligence-ai/bagel/${{ matrix.name }}
-
           # Build the image
-          docker build \
-            -f ${{ matrix.dockerfile }} \
-            -t $IMAGE_ID:latest \
-            ${{ matrix.args }} \
-            . \
-            --build-arg UV_VERSION=0.8.0 \
-            --build-arg DEV_MODE=true \
-            --build-arg BAGEL_LOCAL_HOST=0.0.0.0 \
-            --build-arg BAGEL_MCP_LOCAL_PORT=8000
+          docker compose build ${{ matrix.service }} --build-arg DEV_MODE=true
 
           # Run unit tests
-          docker compose run ${{ matrix.name }} uv run pytest -p no:warnings ./test
+          docker compose run ${{ matrix.service }} uv run pytest -p no:warnings ./test

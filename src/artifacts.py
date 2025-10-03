@@ -6,7 +6,7 @@ import pathlib
 from settings import settings
 
 
-def _short_digest(seeds: list[str]) -> str:
+def short_digest(seeds: list[str]) -> str:
     """Generate a short SHA-256 digest from a list of seeds."""
     if not seeds:
         raise ValueError("Seeds list must not be empty.")
@@ -15,13 +15,18 @@ def _short_digest(seeds: list[str]) -> str:
 
 def arrow_file(source_uuid: str, seeds: list[str], prefix: str) -> pathlib.Path:
     """Generate an Apache Arrow file path for caching purposes."""
-    stem = f"{prefix}_{_short_digest(seeds)}"
+    stem = f"{prefix}_{short_digest(seeds)}"
     return (
         pathlib.Path(settings.CACHE_DIRECTORY)
-        / "arrow_files"
+        / "data"
         / f"source_id={source_uuid}"
         / f"{stem}.arrow"
     )
+
+
+def sink_directory(sink_uuid: str) -> pathlib.Path:
+    """Generate a directory path for storing data from a topic message sink."""
+    return pathlib.Path(settings.CACHE_DIRECTORY) / "data" / f"sink={sink_uuid}"
 
 
 def git_clone_directory() -> pathlib.Path:

@@ -27,7 +27,7 @@ class MessageDataset(base.MessageDataset):
         topics: list[str],
         start_seconds_inclusive: float | None,
         end_seconds_exclusive: float | None,
-    ) -> Iterator[str, float, object]:
+    ) -> Iterator[tuple[str, float, object]]:
         """Return an iterator of topic name, timestamp in seconds, and deserialized ROS2 message."""
         data_source.set_filter(rosbag2_py.StorageFilter(topics))
         if start_seconds_inclusive is not None:

@@ -80,7 +80,7 @@ class MessageDataset(abc.ABC):
         topics: list[str],
         start_seconds_inclusive: float | None,
         end_seconds_exclusive: float | None,
-    ) -> Iterator[str, float, object]:
+    ) -> Iterator[tuple[str, float, object]]:
         """Return an iterator over messages from the data source.
 
         Args:
@@ -92,7 +92,7 @@ class MessageDataset(abc.ABC):
                 If None, reads until the end.
 
         Yields:
-            Iterator[str, float, object]: Yielding tuples of topic name, timestamp in seconds,
+            Iterator[tuple[str, float, object]]: Yielding tuples of topic, timestamp in seconds,
                 and the message object.
 
         """

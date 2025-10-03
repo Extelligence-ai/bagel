@@ -35,19 +35,17 @@ RUN if [ "_${DEV_MODE}" = "_true" ]; then \
     uv sync --no-dev --group px4; \
     fi
 
-# Assign default local host
-ARG BAGEL_LOCAL_HOST
-ENV BAGEL_LOCAL_HOST=${BAGEL_LOCAL_HOST}
-
 # Expose MCP server port
-ARG BAGEL_MCP_LOCAL_PORT
-ENV BAGEL_MCP_LOCAL_PORT=${BAGEL_MCP_LOCAL_PORT}
-EXPOSE ${BAGEL_MCP_LOCAL_PORT}
+ARG MCP_SERVER_PORT
+EXPOSE ${MCP_SERVER_PORT}
 
 # Copy common source code
 COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
 COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
 COPY --chown=${USERNAME}:${USERNAME} src/artifacts.py ./src/artifacts.py
+COPY --chown=${USERNAME}:${USERNAME} src/sink/base.py ./src/sink/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/sink/buffer.py ./src/sink/buffer.py
+COPY --chown=${USERNAME}:${USERNAME} src/sink/reader.py ./src/sink/reader.py
 COPY --chown=${USERNAME}:${USERNAME} src/source/base.py ./src/source/base.py
 COPY --chown=${USERNAME}:${USERNAME} src/source/errors.py ./src/source/errors.py
 COPY --chown=${USERNAME}:${USERNAME} src/topic/base.py ./src/topic/base.py
@@ -61,16 +59,19 @@ COPY --chown=${USERNAME}:${USERNAME} test/test_artifacts.py ./test/test_artifact
 COPY --chown=${USERNAME}:${USERNAME} test/di ./test/di
 COPY --chown=${USERNAME}:${USERNAME} test/source/test_source_base.py ./test/source/test_source_base.py
 
+# Copy configuration file
+COPY --chown=${USERNAME}:${USERNAME} .env ./.env
+
 # Copy sample data
 COPY --chown=${USERNAME}:${USERNAME} data/sample/ ./data/sample/
 
-# Copy ROS2 specific source code
+# Copy PX4 specific source code
 COPY --chown=${USERNAME}:${USERNAME} src/source/px4 ./src/source/px4
 COPY --chown=${USERNAME}:${USERNAME} src/topic/px4 ./src/topic/px4
 COPY --chown=${USERNAME}:${USERNAME} src/message/px4 ./src/message/px4
 COPY --chown=${USERNAME}:${USERNAME} src/logging/px4 ./src/logging/px4
 
-# Copy ROS2 specific test code
+# Copy PX4 specific test code
 COPY --chown=${USERNAME}:${USERNAME} test/source/px4 ./test/source/px4
 COPY --chown=${USERNAME}:${USERNAME} test/topic/px4 ./test/topic/px4
 COPY --chown=${USERNAME}:${USERNAME} test/message/px4 ./test/message/px4

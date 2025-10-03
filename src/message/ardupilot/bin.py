@@ -19,7 +19,7 @@ class MessageDataset(base.MessageDataset):
         topics: list[str],
         start_seconds_inclusive: float | None,
         end_seconds_exclusive: float | None,
-    ) -> Iterator[str, float, DFReader.DFMessage]:
+    ) -> Iterator[tuple[str, float, DFReader.DFMessage]]:
         """Return an iterator of format name, timestamp in seconds, and DFMessage."""
         data_source.rewind()
         while msg := data_source.recv_match(type=topics):

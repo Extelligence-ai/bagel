@@ -28,7 +28,7 @@ class MessageDataset(base.MessageDataset):
         topics: list[str],
         start_seconds_inclusive: float | None,
         end_seconds_exclusive: float | None,
-    ) -> Iterator[str, float, Frame]:
+    ) -> Iterator[tuple[str, float, Frame]]:
         """Return an iterator of frame type, timestamp in seconds, and a Frame."""
         for frame in data_source.frames():
             if frame.type.value not in topics:

@@ -14,10 +14,10 @@ class Settings(BaseSettings):
     """Settings for Bagel."""
 
     model_config = SettingsConfigDict(
-        env_prefix="BAGEL_",
         case_sensitive=True,
         env_file=".env",
         env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     # Directory for caching intermediate artifacts
@@ -29,14 +29,25 @@ class Settings(BaseSettings):
     # Bytes per record batch in arrow files. Not always respected
     ARROW_RECORD_BATCH_SIZE_BYTES: int = 1 * GB
 
+    # Bytes per topic buffer in a message sink. Always respected
+    JSONL_BUFFER_SIZE_PER_TOPIC_BYTES: int = 50 * MB
+
     # Column name for timestamps in arrow files, i.e., when messages were recorded
     TIMESTAMP_SECONDS_COLUMN_NAME: str = "timestamp_seconds"
 
-    # Local host of bagel
-    LOCAL_HOST: str = "0.0.0.0"  # noqa: S104
+    ################################################
+    # The default values of the following settings #
+    # are specified via the ".env" file.           #
+    ################################################
 
-    # Port of the MCP server (port to listen on for SSE transport)
-    MCP_LOCAL_PORT: int = 8000
+    # Whether running in a container
+    CONTAINER_MODE: bool
+
+    # Host of the MCP server
+    MCP_SERVER_HOST: str
+
+    # Port of the MCP server
+    MCP_SERVER_PORT: int
 
 
 settings = Settings()

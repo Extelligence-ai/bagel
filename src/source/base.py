@@ -52,7 +52,7 @@ class BoundedSourceFactory(SourceFactory):
     """
 
     @property
-    def metadata(self) -> dict[str, Any]:
+    def _bounded_metadata(self) -> dict[str, Any]:
         """Return metadata about the data source."""
         return {
             "total_message_count": self.total_message_count,
@@ -82,7 +82,7 @@ class BoundedSourceFactory(SourceFactory):
         return self.end_seconds - self.start_seconds
 
 
-class FileBasedSourceFactory(BoundedSourceFactory):
+class FileBasedSourceFactory(SourceFactory):
     """A base class for factories of data source from local file system."""
 
     def __init__(self, path: str) -> None:
@@ -109,10 +109,9 @@ class FileBasedSourceFactory(BoundedSourceFactory):
         return str(uuid.uuid5(uuid.NAMESPACE_OID, "_".join(hashes)))
 
     @property
-    def metadata(self) -> dict[str, Any]:
+    def _file_based_metadata(self) -> dict[str, Any]:
         """Return metadata about the data source."""
         return {
-            **super().metadata,
             "path": str(self.path),
             "size_bytes": self.size_bytes,
         }

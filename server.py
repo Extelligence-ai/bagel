@@ -12,11 +12,12 @@ from settings import settings
 from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
+from src.di.types.message_sink import TopicSink, guess_host, guess_port
 
 server = FastMCP(
     name="Bagel MCP Server",
-    host=settings.LOCAL_HOST,
-    port=settings.MCP_LOCAL_PORT,
+    host=settings.MCP_SERVER_HOST,
+    port=settings.MCP_SERVER_PORT,
 )
 
 
@@ -197,6 +198,92 @@ def read_loggings(
     dataset = module.provide(BaseModule.LOGGING_DATASET, ds_type, {})
     relation = dataset.to_duckdb(factory, registry, start_seconds, end_seconds)
     return relation.to_df().to_dict(orient="records")
+
+
+@server.tool(
+    title="List topics in the live data stream that are available for subscription.",
+)
+def list_live_topics(
+    type_: str,
+    host: str | None = None,
+    port: int | None = None,
+    args: dict[str, Any] | None = None,
+) -> list[str]:
+    """List topics in the live data stream that are available for subscription.
+
+    Args:
+        type_ (str): The type of the TopicSink. For available options, see `TopicSink` in
+            `src/di/types/message_sink.py`.
+        host (str | None, optional): The hostname of the live data stream service. If None,
+            it will guess the default host.
+        port (int | None, optional): The port number of the live data stream service. If None,
+            it will guess the default port.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used to create
+            the TopicSink.
+
+    Returns:
+        list[str]: A list of available topics for subscription.
+
+    """
+    ts_type = TopicSink(type_)
+    sink = module.provide(
+        BaseModule.MESSAGE_SINK,
+        ts_type,
+        {
+            "host": host or guess_host(ts_type),
+            "port": port or guess_port(ts_type),
+            "overwrite": False,
+            **(args or {}),
+        },
+    )
+    return sink.available_topics
+
+
+@server.tool(
+    title="Subscribe to real-time topic messages from a live data stream.",
+    description="Establish a connection to a live data stream and sink the topic messages locally.",
+)
+def subscribe_live_topics(  # noqa: PLR0913
+    type_: str,
+    topics: list[str] | None = None,
+    host: str | None = None,
+    port: int | None = None,
+    overwrite: bool = False,
+    args: dict[str, Any] | None = None,
+) -> str:
+    """Subscribe to real-time topic messages from a live data stream.
+
+    Args:
+        type_ (str): The type of the TopicSink. For available options, see `TopicSink` in
+            `src/di/types/message_sink.py`.
+        topics (list[str] | None, optional): A list of topics to subscribe to. If None,
+            subscribes to all available topics.
+        host (str | None, optional): The hostname of the live data stream service. If None,
+            it will guess the default host.
+        port (int | None, optional): The port number of the live data stream service. If None,
+            it will guess the default port.
+        overwrite (bool, optional): If True, overwrite any existing sink directory.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used to create
+            the TopicSink.
+
+    Returns:
+        str: The directory path of the topic sink. It will be used as the `path` argument to
+            initialize the SourceFactory for subsequent tools.
+
+    """
+    ts_type = TopicSink(type_)
+    sink = module.provide(
+        BaseModule.MESSAGE_SINK,
+        ts_type,
+        {
+            "host": host or guess_host(ts_type),
+            "port": port or guess_port(ts_type),
+            "overwrite": overwrite,
+            **(args or {}),
+        },
+    )
+    sink.start(topics)
+    return str(sink.directory)
 
 
 @server.tool(

@@ -36,19 +36,17 @@ RUN if [ "_${DEV_MODE}" = "_true" ]; then \
     uv sync --no-dev --group betaflight; \
     fi
 
-# Assign default local host
-ARG BAGEL_LOCAL_HOST
-ENV BAGEL_LOCAL_HOST=${BAGEL_LOCAL_HOST}
-
 # Expose MCP server port
-ARG BAGEL_MCP_LOCAL_PORT
-ENV BAGEL_MCP_LOCAL_PORT=${BAGEL_MCP_LOCAL_PORT}
-EXPOSE ${BAGEL_MCP_LOCAL_PORT}
+ARG MCP_SERVER_PORT
+EXPOSE ${MCP_SERVER_PORT}
 
 # Copy common source code
 COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
 COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
 COPY --chown=${USERNAME}:${USERNAME} src/artifacts.py ./src/artifacts.py
+COPY --chown=${USERNAME}:${USERNAME} src/sink/base.py ./src/sink/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/sink/buffer.py ./src/sink/buffer.py
+COPY --chown=${USERNAME}:${USERNAME} src/sink/reader.py ./src/sink/reader.py
 COPY --chown=${USERNAME}:${USERNAME} src/source/base.py ./src/source/base.py
 COPY --chown=${USERNAME}:${USERNAME} src/source/errors.py ./src/source/errors.py
 COPY --chown=${USERNAME}:${USERNAME} src/topic/base.py ./src/topic/base.py
@@ -62,16 +60,19 @@ COPY --chown=${USERNAME}:${USERNAME} test/test_artifacts.py ./test/test_artifact
 COPY --chown=${USERNAME}:${USERNAME} test/di ./test/di
 COPY --chown=${USERNAME}:${USERNAME} test/source/test_source_base.py ./test/source/test_source_base.py
 
+# Copy configuration file
+COPY --chown=${USERNAME}:${USERNAME} .env ./.env
+
 # Copy sample data
 COPY --chown=${USERNAME}:${USERNAME} data/sample/ ./data/sample/
 
-# Copy ROS2 specific source code
+# Copy Betaflight specific source code
 COPY --chown=${USERNAME}:${USERNAME} src/source/betaflight ./src/source/betaflight
 COPY --chown=${USERNAME}:${USERNAME} src/topic/betaflight ./src/topic/betaflight
 COPY --chown=${USERNAME}:${USERNAME} src/message/betaflight ./src/message/betaflight
 COPY --chown=${USERNAME}:${USERNAME} src/logging/betaflight ./src/logging/betaflight
 
-# Copy ROS2 specific test code
+# Copy Betaflight specific test code
 COPY --chown=${USERNAME}:${USERNAME} test/source/betaflight ./test/source/betaflight
 COPY --chown=${USERNAME}:${USERNAME} test/topic/betaflight ./test/topic/betaflight
 COPY --chown=${USERNAME}:${USERNAME} test/message/betaflight ./test/message/betaflight

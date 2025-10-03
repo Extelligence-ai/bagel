@@ -8,7 +8,7 @@ from src.di import module
 from src.source import base, errors
 
 
-class SourceFactory(base.FileBasedSourceFactory):
+class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
     """A data source factory for reading from ArduPilot Dataflash logs."""
 
     def __init__(
@@ -46,7 +46,8 @@ class SourceFactory(base.FileBasedSourceFactory):
     def metadata(self) -> dict[str, Any]:
         """Return metadata about the Dataflash log."""
         return {
-            **super().metadata,
+            **self._bounded_metadata,
+            **self._file_based_metadata,
             **self._params,
         }
 
