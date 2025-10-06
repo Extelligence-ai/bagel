@@ -8,12 +8,15 @@ from settings import settings
 class TopicSink(Enum):
     """Supported topic sink types."""
 
+    ROS1_BRIDGE = "ros1.bridge"
     ROS2_BRIDGE = "ros2.bridge"
 
 
 def guess_host(type_: TopicSink) -> str:
     """Guess the default host for the given TopicSink type."""
     match type_:
+        case TopicSink.ROS1_BRIDGE:
+            return "0.0.0.0"  # noqa: S104
         case TopicSink.ROS2_BRIDGE if settings.CONTAINER_MODE:
             return "host.docker.internal"
         case TopicSink.ROS2_BRIDGE:

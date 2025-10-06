@@ -31,10 +31,12 @@ RUN GPG_KEY=F42ED6FBAB17C654; \
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
+    git \
     gnupg \
     jq \
     lsb-release \
-    vim && \
+    vim \
+    "ros-${ROS_DISTRO}-rosbridge-suite" && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -121,6 +123,7 @@ COPY --chown=${USERNAME}:${USERNAME} .env ./.env
 COPY --chown=${USERNAME}:${USERNAME} data/sample/ ./data/sample/
 
 # Copy ROS1 specific source code
+COPY --chown=${USERNAME}:${USERNAME} src/sink/ros1 ./src/sink/ros1
 COPY --chown=${USERNAME}:${USERNAME} src/source/ros1 ./src/source/ros1
 COPY --chown=${USERNAME}:${USERNAME} src/topic/ros1 ./src/topic/ros1
 COPY --chown=${USERNAME}:${USERNAME} src/message/ros1 ./src/message/ros1
