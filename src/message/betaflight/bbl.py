@@ -27,7 +27,7 @@ class MessageDataset(base.MessageDataset):
         data_source: orangebox.Parser,
         topics: list[str],
         start_seconds_inclusive: float | None,
-        end_seconds_exclusive: float | None,
+        end_seconds_inclusive: float | None,
     ) -> Iterator[tuple[str, float, Frame]]:
         """Return an iterator of frame type, timestamp in seconds, and a Frame."""
         for frame in data_source.frames():
@@ -44,8 +44,8 @@ class MessageDataset(base.MessageDataset):
 
             if start_seconds_inclusive is not None and timestamp_seconds < start_seconds_inclusive:
                 continue
-            if end_seconds_exclusive is not None and timestamp_seconds >= end_seconds_exclusive:
-                continue
+            if end_seconds_inclusive is not None and timestamp_seconds > end_seconds_inclusive:
+                return
 
             yield frame.type.value, timestamp_seconds, frame
 

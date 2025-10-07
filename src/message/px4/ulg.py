@@ -22,7 +22,7 @@ class MessageDataset(base.MessageDataset):
         data_source: core.ULog,
         topics: list[str],
         start_seconds_inclusive: float | None,
-        end_seconds_exclusive: float | None,
+        end_seconds_inclusive: float | None,
     ) -> Iterator[tuple[str, float, dict[str, Any]]]:
         """Return an iterator of topic name, timestamp in seconds, and message dictionary."""
         timestamps_and_indices, datasets = {}, {}
@@ -35,8 +35,8 @@ class MessageDataset(base.MessageDataset):
             condition = [True] * len(timestamps)
             if start_seconds_inclusive is not None:
                 condition &= timestamps >= start_seconds_inclusive
-            if end_seconds_exclusive is not None:
-                condition &= timestamps < end_seconds_exclusive
+            if end_seconds_inclusive is not None:
+                condition &= timestamps <= end_seconds_inclusive
 
             if not any(condition):
                 continue

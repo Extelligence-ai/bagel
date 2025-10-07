@@ -19,7 +19,7 @@ class MessageDataset(base.MessageDataset):
         data_source: reader.TopicSinkReader,
         topics: list[str],
         start_seconds_inclusive: float | None,
-        end_seconds_exclusive: float | None,
+        end_seconds_inclusive: float | None,
     ) -> Iterator[tuple[str, float, dict[str, Any]]]:
         """Return an iterator of topic name, timestamp in seconds, and JSON message."""
         heap = []
@@ -34,7 +34,7 @@ class MessageDataset(base.MessageDataset):
         while heap:
             timestamp_seconds, topic, msg = heapq.heappop(heap)
 
-            if end_seconds_exclusive is not None and timestamp_seconds >= end_seconds_exclusive:
+            if end_seconds_inclusive is not None and timestamp_seconds > end_seconds_inclusive:
                 break
 
             if start_seconds_inclusive is not None and timestamp_seconds < start_seconds_inclusive:

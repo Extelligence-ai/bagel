@@ -79,7 +79,7 @@ class MessageDataset(abc.ABC):
         data_source: object,
         topics: list[str],
         start_seconds_inclusive: float | None,
-        end_seconds_exclusive: float | None,
+        end_seconds_inclusive: float | None,
     ) -> Iterator[tuple[str, float, object]]:
         """Return an iterator over messages from the data source.
 
@@ -88,7 +88,7 @@ class MessageDataset(abc.ABC):
             topics (list[str]): The list of topics to read.
             start_seconds_inclusive (float | None): The start time seconds (inclusive).
                 If None, starts from the beginning.
-            end_seconds_exclusive (float | None): The end time seconds (exclusive).
+            end_seconds_inclusive (float | None): The end time seconds (inclusive).
                 If None, reads until the end.
 
         Yields:
@@ -129,7 +129,7 @@ class MessageDataset(abc.ABC):
                 If None, all available topics will be included.
             start_seconds (float | None, optional): The start time seconds (inclusive).
                 If None, starts from the beginning.
-            end_seconds (float | None, optional): The end time seconds (exclusive).
+            end_seconds (float | None, optional): The end time seconds (inclusive).
                 If None, reads until the end.
             ffill (bool, optional): Whether to forward-fill missing values, i.e., use the
                 last known value for a topic if a message is missing at a timestamp.

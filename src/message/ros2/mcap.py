@@ -34,19 +34,24 @@ class MessageDataset(base.MessageDataset):
         data_source: McapRos2Bag,
         topics: list[str],
         start_seconds_inclusive: float | None,
-        end_seconds_exclusive: float | None,
+        end_seconds_inclusive: float | None,
     ) -> Iterator[tuple[str, float, object]]:
         """Return an iterator of topic name, timestamp in seconds, and deserialized ROS2 message."""
         for mcap_file in data_source.mcap_files:
             with open(mcap_file, "rb") as stream:
                 reader = make_reader(stream, decoder_factories=DECODER_FACTORIES)
+                start_time = start_seconds_inclusive * SECOND if start_seconds_inclusive else None
                 messages = reader.iter_decoded_messages(
-                    topics,
-                    start_seconds_inclusive * SECOND if start_seconds_inclusive else None,
-                    end_seconds_exclusive * SECOND if end_seconds_exclusive else None,
+                    topics, start_time=start_time, end_time=None, log_time_order=True
                 )
                 for _, channel, message, decoded_message in messages:
-                    yield channel.topic, message.log_time / SECOND, decoded_message
+                    timestamp_seconds = message.log_time / SECOND
+                    if (
+                        end_seconds_inclusive is not None
+                        and timestamp_seconds > end_seconds_inclusive
+                    ):
+                        return
+                    yield channel.topic, timestamp_seconds, decoded_message
 
     def _to_json(self, message: object, struct: pa.StructType) -> dict[str, Any]:
         """Cast a deserialized ROS2 message into a JSON-serializable dictionary."""

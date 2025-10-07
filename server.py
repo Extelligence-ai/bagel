@@ -161,7 +161,7 @@ def query_messages(  # noqa: PLR0913
         topic (str): The topic name (also used as the DuckDB table name and the column name).
         start_seconds (float | None, optional): Start time seconds (inclusive).
             If None, starts from the beginning. Defaults to None.
-        end_seconds (float | None, optional): End time seconds (exclusive).
+        end_seconds (float | None, optional): End time seconds (inclusive).
             If None, reads until the end. Defaults to None.
         args (dict[str, Any] | None, optional): Additional constructor arguments
             used to create the `SourceFactory` and `TopicRegistry`.
@@ -216,7 +216,7 @@ def read_loggings(
         path (str): Filesystem path or URL to the data source.
         start_seconds (float | None, optional): Start time seconds (inclusive).
             If None, starts from the beginning. Defaults to None.
-        end_seconds (float | None, optional): End time seconds (exclusive).
+        end_seconds (float | None, optional): End time seconds (inclusive).
             If None, reads until the end. Defaults to None.
         args (dict[str, Any] | None, optional): Additional constructor arguments
             used to create the `SourceFactory` and `TopicRegistry`.

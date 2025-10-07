@@ -26,7 +26,7 @@ class MessageDataset(base.MessageDataset):
         data_source: rosbag2_py.SequentialReader,
         topics: list[str],
         start_seconds_inclusive: float | None,
-        end_seconds_exclusive: float | None,
+        end_seconds_inclusive: float | None,
     ) -> Iterator[tuple[str, float, object]]:
         """Return an iterator of topic name, timestamp in seconds, and deserialized ROS2 message."""
         data_source.set_filter(rosbag2_py.StorageFilter(topics))
@@ -39,8 +39,8 @@ class MessageDataset(base.MessageDataset):
         while data_source.has_next():
             topic, serialized_msg, nanoseconds = data_source.read_next()
             timestamp_seconds = nanoseconds / SECOND
-            if end_seconds_exclusive is not None and timestamp_seconds >= end_seconds_exclusive:
-                break
+            if end_seconds_inclusive is not None and timestamp_seconds > end_seconds_inclusive:
+                return
             deserialized_msg = deserialize_message(serialized_msg, get_message(type_names[topic]))
             yield topic, timestamp_seconds, deserialized_msg
 

@@ -43,7 +43,7 @@ class LoggingDataset(abc.ABC):
             registry (TopicRegistry): The topic registry for looking up topic schemas.
             start_seconds (float | None, optional): The start time seconds (inclusive).
                 If None, starts from the beginning.
-            end_seconds (float | None, optional): The end time seconds (exclusive).
+            end_seconds (float | None, optional): The end time seconds (inclusive).
                 If None, reads until the end.
 
         Returns:
