@@ -6,9 +6,6 @@ import logging
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from src.di.types.base_module import BaseModule
-from src.di.types.data_source import DataSource
-
 # A global module registry mapping module names to their constructors.
 global_registry: dict[str, Callable[..., object]] = {}
 
@@ -20,22 +17,20 @@ class Module(Protocol):
         """Register the module's constructor by its name."""
 
 
-def provide(base_module: BaseModule, data_source: DataSource, args: dict[str, Any]) -> object:
+def provide(import_path: str, args: dict[str, Any]) -> object:
     """Provide an instance of a module based on the base module and data source.
 
     Args:
-        base_module (BaseModule): The base module.
-        data_source (DataSource): The data source.
+        import_path (str): The import path of the module.
         args (dict[str, Any]): Arguments to pass to the module constructor.
 
     Returns:
         object: An instance of the module.
 
     """
-    name = f"{base_module.value}.{data_source.value}"
-    module: Module = importlib.import_module(name)
+    module: Module = importlib.import_module(import_path)
     module.register()
-    return construct(global_registry[name], args)
+    return construct(global_registry[import_path], args)
 
 
 def construct(constructor: Callable[..., object], args: dict[str, Any]) -> object:

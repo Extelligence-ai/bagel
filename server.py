@@ -56,8 +56,10 @@ def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[
 
     """
     ds_type = resolve(path)
-    factory = module.provide(BaseModule.SOURCE_FACTORY, ds_type, {"path": path, **(args or {})})
-    registry = module.provide(BaseModule.TOPIC_REGISTRY, ds_type, args or {})
+    factory = module.provide(
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     return poml(
         "./src/agent/describe/data_source.poml",
         context={
@@ -107,9 +109,11 @@ def describe_topic(
 
     """
     ds_type = resolve(path)
-    factory = module.provide(BaseModule.SOURCE_FACTORY, ds_type, {"path": path, **(args or {})})
-    registry = module.provide(BaseModule.TOPIC_REGISTRY, ds_type, args or {})
-    dataset = module.provide(BaseModule.MESSAGE_DATASET, ds_type, {})
+    factory = module.provide(
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
     data_source = factory.build()
     relation = dataset.to_duckdb(factory, registry, [topic], empty=True)
 
@@ -182,9 +186,11 @@ def query_messages(  # noqa: PLR0913
 
     """
     ds_type = resolve(path)
-    factory = module.provide(BaseModule.SOURCE_FACTORY, ds_type, {"path": path, **(args or {})})
-    registry = module.provide(BaseModule.TOPIC_REGISTRY, ds_type, args or {})
-    dataset = module.provide(BaseModule.MESSAGE_DATASET, ds_type, {})
+    factory = module.provide(
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
 
     relation = dataset.to_duckdb(factory, registry, [topic], start_seconds, end_seconds)
     duckdb.register(topic, relation)
@@ -235,9 +241,11 @@ def read_loggings(
 
     """
     ds_type = resolve(path)
-    factory = module.provide(BaseModule.SOURCE_FACTORY, ds_type, {"path": path, **(args or {})})
-    registry = module.provide(BaseModule.TOPIC_REGISTRY, ds_type, args or {})
-    dataset = module.provide(BaseModule.LOGGING_DATASET, ds_type, {})
+    factory = module.provide(
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.LOGGING_DATASET.value}.{ds_type.value}", {})
     relation = dataset.to_duckdb(factory, registry, start_seconds, end_seconds)
     return relation.to_df().to_dict(orient="records")
 
@@ -285,8 +293,7 @@ def list_live_topics(
     """
     ts_type = TopicSink(type_)
     sink = module.provide(
-        BaseModule.TOPIC_SINK,
-        ts_type,
+        f"{BaseModule.TOPIC_SINK.value}.{ts_type.value}",
         {
             "host": host or guess_host(ts_type),
             "port": port or guess_port(ts_type),
@@ -347,15 +354,16 @@ def subscribe_live_topics(  # noqa: PLR0913
     """
     ts_type = TopicSink(type_)
     sink = module.provide(
-        BaseModule.TOPIC_SINK,
-        ts_type,
+        f"{BaseModule.TOPIC_SINK.value}.{ts_type.value}",
         {
             "host": host or guess_host(ts_type),
             "port": port or guess_port(ts_type),
             **(args or {}),
         },
     )
-    sink.subscribe(topics, overwrite=overwrite)
+    topics = topics or sink.available_topics
+    for topic in topics:
+        sink.subscribe(topic, overwrite=overwrite)
     return str(sink.directory)
 
 
