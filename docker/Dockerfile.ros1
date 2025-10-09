@@ -84,14 +84,16 @@ RUN /bin/bash -c "curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh 
 COPY --chown=${USERNAME}:${USERNAME} pyproject.toml ./
 COPY --chown=${USERNAME}:${USERNAME} uv.lock ./
 ARG DEV_MODE
-RUN if [ "_${DEV_MODE}" = "_true" ]; then \
-    uv sync --group ros1; \
-    else \
-    uv sync --no-dev --group ros1; \
-    fi
 ARG CV_MODE
-RUN if [ "_${CV_MODE}" = "_true" ]; then \
-    uv sync --group cv; \
+RUN set -eux; \
+    groups="--group ros1"; \
+    if [ "_${CV_MODE}" = "_true" ]; then \
+    groups="${groups} --group cv"; \
+    fi; \
+    if [ "_${DEV_MODE}" = "_true" ]; then \
+    uv sync ${groups}; \
+    else \
+    uv sync --no-dev ${groups}; \
     fi
 
 # Expose MCP server port
@@ -127,6 +129,8 @@ COPY --chown=${USERNAME}:${USERNAME} src/message/base.py ./src/message/base.py
 COPY --chown=${USERNAME}:${USERNAME} src/message/bagel ./src/message/bagel
 COPY --chown=${USERNAME}:${USERNAME} src/logging/base.py ./src/logging/base.py
 COPY --chown=${USERNAME}:${USERNAME} src/image/base.py ./src/image/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/image/bagel ./src/image/bagel
+COPY --chown=${USERNAME}:${USERNAME} src/pipeline ./src/pipeline
 COPY --chown=${USERNAME}:${USERNAME} src/di ./src/di
 COPY --chown=${USERNAME}:${USERNAME} src/agent ./src/agent
 
