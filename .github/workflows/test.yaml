@@ -30,14 +30,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
-          docker system prune -af || true
-          df -h
-      - name: Build and test ${{ matrix.service }}
-        run: |
-          # Build the image
-          docker compose build ${{ matrix.service }} --build-arg DEV_MODE=true
-
-          # Run unit tests
-          docker compose run ${{ matrix.service }} uv run pytest -p no:warnings ./test
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
+      - name: Build ${{ matrix.service }}
+        run: docker compose build ${{ matrix.service }} --build-arg DEV_MODE=true
+      - name: Test ${{ matrix.service }}
+        run: docker compose run ${{ matrix.service }} uv run pytest -p no:warnings ./test

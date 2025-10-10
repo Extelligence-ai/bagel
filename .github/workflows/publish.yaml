@@ -32,17 +32,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push ${{ matrix.service }}
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
+      - name: Build ${{ matrix.service }}
+        run: docker compose build ${{ matrix.service }}
+      - name: Push ${{ matrix.service }}
         run: |
           IMAGE=ghcr.io/extelligence-ai/bagel/${{ matrix.service }}
           TAG=sha-${{ github.sha }}
-
-          # Build the image
-          docker compose build ${{ matrix.service }}
-
-          # Tag the image
           docker tag $IMAGE:latest $IMAGE:$TAG
-
-          # Push both tags
           docker push $IMAGE:latest
           docker push $IMAGE:$TAG
