@@ -13,7 +13,7 @@ import yaml
 
 from settings import settings
 from src import artifacts
-from src.pipeline.base import AtTheEnd, Pipeline
+from src.pipeline.base import OnceAtEnd, Pipeline
 from src.sink.buffer import TopicBufferWriter
 
 # A global registry to hold singleton instances of TopicSink instances.
@@ -209,7 +209,7 @@ class TopicSink(abc.ABC):
             extract_timestamp=extract_timestamp,
         )
 
-        if overwrite:
+        if topic in self._buffers and overwrite:
             self._unsubscribe(self._buffers[topic])
 
         self._subscribe(self._buffers[topic])
@@ -250,44 +250,25 @@ class TopicSink(abc.ABC):
 
             while self._buffers:
                 topic, writer = self._buffers.popitem()
-                if writer.pipeline is not None and isinstance(writer.pipeline.cadence, AtTheEnd):
+                if writer.pipeline is not None and isinstance(
+                    writer.pipeline.cadence.when, OnceAtEnd
+                ):
                     if writer.last_timestamp_seconds is None:
                         logging.info(
-                            "No messages received on topic %s, skipping pipeline execution", topic
+                            "No messages received on topic '%s', skipping pipeline '%s'",
+                            topic,
+                            writer.pipeline.name,
                         )
-                        continue
                     elif writer.last_run_at == writer.last_timestamp_seconds:
                         logging.info(
                             "Pipeline '%s' already executed on topic '%s' at the end, skipping",
-                            writer.pipeline.name,
                             topic,
-                        )
-                        continue
-                try:
-                    if writer.pipeline.run(writer.last_timestamp_seconds):
-                        logging.info(
-                            "Pipeline '%s' executed successfully when topic '%s' received message at %.4f seconds",  # noqa: E501
                             writer.pipeline.name,
-                            topic,
-                            writer.last_timestamp_seconds,
                         )
                     else:
-                        logging.debug(
-                            "Pipeline '%s' didn't pass the gating criteria when topic '%s' received message at %.4f seconds",  # noqa: E501
-                            writer.pipeline.name,
-                            topic,
-                            writer.last_timestamp_seconds,
-                        )
-                except Exception as e:
-                    if not writer.pipeline.allow_failure:
-                        raise e
-                    logging.error(
-                        "Pipeline '%s' execution failed when topic '%s' received message at %.4f seconds: %s",  # noqa: E501
-                        writer.pipeline.name,
-                        topic,
-                        writer.last_timestamp_seconds,
-                        str(e),
-                    )
+                        writer.pipeline.run_at(writer.last_timestamp_seconds)
+                if writer.pipeline is not None:
+                    logging.info("Pipeline '%s' completed.", writer.pipeline.name)
 
     def __enter__(self) -> "TopicSink":  # noqa: D105
         return self

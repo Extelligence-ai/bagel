@@ -1,8 +1,6 @@
-"""A gate that evaluates whether an object of certain labels is too close in images."""
+"""Estimate depth on detected objects to determine whether they are too close."""
 
-import inspect
 import logging
-from typing import Any
 
 import numpy as np
 import torch
@@ -14,10 +12,7 @@ from transformers import (
 )
 
 from src.di import module
-from src.image.base import ImageDataset
 from src.pipeline import base, images
-from src.source.base import SourceFactory
-from src.topic.base import TopicRegistry
 
 YOLO_MODEL_ID = "hustvl/yolos-tiny"
 DEPTH_MODEL_ID = "depth-anything/Depth-Anything-V2-Small-hf"
@@ -28,44 +23,32 @@ depth_processor = AutoImageProcessor.from_pretrained(DEPTH_MODEL_ID)
 depth_model = AutoModelForDepthEstimation.from_pretrained(DEPTH_MODEL_ID)
 
 
-class Gate(base.Gate):
-    """A gate that evaluates whether an object of certain labels is too close in images.
+class ObjectTooCloseGate(base.TopicImageMixin, base.Gate):
+    """Estimate depth on detected objects to determine whether they are too close.
 
-    It uses a pre-trained YOLO model for object detection and a depth estimation model to determine
-    the closeness of detected objects.
-
-    If any object in the lookback window matches the criteria, the gate evaluates to True.
+    The lookback window may include multiple images, each with several detected objects.
+    The gate returns True if any detected object is too close.
 
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
-        factory: SourceFactory,
-        registry: TopicRegistry,
-        dataset: ImageDataset,
         topic: str,
         labels: list[str] | None = None,
         probability: float = 0.5,
         closeness: float | None = None,
-        last: int | None = None,
-        unit: str | None = None,
     ) -> None:
-        """Initialize a gate for detecting if an object of certain labels is too close.
+        """Initialize the gate.
 
         Args:
-            factory (SourceFactory): A data source factory.
-            registry (TopicRegistry): A topic registry.
-            dataset (ImageDataset): An image dataset.
             topic (str): The image topic to evaluate.
             labels (list[str] | None, optional): The YOLO labels to detect, e.g., ["person", "car"].
                 If None, all available labels are used. Defaults to None.
             probability (float, optional): The minimum probability for a detection to be considered.
                 Must be between 0 and 1. Defaults to 0.5.
             closeness (float | None, optional): The closeness threshold. Must be between 0 and 1.
-                1 means very close, 0 means very far. If None, the median closeness of the depth map
-                is used. Defaults to None.
-            last (int | None, optional): Value of the lookback window. Defaults to None.
-            unit (str | None, optional): The unit of the lookback window. Defaults to None.
+                1 means very close, 0 means very far. If None, the median closeness of the
+                entire image is used. Defaults to None.
 
         Raises:
             ValueError: If the labels is an empty list.
@@ -74,11 +57,7 @@ class Gate(base.Gate):
             ValueError: If closeness is not between 0 and 1.
 
         """
-        self._factory = factory
-        self._registry = registry
-        self._dataset = dataset
         self._topic = topic
-        self._lookback = base.Lookback.build(last, unit)
 
         if labels is not None and not labels:
             raise ValueError("Labels list cannot be empty")
@@ -100,15 +79,15 @@ class Gate(base.Gate):
             raise ValueError("Closeness must be between 0 and 1")
         self._closeness = closeness
 
-    def evaluate(self, asof_seconds: float) -> bool:
-        """Evaluate if any object of the specified labels is too close at the given time."""
+    def evaluate(self, asof_seconds: float, lookback: base.Lookback | None) -> bool:
+        """Evaluate whether the gating criteria is met at the given time."""
         for _, _, image in images.to_images(
-            self._factory,
-            self._registry,
-            self._dataset,
-            [self._topic],
-            asof_seconds,
-            self._lookback,
+            factory=self.factory,
+            registry=self.registry,
+            dataset=self.dataset,
+            topics=[self._topic],
+            asof_seconds=asof_seconds,
+            lookback=lookback,
         ):
             # Object detection
             yolo_inputs = yolo_processor(images=image, return_tensors="pt")
@@ -151,28 +130,7 @@ class Gate(base.Gate):
 
         return False
 
-    @staticmethod
-    def build(args: dict[str, Any]) -> "Gate":
-        """Build a gate from configuration."""
-        factory = module.provide(args["factory"]["module"], args["factory"].get("args", {}))
-        registry = module.provide(args["registry"]["module"], args["registry"].get("args", {}))
-        dataset = module.provide(args["dataset"]["module"], args["dataset"].get("args", {}))
-        return Gate(
-            factory=factory,
-            registry=registry,
-            dataset=dataset,
-            topic=args["topic"],
-            labels=args.get("labels"),
-            probability=args.get(
-                "probability",
-                inspect.signature(Gate.__init__).parameters["probability"].default,
-            ),
-            closeness=args.get("closeness"),
-            last=args.get("last"),
-            unit=args.get("unit"),
-        )
-
 
 def register() -> None:
     """Register module for dependency injection."""
-    module.global_registry[__name__] = Gate
+    module.global_registry[__name__] = ObjectTooCloseGate

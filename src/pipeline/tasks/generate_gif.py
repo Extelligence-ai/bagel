@@ -1,48 +1,30 @@
-"""A task that generates GIF files from images in a topic over a lookback window."""
+"""Generate a GIF file from images in a topic."""
 
 import logging
 import pathlib
-from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
 from src.di import module
-from src.image.base import ImageDataset
 from src.pipeline import base, images
-from src.source.base import SourceFactory
-from src.topic.base import TopicRegistry
 
 
-class Task(base.Task):
-    """A task that generates GIF files from images in a topic over a lookback window."""
+class GenerateGifTask(base.TopicImageMixin, base.Task):
+    """Generate a GIF file from images in a topic."""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
-        factory: SourceFactory,
-        registry: TopicRegistry,
-        dataset: ImageDataset,
         topic: str,
         output_directory: str,
-        last: int | None = None,
-        unit: str | None = None,
     ) -> None:
-        """Initialize the GIF generation task.
+        """Initialize the task.
 
         Args:
-            factory (SourceFactory): A data source factory.
-            registry (TopicRegistry): A topic registry.
-            dataset (ImageDataset): An image dataset.
-            topic (str): The image topic to generate GIFs from.
-            output_directory (str): The directory to save the generated GIFs.
-            last (int | None, optional): Value of the lookback window. Defaults to None.
-            unit (str | None, optional): The unit of the lookback window. Defaults to None.
+            topic (str): The image topic to generate a GIF file from.
+            output_directory (str): The directory to save the generated GIF file.
 
         """
-        self._factory = factory
-        self._registry = registry
-        self._dataset = dataset
         self._topic = topic
-        self._lookback = base.Lookback.build(last, unit)
         self._output_directory = pathlib.Path(output_directory)
 
         # Styling options for the text box below each image
@@ -51,8 +33,8 @@ class Task(base.Task):
         self._font = ImageFont.load_default()
         self._fill_text = (255, 255, 255, 255)
 
-    def execute(self, asof_seconds: float) -> None:
-        """Generate GIF files and save to the output directory."""
+    def execute(self, asof_seconds: float, lookback: base.Lookback | None) -> None:
+        """Execute the task at the given time."""
 
         def _text_size(draw, text, font) -> tuple[int, int]:  # noqa: ANN001
             bbox = draw.textbbox((0, 0), text, font=font)
@@ -62,12 +44,12 @@ class Task(base.Task):
         first_timestamp_text, first_image = None, None
 
         for _, timestamp_seconds, image in images.to_images(
-            self._factory,
-            self._registry,
-            self._dataset,
-            [self._topic],
-            asof_seconds,
-            self._lookback,
+            factory=self.factory,
+            registry=self.registry,
+            dataset=self.dataset,
+            topics=[self._topic],
+            asof_seconds=asof_seconds,
+            lookback=lookback,
         ):
             timestamp_text = f"{timestamp_seconds:.8f}"
 
@@ -117,23 +99,7 @@ class Task(base.Task):
             )
             logging.info("Generated %s from %d frames", self._output_directory, len(frames))
 
-    @staticmethod
-    def build(args: dict[str, Any]) -> "Task":
-        """Build a task from configuration."""
-        factory = module.provide(args["factory"]["module"], args["factory"].get("args", {}))
-        registry = module.provide(args["registry"]["module"], args["registry"].get("args", {}))
-        dataset = module.provide(args["dataset"]["module"], args["dataset"].get("args", {}))
-        return Task(
-            factory=factory,
-            registry=registry,
-            dataset=dataset,
-            topic=args["topic"],
-            output_directory=args["output_directory"],
-            last=args.get("last"),
-            unit=args.get("unit"),
-        )
-
 
 def register() -> None:
     """Register module for dependency injection."""
-    module.global_registry[__name__] = Task
+    module.global_registry[__name__] = GenerateGifTask

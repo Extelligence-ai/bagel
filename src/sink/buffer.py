@@ -1,7 +1,6 @@
 """File-backed topic buffer writer and reader."""
 
 import json
-import logging
 import pathlib
 import pickle
 import shutil
@@ -183,33 +182,8 @@ class TopicBufferWriter:
         if self.pipeline and self._should_run(
             self.pipeline.cadence, self.message_count, self.last_run_at, timestamp_seconds
         ):
-            try:
-                if self.pipeline.run(timestamp_seconds):
-                    logging.info(
-                        "Pipeline '%s' executed successfully when topic '%s' received message at %.4f seconds",  # noqa: E501
-                        self.pipeline.name,
-                        self.topic,
-                        timestamp_seconds,
-                    )
-                else:
-                    logging.debug(
-                        "Pipeline '%s' didn't pass the gating criteria when topic '%s' received message at %.4f seconds",  # noqa: E501
-                        self.pipeline.name,
-                        self.topic,
-                        timestamp_seconds,
-                    )
-            except Exception as e:
-                if not self.pipeline.allow_failure:
-                    raise e
-                logging.error(
-                    "Pipeline '%s' execution failed when topic '%s' received message at %.4f seconds: %s",  # noqa: E501
-                    self.pipeline.name,
-                    self.topic,
-                    timestamp_seconds,
-                    str(e),
-                )
-            finally:
-                self._last_run_at = timestamp_seconds
+            self.pipeline.run_at(timestamp_seconds)
+            self._last_run_at = timestamp_seconds
 
         self._message_count += 1
         self._last_timestamp_seconds = timestamp_seconds
@@ -220,12 +194,12 @@ class TopicBufferWriter:
         if last_run_at is None:
             return True
 
-        if isinstance(cadence, Frequency):
-            match cadence.unit:
+        if isinstance(cadence.when, Frequency):
+            match cadence.when.unit:
                 case Unit.FRAME:
-                    return message_count % cadence.every == 0
+                    return message_count % cadence.when.every == 0
                 case _:
-                    return asof_seconds - last_run_at >= cadence.to_seconds()
+                    return asof_seconds - last_run_at >= cadence.when.to_seconds()
 
         return False
 

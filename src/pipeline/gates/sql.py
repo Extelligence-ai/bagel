@@ -1,89 +1,51 @@
-"""A gate that evaluates whether a SQL statement passes on messages."""
-
-from typing import Any
+"""Run a SQL query on topic messages at a given time to determine if gating criteria is met."""
 
 import duckdb
 
 from src.di import module
-from src.message.base import MessageDataset
 from src.pipeline import base, messages
-from src.source.base import SourceFactory
-from src.topic.base import TopicRegistry
 
 
-class Gate(base.Gate):
-    """A gate that evaluates whether a SQL statement passes on messages."""
+class SqlQueryGate(base.TopicMessageMixin, base.Gate):
+    """Run a SQL query on topic messages at a given time to determine if gating criteria is met."""
 
-    def __init__(  # noqa: PLR0913
-        self,
-        factory: SourceFactory,
-        registry: TopicRegistry,
-        dataset: MessageDataset,
-        topic: str,
-        statement: str,
-        last: int | None = None,
-        unit: str | None = None,
-    ) -> None:
-        """Initialize a SQL gate.
+    def __init__(self, topic: str, statement: str) -> None:
+        """Initialize the gate.
 
         Args:
-            factory (SourceFactory): A data source factory.
-            registry (TopicRegistry): A topic registry.
-            dataset (MessageDataset): A message dataset.
-            topic (str): The topic to evaluate.
-            statement (str): The SQL statement to evaluate. The statement **must** return a single
-                boolean value.
-            last (int | None, optional): Value of the lookback window. Defaults to None.
-            unit (str | None, optional): The unit of the lookback window. Defaults to None.
+            topic (str): The topic to run the SQL query on.
+            statement (str): The SQL query to execute. The `FROM` clause must refer to
+                the topic name as a table. It must return a **single** boolean value to
+                indicate whether the gating criteria is met.
 
         """
-        self._factory = factory
-        self._registry = registry
-        self._dataset = dataset
         self._topic = topic
         self._statement = statement
-        self._lookback = base.Lookback.build(last, unit)
 
-    def evaluate(self, asof_seconds: float) -> bool:
-        """Evaluate if the SQL statement is true at the given time."""
+    def evaluate(self, asof_seconds: float, lookback: base.Lookback | None) -> bool:
+        """Evaluate whether the gating criteria is met at the given time."""
         relation = messages.to_duckdb(
-            factory=self._factory,
-            registry=self._registry,
-            dataset=self._dataset,
+            factory=self.factory,
+            registry=self.registry,
+            dataset=self.dataset,
             topics=[self._topic],
             asof_seconds=asof_seconds,
-            lookback=self._lookback,
+            lookback=lookback,
         )
         duckdb.register(self._topic, relation)
         result = duckdb.sql(self._statement).fetchall()
         if len(result) != 1:
-            raise ValueError(f"SQL statement must return exactly one row, got {len(result)} rows")
+            raise ValueError(f"SQL query must return one row, got {len(result)} rows")
         elif len(result[0]) != 1:
             raise ValueError(
-                f"SQL statement must return exactly one row with one column, got {len(result[0])} columns"  # noqa: E501
+                f"SQL query must return one row with one column, got {len(result[0])} columns"
             )
         elif not isinstance(result[0][0], bool):
-            raise ValueError(f"SQL statement must return a boolean value, got {type(result[0][0])}")
+            raise ValueError(f"SQL query must return a boolean value, got {type(result[0][0])}")
         duckdb.unregister(self._topic)
-        return result[0][0]
-
-    @staticmethod
-    def build(args: dict[str, Any]) -> "Gate":
-        """Build a gate from configuration."""
-        factory = module.provide(args["factory"]["module"], args["factory"].get("args", {}))
-        registry = module.provide(args["registry"]["module"], args["registry"].get("args", {}))
-        dataset = module.provide(args["dataset"]["module"], args["dataset"].get("args", {}))
-        return Gate(
-            factory=factory,
-            registry=registry,
-            dataset=dataset,
-            topic=args["topic"],
-            statement=args["statement"],
-            last=args.get("last"),
-            unit=args.get("unit"),
-        )
+        return bool(result[0][0])
 
 
 def register() -> None:
     """Register module for dependency injection."""
-    module.global_registry[__name__] = Gate
+    module.global_registry[__name__] = SqlQueryGate

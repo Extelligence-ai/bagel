@@ -1,11 +1,14 @@
 """Provide a topic sink that connects to ROS1 through a rosbridge server."""
 
+from typing import Any
+
 import pyarrow as pa
 import roslibpy
 from roslibpy import ros
 
 from settings import settings
 from src.di import module
+from src.di.types.base_module import BaseModule
 from src.sink import base, buffer
 from src.topic.ros1 import parse, schema
 
@@ -68,6 +71,14 @@ class TopicSink(base.TopicSink):
         }
         self._subscribers: dict[str, roslibpy.Topic] = {}
 
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Metadata about the topic sink."""
+        return {
+            **super().metadata,
+            "image_dataset_module": f"{BaseModule.IMAGE_DATASET.value}.ros1.sink",
+        }
+
     def _connect(self) -> None:
         self._client.run()
 
@@ -99,7 +110,9 @@ class TopicSink(base.TopicSink):
         self._subscribers[writer.topic].subscribe(callback=writer.append)
 
     def _unsubscribe(self, writer: buffer.TopicBufferWriter) -> None:
-        self._subscribers[writer.topic].unsubscribe()
+        if writer.topic in self._subscribers:
+            self._subscribers[writer.topic].unsubscribe()
+            del self._subscribers[writer.topic]
 
 
 def register() -> None:
