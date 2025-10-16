@@ -219,9 +219,7 @@ def parse_message_structure(robolog_path: str, topic: str | None = None) -> list
 
 @server.tool(title="Analyze trajectory data and generate comprehensive trajectory analysis.")
 def analyze_trajectory(
-    robolog_path: str, 
-    start_seconds: float | None = None, 
-    end_seconds: float | None = None
+    robolog_path: str, start_seconds: float | None = None, end_seconds: float | None = None
 ) -> list[dict[str, Any]]:
     """Analyze trajectory data from a robotics log and generate comprehensive analysis.
 
@@ -239,20 +237,18 @@ def analyze_trajectory(
         "robolog_path": robolog_path,
         "has_time_filter": start_seconds is not None or end_seconds is not None,
         "start_seconds": start_seconds,
-        "end_seconds": end_seconds
+        "end_seconds": end_seconds,
     }
-    
+
     return poml(
-        "./src/agent/diagnostics/trajectory_analysis.poml",
+        "./src/agent/diagnostics/analyze_trajectory.poml",
         context=context,
     )
 
 
 @server.tool(title="Inspect trajectory data and generate visual insights from robotics log data.")
 def inspect_trajectory(
-    robolog_path: str, 
-    start_seconds: float | None = None, 
-    end_seconds: float | None = None
+    robolog_path: str, start_seconds: float | None = None, end_seconds: float | None = None
 ) -> list[dict[str, Any]]:
     """Inspect trajectory data and generate visual insights from robotics log data.
 
@@ -270,11 +266,39 @@ def inspect_trajectory(
         "robolog_path": robolog_path,
         "has_time_filter": start_seconds is not None or end_seconds is not None,
         "start_seconds": start_seconds,
-        "end_seconds": end_seconds
+        "end_seconds": end_seconds,
     }
-    
+
     return poml(
         "./src/agent/diagnostics/inspect_trajectory.poml",
+        context=context,
+    )
+
+
+@server.tool(title="Compare planned vs actual trajectory and analyze deviations.")
+def compare_trajectory(
+    robolog_path: str, start_seconds: float | None = None, end_seconds: float | None = None
+) -> list[dict[str, Any]]:
+    """Compare planned vs actual trajectory and analyze deviations.
+
+    Args:
+        robolog_path (str): Path to the robolog.
+        start_seconds (float | None): Start time for analysis in seconds. If None, analyze from beginning.
+        end_seconds (float | None): End time for analysis in seconds. If None, analyze to end.
+
+    Returns:
+        list[dict[str, Any]]: The formatted prompt to send to the LLMs.
+
+    """
+    context = {
+        "robolog_path": robolog_path,
+        "has_time_filter": start_seconds is not None or end_seconds is not None,
+        "start_seconds": start_seconds,
+        "end_seconds": end_seconds,
+    }
+
+    return poml(
+        "./src/agent/diagnostics/compare_trajectory.poml",
         context=context,
     )
 

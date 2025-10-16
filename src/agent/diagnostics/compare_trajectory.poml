@@ -1,0 +1,68 @@
+<poml>
+    <task>
+        Compare planned vs actual trajectory and analyze deviations in robotics logs.
+        <stepwise-instructions>
+            <list>
+                <item>
+                    Verify that the robolog file exists at the path: {{robolog_path}}.
+                </item>
+                <item>
+                    If time filtering is requested ({{has_time_filter}} is true), use the start_seconds={{start_seconds}} and end_seconds={{end_seconds}} parameters when calling query_topic_messages to filter the data to the specified time window.
+                </item>
+                <item>
+                    Use Bagel's `read_metadata` function to get basic information about the log and identify available topics.
+                </item>
+                <item>
+                    Use Bagel's `describe_topics` function to identify topics containing planned trajectory data (look for topics like mission_waypoint, trajectory_setpoint, position_setpoint, etc.) and actual trajectory data (vehicle_local_position, vehicle_global_position, etc.).
+                </item>
+                <item>
+                    Use Bagel's `query_topic_messages` function to extract planned trajectory data using SQL queries like:
+                    - "SELECT timestamp_seconds, x, y, z, yaw FROM mission_waypoint ORDER BY timestamp_seconds"
+                    - "SELECT timestamp_seconds, x, y, z, yaw FROM trajectory_setpoint ORDER BY timestamp_seconds"
+                    - "SELECT timestamp_seconds, x, y, z, yaw FROM position_setpoint ORDER BY timestamp_seconds"
+                </item>
+                <item>
+                    Use Bagel's `query_topic_messages` function to extract actual trajectory data using SQL queries like:
+                    - "SELECT timestamp_seconds, x, y, z, vx, vy, vz, yaw, pitch, roll FROM vehicle_local_position ORDER BY timestamp_seconds"
+                    - "SELECT timestamp_seconds, x, y, z, vx, vy, vz, yaw, pitch, roll FROM vehicle_global_position ORDER BY timestamp_seconds"
+                </item>
+                <item>
+                    Calculate trajectory comparison metrics:
+                    - Position errors: cross-track error, along-track error, 3D position error, altitude error
+                    - Velocity errors: speed error, direction error, velocity vector error
+                    - Timing errors: time delay, waypoint arrival time differences
+                    - Path following performance: path deviation statistics, waypoint accuracy, path completion percentage
+                    - Flight efficiency: actual vs planned distance, energy efficiency, smoothness analysis
+                </item>
+                <item>
+                    Identify trajectory deviations and their causes:
+                    - Large position errors (&gt; threshold)
+                    - Sudden direction changes
+                    - Altitude deviations
+                    - Speed violations
+                    - Wind effects (if wind data available)
+                    - Control system delays
+                    - Waypoint sequencing issues
+                    - Obstacle avoidance maneuvers
+                </item>
+                <item>
+                    Generate visualization descriptions for:
+                    - 2D trajectory comparison (planned vs actual paths)
+                    - 3D trajectory comparison with altitude profiles
+                    - Error analysis plots (position, velocity, timing errors)
+                    - Performance metrics and statistics
+                </item>
+                <item>
+                    Create a comprehensive comparison summary in JSON format with:
+                    - Summary statistics (analysis duration, waypoints, samples, completion percentage)
+                    - Position errors (mean, max, cross-track, altitude errors)
+                    - Velocity errors (speed, direction errors)
+                    - Waypoint accuracy (arrival positions, timing errors)
+                    - Deviation events (timestamps, types, magnitudes, causes)
+                    - Performance indicators (smoothness, responsiveness, accuracy)
+                    - Recommendations for improvement
+                </item>
+            </list>
+        </stepwise-instructions>
+    </task>
+</poml>
