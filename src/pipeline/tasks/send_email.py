@@ -9,7 +9,7 @@ from src.di import module
 from src.pipeline import base
 
 
-class Task(base.Task):
+class SendEmailTask(base.Task):
     """Send emails to specified recipients."""
 
     def __init__(  # noqa: PLR0913
@@ -62,4 +62,4 @@ class Task(base.Task):
 
 def register() -> None:
     """Register module for dependency injection."""
-    module.global_registry[__name__] = Task
+    module.global_registry[__name__] = SendEmailTask
