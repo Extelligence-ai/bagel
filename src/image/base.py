@@ -26,6 +26,21 @@ class ImageDataset(abc.ABC):
 
     """
 
+    def __init__(self, use_cache: bool = True) -> None:
+        """Initialize the ImageDataset.
+
+        Args:
+            use_cache (bool, optional): Whether to use cached image data on disk. Some data formats
+                may not support caching. In such cases, use_cache should be set to False.
+
+        """
+        self._use_cache = use_cache
+
+    @property
+    def use_cache(self) -> bool:
+        """Return whether to use cached image data on disk if available."""
+        return self._use_cache
+
     @property
     @abc.abstractmethod
     def image_type_name(self) -> str:

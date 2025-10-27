@@ -17,6 +17,10 @@ bridge = CvBridge()
 class ImageDataset(base.ImageDataset):
     """An image dataset for ROS1 bags."""
 
+    def __init__(self) -> None:
+        """Initialize the image dataset for ROS1 bags."""
+        super().__init__(use_cache=False)  # ROS1 bags can seek time ranges. No cache needed.
+
     @property
     def image_type_name(self) -> str:
         """ROS1 image type name."""

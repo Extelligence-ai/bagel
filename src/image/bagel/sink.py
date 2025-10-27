@@ -27,7 +27,7 @@ class ImageDataset(base.ImageDataset):
             use_cache (bool, optional): Whether to use cached Apache Arrow files if available.
 
         """
-        self._use_cache = use_cache
+        super().__init__(use_cache)
 
     @abc.abstractmethod
     def _to_image(self, msg: dict[str, Any]) -> Image.Image:

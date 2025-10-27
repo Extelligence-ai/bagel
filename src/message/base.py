@@ -73,6 +73,11 @@ class MessageDataset(abc.ABC):
         """
         self._use_cache = use_cache
 
+    @property
+    def use_cache(self) -> bool:
+        """Return whether to use cached Apache Arrow files if available."""
+        return self._use_cache
+
     @abc.abstractmethod
     def _messages(
         self,
