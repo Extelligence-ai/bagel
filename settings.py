@@ -20,6 +20,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Directory for Bagel artifacts
+    ARTIFACT_DIRECTORY: str = str(pathlib.Path.home() / ".bagel" / "artifacts")
+
     # Directory for caching intermediate artifacts
     CACHE_DIRECTORY: str = str(pathlib.Path.home() / ".cache" / "bagel")
 
