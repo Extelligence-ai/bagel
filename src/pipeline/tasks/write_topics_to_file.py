@@ -1,10 +1,9 @@
-"""Write messages from specified topics to a file."""
+"""Write messages from specified topics to a file in various formats."""
 
 import logging
-import pathlib
 from enum import Enum
 
-from src.artifacts import short_digest
+from src import artifacts
 from src.di import module
 from src.pipeline import base, messages
 
@@ -17,24 +16,22 @@ class OutputFormat(Enum):
     ARROW = "arrow"
 
 
-class WriteTopicsToFileTask(messages.TopicMessageMixin, base.Task):
-    """Write messages from specified topics to a file."""
+class WriteTopicsToFile(messages.TopicMessageMixin, base.Task):
+    """Write messages from specified topics to a file in various formats."""
 
     def __init__(
         self,
         topics: list[str] | None,
-        ffill: bool,
-        output_directory: str,
         output_format: str,
+        ffill: bool = False,
     ) -> None:
         """Initialize the task.
 
         Args:
             topics (list[str] | None): A list of topics to write to a file. If None, all available
                 topics will be written.
-            ffill (bool): Whether to apply forward-fill to the topic messages.
-            output_directory (str): The directory to write the output files to.
             output_format (str): The format of the output files (e.g., "csv", "parquet", "arrow").
+            ffill (bool): Whether to apply forward-fill to the topic messages.
 
         Raises:
             ValueError: If the topics list is empty when specified.
@@ -43,9 +40,8 @@ class WriteTopicsToFileTask(messages.TopicMessageMixin, base.Task):
         if topics is not None and len(topics) == 0:
             raise ValueError("If 'topics' is specified, it must contain at least one topic name.")
         self._topics = topics
-        self._ffill = ffill
-        self._output_directory = pathlib.Path(output_directory)
         self._output_format = OutputFormat(output_format)
+        self._ffill = ffill
 
     def execute(self, asof_seconds: float, lookback: base.Lookback | None) -> None:
         """Execute the task at the given time."""
@@ -54,11 +50,14 @@ class WriteTopicsToFileTask(messages.TopicMessageMixin, base.Task):
             topics=topics, asof_seconds=asof_seconds, lookback=lookback, ffill=self._ffill
         )
 
-        digest = short_digest([*topics, str(lookback), str(self._ffill)])
-        output_file = (
-            self._output_directory
-            / f"timestamp_seconds={asof_seconds}"
-            / f"{digest}.{self._output_format.value}"
+        output_file = artifacts.pipeline_task_artifact_path(
+            self.pipeline,
+            self.name,
+            self.site,
+            self.asset,
+            self.log_id,
+            asof_seconds,
+            f".{self._output_format.value}",
         )
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -76,14 +75,9 @@ class WriteTopicsToFileTask(messages.TopicMessageMixin, base.Task):
                 with ipc.new_file(output_file, table.schema) as writer:
                     writer.write_table(table)
 
-        logging.info(
-            "Wrote topics %s to %s at %.4f seconds",
-            topics,
-            output_file,
-            asof_seconds,
-        )
+        logging.info("Wrote %s", output_file)
 
 
 def register() -> None:
     """Register module for dependency injection."""
-    module.global_registry[__name__] = WriteTopicsToFileTask
+    module.global_registry[__name__] = WriteTopicsToFile

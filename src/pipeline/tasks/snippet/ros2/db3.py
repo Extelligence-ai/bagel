@@ -1,13 +1,12 @@
 """Create a new ROS2 DB3 bag snippet."""
 
 import logging
-import pathlib
 from collections import deque
 
 import rosbag2_py
 from rclpy.serialization import serialize_message
 
-from src.artifacts import short_digest
+from src import artifacts
 from src.di import module
 from src.pipeline import base, messages
 
@@ -17,13 +16,12 @@ MILLISECOND = 1_000 * MICROSECOND
 SECOND = 1_000 * MILLISECOND
 
 
-class SnipRosbagTask(messages.TopicMessageMixin, base.Task):
+class SnipRosbag(messages.TopicMessageMixin, base.Task):
     """Create a new ROS2 DB3 bag snippet."""
 
     def __init__(
         self,
         topics: list[str] | None,
-        output_directory: str,
         output_serialization_format: str = "cdr",
     ) -> None:
         """Initialize the task.
@@ -31,7 +29,6 @@ class SnipRosbagTask(messages.TopicMessageMixin, base.Task):
         Args:
             topics (list[str] | None): A list of topics to filter. If None, all available
                 topics will be written to the new bag file.
-            output_directory (str): The directory to write the new bag directories to.
             output_serialization_format (str, optional): The serialization format for the output.
                 Defaults to "cdr".
 
@@ -42,7 +39,6 @@ class SnipRosbagTask(messages.TopicMessageMixin, base.Task):
         if topics is not None and len(topics) == 0:
             raise ValueError("If 'topics' is specified, it must contain at least one topic name.")
         self._topics = topics
-        self._output_directory = pathlib.Path(output_directory)
         self._output_serialization_format = output_serialization_format
 
         self._output_storage_id = "sqlite3"
@@ -63,8 +59,15 @@ class SnipRosbagTask(messages.TopicMessageMixin, base.Task):
             case _:
                 messages = self.dataset._messages(data_source, topics, None, asof_seconds)
 
-        digest = short_digest(topics)
-        bag_directory = self._output_directory / f"timestamp_seconds={asof_seconds}" / digest
+        bag_directory = artifacts.pipeline_task_artifact_path(
+            self.pipeline,
+            self.name,
+            self.site,
+            self.asset,
+            self.log_id,
+            asof_seconds,
+            None,
+        )
         bag_directory.parent.mkdir(parents=True, exist_ok=True)
 
         storage_options = rosbag2_py.StorageOptions(
@@ -72,7 +75,6 @@ class SnipRosbagTask(messages.TopicMessageMixin, base.Task):
         )
         converter_options = rosbag2_py.ConverterOptions("", "")
 
-        n_message_written = 0
         writer = rosbag2_py.SequentialWriter()
 
         try:
@@ -88,13 +90,12 @@ class SnipRosbagTask(messages.TopicMessageMixin, base.Task):
                 )
             for topic, timestamp_seconds, message in messages:
                 writer.write(topic, serialize_message(message), int(timestamp_seconds * SECOND))
-                n_message_written += 1
         finally:
             writer.close()
 
-        logging.info("Wrote %d messages to %s", n_message_written, bag_directory)
+        logging.info("Wrote %s", bag_directory)
 
 
 def register() -> None:
     """Register module for dependency injection."""
-    module.global_registry[__name__] = SnipRosbagTask
+    module.global_registry[__name__] = SnipRosbag

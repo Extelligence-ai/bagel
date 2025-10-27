@@ -1,31 +1,25 @@
 """Generate a GIF file from images in a topic."""
 
 import logging
-import pathlib
 
 from PIL import Image, ImageDraw, ImageFont
 
+from src import artifacts
 from src.di import module
 from src.pipeline import base, images
 
 
-class GenerateGifTask(images.TopicImageMixin, base.Task):
+class GenerateGif(images.TopicImageMixin, base.Task):
     """Generate a GIF file from images in a topic."""
 
-    def __init__(
-        self,
-        topic: str,
-        output_directory: str,
-    ) -> None:
+    def __init__(self, topic: str) -> None:
         """Initialize the task.
 
         Args:
             topic (str): The image topic to generate a GIF file from.
-            output_directory (str): The directory to save the generated GIF file.
 
         """
         self._topic = topic
-        self._output_directory = pathlib.Path(output_directory)
 
         # Styling options for the text box below each image
         self._strip_height = 40
@@ -41,7 +35,7 @@ class GenerateGifTask(images.TopicImageMixin, base.Task):
             return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
         frames = []
-        first_timestamp_text, first_image = None, None
+        first_image = None
 
         for _, timestamp_seconds, image in self.to_images(
             topics=[self._topic], asof_seconds=asof_seconds, lookback=lookback
@@ -73,17 +67,18 @@ class GenerateGifTask(images.TopicImageMixin, base.Task):
             )
 
             frames.append(annotated)
-            if first_timestamp_text is None:
-                first_timestamp_text = timestamp_text
-                first_image = annotated
+            first_image = first_image or annotated
 
-        if frames and first_timestamp_text and first_image:
-            stems = [
-                self._topic.lstrip("/").replace("/", "_"),
-                f"at={first_timestamp_text}",
-                f"n={len(frames)}",
-            ]
-            gif_file = self._output_directory / f"{'_'.join(stems)}.gif"
+        if frames and first_image:
+            gif_file = artifacts.pipeline_task_artifact_path(
+                self.pipeline,
+                self.name,
+                self.site,
+                self.asset,
+                self.log_id,
+                asof_seconds,
+                ".gif",
+            )
             gif_file.parent.mkdir(parents=True, exist_ok=True)
             first_image.save(
                 gif_file,
@@ -92,9 +87,9 @@ class GenerateGifTask(images.TopicImageMixin, base.Task):
                 duration=100,
                 loop=0,
             )
-            logging.info("Generated %s from %d frames", self._output_directory, len(frames))
+            logging.info("Wrote %s", gif_file)
 
 
 def register() -> None:
     """Register module for dependency injection."""
-    module.global_registry[__name__] = GenerateGifTask
+    module.global_registry[__name__] = GenerateGif

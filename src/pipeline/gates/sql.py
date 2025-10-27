@@ -6,7 +6,7 @@ from src.di import module
 from src.pipeline import base, messages
 
 
-class SqlQueryGate(messages.TopicMessageMixin, base.Gate):
+class SqlQuery(messages.TopicMessageMixin, base.Gate):
     """Run a SQL query on topic messages at a given time to determine if gating criteria is met."""
 
     def __init__(self, topic: str, statement: str) -> None:
@@ -43,4 +43,4 @@ class SqlQueryGate(messages.TopicMessageMixin, base.Gate):
 
 def register() -> None:
     """Register module for dependency injection."""
-    module.global_registry[__name__] = SqlQueryGate
+    module.global_registry[__name__] = SqlQuery

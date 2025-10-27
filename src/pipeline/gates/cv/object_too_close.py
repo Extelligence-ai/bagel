@@ -23,7 +23,7 @@ depth_processor = AutoImageProcessor.from_pretrained(DEPTH_MODEL_ID)
 depth_model = AutoModelForDepthEstimation.from_pretrained(DEPTH_MODEL_ID)
 
 
-class ObjectTooCloseGate(images.TopicImageMixin, base.Gate):
+class ObjectTooClose(images.TopicImageMixin, base.Gate):
     """Estimate depth on detected objects to determine whether they are too close.
 
     The lookback window may include multiple images, each with several detected objects.
@@ -116,10 +116,11 @@ class ObjectTooCloseGate(images.TopicImageMixin, base.Gate):
                     and closeness >= closeness_threshold
                 ):
                     logging.info(
-                        "Found '%s' object probability=%.4f closeness=%.4f",
+                        "Found '%s' object probability=%.4f closeness=%.4f timestamp=%f",
                         yolo_label,
                         probability,
                         closeness,
+                        asof_seconds,
                     )
                     return True
 
@@ -128,4 +129,4 @@ class ObjectTooCloseGate(images.TopicImageMixin, base.Gate):
 
 def register() -> None:
     """Register module for dependency injection."""
-    module.global_registry[__name__] = ObjectTooCloseGate
+    module.global_registry[__name__] = ObjectTooClose

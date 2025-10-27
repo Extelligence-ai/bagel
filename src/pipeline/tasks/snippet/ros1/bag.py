@@ -2,29 +2,26 @@
 
 import heapq
 import logging
-import pathlib
 import shlex
 import subprocess
 
-from src.artifacts import short_digest
+from src import artifacts
 from src.di import module
 from src.pipeline import base, messages
 
 
-class SnipRosbagTask(messages.TopicMessageMixin, base.Task):
+class SnipRosbag(messages.TopicMessageMixin, base.Task):
     """Create a new ROS1 bag snippet using the `rosbag filter` CLI tool."""
 
     def __init__(
         self,
         topics: list[str] | None,
-        output_directory: str,
     ) -> None:
         """Initialize the task.
 
         Args:
             topics (list[str] | None): A list of topics to filter. If None, all available
                 topics will be written to the new bag file.
-            output_directory (str): The directory to write the new bag files to.
 
         Raises:
             ValueError: If the topics list is empty when specified.
@@ -33,7 +30,6 @@ class SnipRosbagTask(messages.TopicMessageMixin, base.Task):
         if topics is not None and len(topics) == 0:
             raise ValueError("If 'topics' is specified, it must contain at least one topic name.")
         self._topics = topics
-        self._output_directory = pathlib.Path(output_directory)
 
     def execute(self, asof_seconds: float, lookback: base.Lookback | None) -> None:
         """Execute the task at the given time."""
@@ -66,8 +62,15 @@ class SnipRosbagTask(messages.TopicMessageMixin, base.Task):
             case _:
                 conditions.append(f"t.to_sec() <= {asof_seconds}")
 
-        digest = short_digest(topics)
-        output_file = self._output_directory / f"timestamp_seconds={asof_seconds}" / f"{digest}.bag"
+        output_file = artifacts.pipeline_task_artifact_path(
+            self.pipeline,
+            self.name,
+            self.site,
+            self.asset,
+            self.log_id,
+            asof_seconds,
+            ".bag",
+        )
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
         command = [
@@ -84,10 +87,12 @@ class SnipRosbagTask(messages.TopicMessageMixin, base.Task):
             text=True,
             capture_output=True,
         )
-        logging.info("Run command: %s", shlex.join(result.args))
-        logging.info(result.stdout.strip())
+
+        logging.debug(shlex.join(result.args))
+        logging.debug(result.stdout.strip())
+        logging.info("Wrote %s", output_file)
 
 
 def register() -> None:
     """Register module for dependency injection."""
-    module.global_registry[__name__] = SnipRosbagTask
+    module.global_registry[__name__] = SnipRosbag

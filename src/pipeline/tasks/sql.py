@@ -1,12 +1,11 @@
 """Run a SQL query on topic messages at a given time and write the result to a file."""
 
 import logging
-import pathlib
 from enum import Enum
 
 import duckdb
 
-from src.artifacts import short_digest
+from src import artifacts
 from src.di import module
 from src.pipeline import base, messages
 
@@ -19,14 +18,13 @@ class OutputFormat(Enum):
     ARROW = "arrow"
 
 
-class SqlQueryTask(messages.TopicMessageMixin, base.Task):
+class SqlQuery(messages.TopicMessageMixin, base.Task):
     """Run a SQL query on topic messages at a given time and write the result to a file."""
 
     def __init__(
         self,
         topic: str,
         statement: str,
-        output_directory: str,
         output_format: str,
     ) -> None:
         """Initialize the task.
@@ -35,13 +33,11 @@ class SqlQueryTask(messages.TopicMessageMixin, base.Task):
             topic (str): The topic to run the SQL query on.
             statement (str): The SQL query to execute. The `FROM` clause must refer to
                 the topic name as a table.
-            output_directory (str): The directory to write the output files to.
             output_format (str): The format of the output files (e.g., "csv", "parquet", "arrow").
 
         """
         self._topic = topic
         self._statement = statement
-        self._output_directory = pathlib.Path(output_directory)
         self._output_format = OutputFormat(output_format)
 
     def execute(self, asof_seconds: float, lookback: base.Lookback | None) -> None:
@@ -52,11 +48,14 @@ class SqlQueryTask(messages.TopicMessageMixin, base.Task):
         duckdb.register(self._topic, relation)
         result = duckdb.sql(self._statement)
 
-        digest = short_digest([self._topic, self._statement])
-        output_file = (
-            self._output_directory
-            / f"timestamp_seconds={asof_seconds}"
-            / f"{digest}.{self._output_format.value}"
+        output_file = artifacts.pipeline_task_artifact_path(
+            self.pipeline,
+            self.name,
+            self.site,
+            self.asset,
+            self.log_id,
+            asof_seconds,
+            f".{self._output_format.value}",
         )
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -74,14 +73,9 @@ class SqlQueryTask(messages.TopicMessageMixin, base.Task):
                 with ipc.new_file(output_file, table.schema) as writer:
                     writer.write_table(table)
 
-        logging.info(
-            "Wrote SQL query result for topic '%s' at %.4f seconds to file: %s",
-            self._topic,
-            asof_seconds,
-            output_file,
-        )
+        logging.info("Wrote %s", output_file)
 
 
 def register() -> None:
     """Register module for dependency injection."""
-    module.global_registry[__name__] = SqlQueryTask
+    module.global_registry[__name__] = SqlQuery
