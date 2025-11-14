@@ -1,12 +1,12 @@
-"""Provide a PyArrow dataset for reading JSON files."""
+"""Provide a PyArrow dataset for reading CSV files."""
 
 from src.di import module
-from src.di.types.data_source import is_json_directory, is_json_file
+from src.di.types.data_source import is_csv_directory, is_csv_file
 from src.source.pyarrow import base
 
 
 class SourceFactory(base.SourceFactory):
-    """A data source factory for reading JSON files as a PyArrow dataset."""
+    """A data source factory for reading CSV files as a PyArrow dataset."""
 
     def __init__(  # noqa: PLR0913
         self,
@@ -15,16 +15,16 @@ class SourceFactory(base.SourceFactory):
         partition_base_dir: str | None = None,
         exclude_invalid_files: bool = True,
         ignore_prefixes: list[str] | None = None,
-        timestamp_access_path: list[str] | None = None,
+        timestamp_column: str | None = None,
         timestamp_format: str | None = None,
     ) -> None:
-        """Initialize a PyArrow JSON data source factory.
+        """Initialize a PyArrow CSV data source factory.
 
         Many of the arguments are directly passed to pyarrow.dataset.dataset().
         https://arrow.apache.org/docs/python/generated/pyarrow.dataset.dataset.html
 
         Args:
-            path (str): Path to the JSON file or directory.
+            path (str): Path to the CSV file or directory.
             partitioning (str | list[str] | None, optional): The partitioning scheme specified with
                 the partitioning() function. A flavor string can be used as shortcut, and with a
                 list of field names a DirectoryPartitioning will be inferred.
@@ -41,8 +41,8 @@ class SourceFactory(base.SourceFactory):
                 be ignored by the discovery process. This is matched to the basename of a path.
                 By default this is ['.', '_']. Note that discovery happens only if a directory is
                 passed as source.
-            timestamp_access_path (list[str] | None, optional): A list of access keys to extract
-                the timestamp value from each message. If None, the current system time is used.
+            timestamp_column (str | None, optional): The name of the column containing the
+                timestamp value. If None, the current system time is used.
             timestamp_format (str | None, optional): The format string to parse the timestamp value.
                 For example, it could be a time unit like, "seconds", "milliseconds",
                 "microseconds", or "nanoseconds". It can also be a format string like
@@ -55,21 +55,21 @@ class SourceFactory(base.SourceFactory):
             partition_base_dir=partition_base_dir,
             exclude_invalid_files=exclude_invalid_files,
             ignore_prefixes=ignore_prefixes,
-            timestamp_access_path=timestamp_access_path,
+            timestamp_access_path=[timestamp_column] if timestamp_column else None,
             timestamp_format=timestamp_format,
         )
 
     def build(self) -> base.PyArrowDataset:
         """Return a PyArrowDataset object."""
-        return self._build(file_format="json")
+        return self._build(file_format="csv")
 
     def validate_path(self) -> tuple[bool, Exception | None]:
-        """Validate if the given path is a valid JSON or JSONL file/directory."""
+        """Validate if the given path is a valid CSV file/directory."""
         if not self.path.exists():
             return False, FileNotFoundError(self.path)
 
-        if not is_json_file(self.path) and not is_json_directory(self.path):
-            return False, ValueError(f"{self.path} is not a valid JSON or JSONL file/directory.")
+        if not is_csv_file(self.path) and not is_csv_directory(self.path):
+            return False, ValueError(f"{self.path} is not a valid CSV file/directory.")
 
         return True, None
 
