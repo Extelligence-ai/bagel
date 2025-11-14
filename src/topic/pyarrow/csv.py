@@ -1,11 +1,11 @@
-"""A topic registry for PyArrow dataset for JSON files."""
+"""A topic registry for PyArrow dataset for CSV files."""
 
 from src.di import module
 from src.topic.pyarrow import base
 
 
 class TopicRegistry(base.TopicRegistry):
-    """A topic registry for PyArrow dataset for JSON files."""
+    """A topic registry for PyArrow dataset for CSV files."""
 
 
 def register() -> None:
