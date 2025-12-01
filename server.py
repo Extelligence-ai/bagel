@@ -303,5 +303,12 @@ def compare_trajectory(
     )
 
 
+# Add a simple health check endpoint
+@server.get("/health")
+def health_check():
+    """Health check endpoint for load balancers."""
+    return {"status": "healthy"}
+
+
 if __name__ == "__main__":
     server.run(transport="sse")
