@@ -19,8 +19,8 @@ RUN rm -f \
     /usr/share/keyrings/ros-archive-keyring.gpg
 
 # Remove the expired GPG key associated with Open Robotics, if present
-ARG GPG_KEY=F42ED6FBAB17C654
-RUN if apt-key list | grep -q "${GPG_KEY}"; then \
+RUN GPG_KEY=F42ED6FBAB17C654; \
+    if apt-key list | grep -q "${GPG_KEY}"; then \
     apt-key del "${GPG_KEY}"; \
     else \
     echo "GPG Key ${GPG_KEY} not found, skipping deletion."; \
@@ -31,10 +31,14 @@ RUN if apt-key list | grep -q "${GPG_KEY}"; then \
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     curl \
+    git \
     gnupg \
     jq \
     lsb-release \
-    vim && \
+    rsync \
+    vim \
+    "ros-${ROS_DISTRO}-cv-bridge" \
+    "ros-${ROS_DISTRO}-rosbridge-suite" && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -56,14 +60,12 @@ RUN echo "source /opt/ros/noetic/setup.bash" >> /etc/bash.bashrc
 ARG PYTHON_VERSION=3.10
 # hadolint ignore=DL3008
 RUN apt-get update && \
-    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
     python${PYTHON_VERSION} && \
-    ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 && \
-    python3 --version && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -83,34 +85,87 @@ RUN /bin/bash -c "curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh 
 COPY --chown=${USERNAME}:${USERNAME} pyproject.toml ./
 COPY --chown=${USERNAME}:${USERNAME} uv.lock ./
 ARG DEV_MODE
-RUN if [ "_${DEV_MODE}" = "_true" ]; then \
-    uv sync --group ros1; \
+ARG CV_MODE
+# hadolint ignore=SC2086
+RUN set -eux; \
+    groups="--group ros1"; \
+    if [ "_${CV_MODE}" = "_true" ]; then \
+    groups="${groups} --group cv"; \
+    fi; \
+    if [ "_${DEV_MODE}" = "_true" ]; then \
+    uv sync ${groups}; \
     else \
-    uv sync --no-dev --group ros1; \
+    uv sync --no-dev ${groups}; \
     fi
 
-# Copy source code
-COPY --chown=${USERNAME}:${USERNAME} main.py ./
-COPY --chown=${USERNAME}:${USERNAME} app.py ./
-COPY --chown=${USERNAME}:${USERNAME} server.py ./
-COPY --chown=${USERNAME}:${USERNAME} settings.py ./
-COPY --chown=${USERNAME}:${USERNAME} src ./src
-COPY --chown=${USERNAME}:${USERNAME} test ./test
-RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test; fi
-
-# Assign default local host
-ARG BAGEL_LOCAL_HOST
-ENV BAGEL_LOCAL_HOST=${BAGEL_LOCAL_HOST}
-
-# Expose webapp port
-ARG BAGEL_WEBAPP_LOCAL_PORT
-ENV BAGEL_WEBAPP_LOCAL_PORT=${BAGEL_WEBAPP_LOCAL_PORT}
-EXPOSE ${BAGEL_WEBAPP_LOCAL_PORT}
-
 # Expose MCP server port
-ARG BAGEL_MCP_LOCAL_PORT
-ENV BAGEL_MCP_LOCAL_PORT=${BAGEL_MCP_LOCAL_PORT}
-EXPOSE ${BAGEL_MCP_LOCAL_PORT}
+ARG MCP_SERVER_PORT
+EXPOSE ${MCP_SERVER_PORT}
 
-# By default, the webapp will be launched
-CMD ["uv", "run", "main.py", "up", "webapp"]
+# Configure Jupyter Lab host and port
+ARG JUPYTER_HOST
+ARG JUPYTER_PORT
+RUN if [ "_${DEV_MODE}" = "_true" ]; then \
+    uv run jupyter lab --generate-config && \
+    CONFIG_FILE="/home/${USERNAME}/.jupyter/jupyter_lab_config.py" && \
+    echo "c.ServerApp.ip = '${JUPYTER_HOST}'" >> "${CONFIG_FILE}" && \
+    echo "c.ServerApp.port = ${JUPYTER_PORT}" >> "${CONFIG_FILE}"; \
+    fi
+
+# Expose Jupyter Lab port
+EXPOSE ${JUPYTER_PORT}
+
+# Copy common source code
+COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
+COPY --chown=${USERNAME}:${USERNAME} run.py ./run.py
+COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
+COPY --chown=${USERNAME}:${USERNAME} src/artifacts.py ./src/artifacts.py
+COPY --chown=${USERNAME}:${USERNAME} src/sink/base.py ./src/sink/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/sink/buffer.py ./src/sink/buffer.py
+COPY --chown=${USERNAME}:${USERNAME} src/sink/reader.py ./src/sink/reader.py
+COPY --chown=${USERNAME}:${USERNAME} src/source/base.py ./src/source/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/source/errors.py ./src/source/errors.py
+COPY --chown=${USERNAME}:${USERNAME} src/source/bagel ./src/source/bagel
+COPY --chown=${USERNAME}:${USERNAME} src/source/pyarrow ./src/source/pyarrow
+COPY --chown=${USERNAME}:${USERNAME} src/topic/base.py ./src/topic/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/topic/bagel ./src/topic/bagel
+COPY --chown=${USERNAME}:${USERNAME} src/topic/pyarrow ./src/topic/pyarrow
+COPY --chown=${USERNAME}:${USERNAME} src/message/base.py ./src/message/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/message/bagel ./src/message/bagel
+COPY --chown=${USERNAME}:${USERNAME} src/message/pyarrow ./src/message/pyarrow
+COPY --chown=${USERNAME}:${USERNAME} src/logging/base.py ./src/logging/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/image/base.py ./src/image/base.py
+COPY --chown=${USERNAME}:${USERNAME} src/image/bagel ./src/image/bagel
+COPY --chown=${USERNAME}:${USERNAME} src/pipeline ./src/pipeline
+COPY --chown=${USERNAME}:${USERNAME} src/di ./src/di
+COPY --chown=${USERNAME}:${USERNAME} src/agent ./src/agent
+
+# Copy common test code
+COPY --chown=${USERNAME}:${USERNAME} test/test_artifacts.py ./test/test_artifacts.py
+COPY --chown=${USERNAME}:${USERNAME} test/di ./test/di
+COPY --chown=${USERNAME}:${USERNAME} test/source/test_source_base.py ./test/source/test_source_base.py
+
+# Copy configuration file
+COPY --chown=${USERNAME}:${USERNAME} .env ./.env
+
+# Copy sample data
+COPY --chown=${USERNAME}:${USERNAME} data/sample/ ./data/sample/
+
+# Copy ROS1 specific source code
+COPY --chown=${USERNAME}:${USERNAME} src/sink/ros1 ./src/sink/ros1
+COPY --chown=${USERNAME}:${USERNAME} src/source/ros1 ./src/source/ros1
+COPY --chown=${USERNAME}:${USERNAME} src/topic/ros1 ./src/topic/ros1
+COPY --chown=${USERNAME}:${USERNAME} src/message/ros1 ./src/message/ros1
+COPY --chown=${USERNAME}:${USERNAME} src/logging/ros1 ./src/logging/ros1
+COPY --chown=${USERNAME}:${USERNAME} src/image/ros1 ./src/image/ros1
+
+# Copy ROS1 specific test code
+COPY --chown=${USERNAME}:${USERNAME} test/source/ros1 ./test/source/ros1
+COPY --chown=${USERNAME}:${USERNAME} test/topic/ros1 ./test/topic/ros1
+COPY --chown=${USERNAME}:${USERNAME} test/message/ros1 ./test/message/ros1
+COPY --chown=${USERNAME}:${USERNAME} test/logging/ros1 ./test/logging/ros1
+
+RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test ./data; fi
+
+# By default, the Bagel MCP server will be launched
+CMD ["uv", "run", "server.py", "--transport", "sse"]

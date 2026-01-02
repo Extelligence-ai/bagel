@@ -1,0 +1,36 @@
+# The frame descriptions below are adapted from the Betaflight Blackbox documentation:
+# https://betaflight.com/docs/development/Blackbox-Internals#log-frame-types
+
+I:
+  - "Intraframe I"
+  - ""
+  - "Main frames record the primary state of the flight controller (RC input, gyroscopes, flight "
+  - "control algorithm intermediates, motor outputs), and are logged during every logging iteration."
+  - ""
+  - '"I" frames can be decoded without reference to any previous frame, so they allow log decoding '
+  - "to be resynchronized in the event of log damage."
+
+P:
+  - "Interframe P"
+  - ""
+  - "Main frames record the primary state of the flight controller (RC input, gyroscopes, flight "
+  - "control algorithm intermediates, motor outputs), and are logged during every logging iteration."
+  - ""
+  - '"P" frames use an encoding which references previously logged frames in order to reduce the '
+  - "required datarate. When one interframe fails to decode, all following interframes will be "
+  - "undecodable up until the next intraframe."
+
+G:
+  - "GPS G frame"
+  - ""
+  - "Because the GPS is updated so infrequently, GPS data is logged in its own dedicated frames. "
+  - "These are recorded whenever the GPS data changes (not necessarily alongside every main frame). "
+  - "Like the main frames, the GPS frames have their own intra/inter encoding system."
+  - 'The "H" or "home" frame records the lat/lon of a reference point. The "G" or "GPS" frame '
+  - "records the current state of the GPS system (current position, altitude etc.) based on the "
+  - "reference point. The reference point can be updated (infrequently) during the flight, and is "
+  - "logged whenever it changes."
+  - ""
+  - 'To allow "G" frames to continue be decoded in the event that an "H" update is dropped from '
+  - 'the log, the "H" frame is logged periodically even if it has not changed (say, every 10 seconds). '
+  - 'This caps the duration of unreadble "G" frames that will result from a single missed "H" change.'

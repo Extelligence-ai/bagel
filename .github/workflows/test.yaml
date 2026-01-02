@@ -10,13 +10,28 @@ on:
       - reopened
 
 jobs:
-  pytest:
+  docker:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # ROS
+          - service: ros2-kilted
+          - service: ros2-jazzy
+          - service: ros2-iron
+          - service: ros2-humble
+          - service: ros1-noetic
+          - service: ros1-noetic-cv
+          # Drones
+          - service: px4
+          - service: ardupilot
+          - service: betaflight
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version-file: pyproject.toml
-      - uses: astral-sh/setup-uv@v5
-      - run: uv sync --all-extras
-      - run: uv run pytest .
+      - uses: docker/setup-buildx-action@v3
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
+      - name: Build ${{ matrix.service }}
+        run: docker compose build ${{ matrix.service }} --build-arg DEV_MODE=true
+      - name: Test ${{ matrix.service }}
+        run: docker compose run ${{ matrix.service }} uv run pytest -p no:warnings ./test

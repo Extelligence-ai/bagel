@@ -1,6 +1,5 @@
-"""Settings for the bagel application."""
+"""Settings for Bagel."""
 
-import logging
 import pathlib
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -12,32 +11,23 @@ GB = 1024 * MB
 
 
 class Settings(BaseSettings):
-    """Settings for the bagel application."""
+    """Settings for Bagel."""
 
     model_config = SettingsConfigDict(
-        env_prefix="BAGEL_",
         case_sensitive=True,
         env_file=".env",
         env_file_encoding="utf-8",
+        extra="ignore",
     )
 
-    # Logging level for the application
-    LOG_LEVEL: int = logging.INFO
+    # Directory name for Bagel artifacts
+    ARTIFACT_DIRNAME: str = "artifacts"
 
-    # Whether to use cached data when available
-    USE_CACHE: bool = True
+    # Directory for Bagel artifacts
+    ARTIFACT_DIRECTORY: str = str(pathlib.Path.home() / ".bagel" / ARTIFACT_DIRNAME)
 
     # Directory for caching intermediate artifacts
     CACHE_DIRECTORY: str = str(pathlib.Path.home() / ".cache" / "bagel")
-
-    # Directory for storing final artifacts
-    STORAGE_DIRECTORY: str = str(pathlib.Path.home() / ".bagel")
-
-    # Directory for datasets created by the pipelines
-    DATASET_DIRECTORY: str = str(pathlib.Path(STORAGE_DIRECTORY) / "datasets")
-
-    # Directory for pipeline definitions created by the users through the webapp
-    PIPELINE_DEFINITION_DIRECTORY: str = str(pathlib.Path(STORAGE_DIRECTORY) / "pipelines")
 
     # Minimum number of records per batch in arrow files
     MIN_ARROW_RECORD_BATCH_SIZE_COUNT: int = 500
@@ -45,35 +35,37 @@ class Settings(BaseSettings):
     # Bytes per record batch in arrow files. Not always respected
     ARROW_RECORD_BATCH_SIZE_BYTES: int = 1 * GB
 
-    # Column name for robolog UUID in arrow files
-    ROBOLOG_ID_COLUMN_NAME: str = "robolog_id"
+    # Bytes per topic buffer in a topic sink. Always respected
+    JSONL_BUFFER_SIZE_PER_TOPIC_BYTES: int = 1 * GB
+
+    # Number of messages to buffer in rosbridge before sending over the WebSocket
+    ROSBRIDGE_QUEUE_LENGTH: int = 1000
 
     # Column name for timestamps in arrow files, i.e., when messages were recorded
     TIMESTAMP_SECONDS_COLUMN_NAME: str = "timestamp_seconds"
 
-    # Column name for the topic in arrow files
-    TOPIC_COLUMN_NAME: str = "topic"
+    ###############################################
+    # S3 configuration for uploading artifacts to #
+    # the Extelligence platform.                  #
+    ###############################################
 
-    # Column name for the message in arrow files
-    MESSAGE_COLUMN_NAME: str = "message"
+    EXTELLIGENCE_S3_BUCKET_NAME: str | None = None  # If not set, artifact upload is disabled
 
-    # Maximum number of rows to display in DuckDB queries
-    DUCKDB_DISPLAY_MAX_ROWS: int = 3
+    EXTELLIGENCE_S3_BUCKET_REGION: str | None = None  # If not set, will use default region
 
-    # Local host of bagel
-    LOCAL_HOST: str = "0.0.0.0"  # noqa: S104
+    ################################################
+    # The default values of the following settings #
+    # are specified via the ".env" file.           #
+    ################################################
 
-    # Port of the local webapp
-    WEBAPP_LOCAL_PORT: int = 8501
+    # Whether running in a container
+    CONTAINER_MODE: bool
 
-    # Streamlit webapp entry point
-    WEBAPP_PATH: str = "app.py"
+    # Host of the MCP server
+    MCP_SERVER_HOST: str
 
-    # Port of the MCP server (port to listen on for SSE transport)
-    MCP_LOCAL_PORT: int = 8000
-
-    # MCP server entry point
-    MCP_PATH: str = "server.py"
+    # Port of the MCP server
+    MCP_SERVER_PORT: int
 
 
 settings = Settings()

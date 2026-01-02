@@ -1,0 +1,10 @@
+<poml>
+    <task>
+        Count the topics in the data source.
+        If the count is odd, say "woof", else say "meow".
+    </task>
+
+    <output-format>
+        Return the sound, the topic count, and a few cute emojis. Nothing else.
+    </output-format>
+</poml>

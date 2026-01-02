@@ -13,33 +13,17 @@ jobs:
     strategy:
       matrix:
         include:
-          # ROS 2
-          - name: ros2-kilted
-            dockerfile: docker/Dockerfile.ros2
-            args: --build-arg ROS_DISTRO=kilted
-          - name: ros2-jazzy
-            dockerfile: docker/Dockerfile.ros2
-            args: --build-arg ROS_DISTRO=jazzy
-          - name: ros2-iron
-            dockerfile: docker/Dockerfile.ros2
-            args: --build-arg ROS_DISTRO=iron
-          - name: ros2-humble
-            dockerfile: docker/Dockerfile.ros2
-            args: --build-arg ROS_DISTRO=humble
-          # ROS 1
-          - name: ros1-noetic
-            dockerfile: docker/Dockerfile.ros1
-            args: ""
+          # ROS
+          - service: ros2-kilted
+          - service: ros2-jazzy
+          - service: ros2-iron
+          - service: ros2-humble
+          - service: ros1-noetic
+          - service: ros1-noetic-cv
           # Drones
-          - name: px4
-            dockerfile: docker/Dockerfile.px4
-            args: ""
-          - name: ardupilot
-            dockerfile: docker/Dockerfile.ardupilot
-            args: ""
-          - name: betaflight
-            dockerfile: docker/Dockerfile.betaflight
-            args: ""
+          - service: px4
+          - service: ardupilot
+          - service: betaflight
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -48,24 +32,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push ${{ matrix.name }}
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
+      - name: Build ${{ matrix.service }}
+        run: docker compose build ${{ matrix.service }}
+      - name: Push ${{ matrix.service }}
         run: |
-          IMAGE_ID=ghcr.io/extelligence-ai/bagel/${{ matrix.name }}
+          IMAGE=ghcr.io/extelligence-ai/bagel/${{ matrix.service }}
           TAG=sha-${{ github.sha }}
-
-          # Build the image
-          docker build \
-            -f ${{ matrix.dockerfile }} \
-            -t $IMAGE_ID:$TAG \
-            -t $IMAGE_ID:latest \
-            ${{ matrix.args }} \
-            . \
-            --build-arg UV_VERSION=0.8.0 \
-            --build-arg DEV_MODE=false \
-            --build-arg BAGEL_LOCAL_HOST=0.0.0.0 \
-            --build-arg BAGEL_WEBAPP_LOCAL_PORT=8501 \
-            --build-arg BAGEL_MCP_LOCAL_PORT=8000
-
-          # Push both tags
-          docker push $IMAGE_ID:$TAG
-          docker push $IMAGE_ID:latest
+          docker tag $IMAGE:latest $IMAGE:$TAG
+          docker push $IMAGE:latest
+          docker push $IMAGE:$TAG
