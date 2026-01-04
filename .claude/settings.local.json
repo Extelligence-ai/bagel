@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__bagel__parse_message_structure"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

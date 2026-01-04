@@ -1,0 +1,44 @@
+# Copy this file to terraform.tfvars and update with your values
+
+aws_region = "us-east-1"
+environment = "prod"
+project_name = "bagel"
+
+# ECR Configuration
+ecr_repository_name = "bagel-mcp-server"
+
+# ECS Configuration
+ecs_cluster_name = "bagel-cluster"
+ecs_service_name = "bagel-mcp-service"
+desired_count = 1
+
+# Task Resources
+task_cpu = 512      # 0.5 vCPU
+task_memory = 1024  # 1 GB
+
+# Networking
+# Don't know what these are? Run: ./find-vpc-info.sh
+# Or see README-VPC.md for detailed explanation
+vpc_id = "vpc-xxxxxxxxxxxxxxxxx"  # Your VPC ID (find with: aws ec2 describe-vpcs)
+subnet_ids = [
+  "subnet-xxxxxxxxxxxxxxxxx",       # Subnet 1 (must be in different AZ than subnet 2)
+  "subnet-yyyyyyyyyyyyyyyyy"       # Subnet 2 (must be in different AZ than subnet 1)
+]
+
+# Security
+allowed_cidr_blocks = [
+  "0.0.0.0/0"  # Restrict this in production!
+]
+
+# Load Balancer
+enable_load_balancer = false
+
+# Auto Scaling
+enable_auto_scaling = true
+min_capacity = 1
+max_capacity = 10
+target_cpu_utilization = 70
+target_memory_utilization = 80
+
+# MCP Server
+mcp_port = 8000

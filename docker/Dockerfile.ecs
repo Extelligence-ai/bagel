@@ -1,0 +1,62 @@
+# Dockerfile for ECS deployment - MCP Server only
+# Ubuntu 22.04 LTS (Jammy Jellyfish)
+# Python 3.10.6
+FROM ubuntu:22.04
+
+# Install common tools
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    jq \
+    netcat-openbsd \
+    vim && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set up runtime environment
+ARG USERNAME=ubuntu
+RUN id -u 1000 >/dev/null 2>&1 || useradd -m -u 1000 ${USERNAME}
+USER ${USERNAME}
+ENV PATH="/home/${USERNAME}/.local/bin:$PATH"
+RUN mkdir -p /home/${USERNAME}/runtime
+WORKDIR /home/${USERNAME}/runtime
+
+# Install uv
+ARG UV_VERSION=0.5.19
+RUN /bin/bash -c "curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && uv --version"
+
+# Set up virtual environment and install PyPI dependencies
+# Note: For ECS, you may want to include specific dependency groups
+# based on your use case (ros1, ros2, px4, ardupilot, betaflight)
+COPY --chown=${USERNAME}:${USERNAME} pyproject.toml ./
+ARG DEV_MODE=false
+ARG DEPENDENCY_GROUPS=""
+RUN uv venv .venv && \
+    . .venv/bin/activate && \
+    uv pip install -e "."
+
+# Copy source files
+COPY --chown=${USERNAME}:${USERNAME} main.py ./
+COPY --chown=${USERNAME}:${USERNAME} app.py ./
+COPY --chown=${USERNAME}:${USERNAME} server.py ./
+COPY --chown=${USERNAME}:${USERNAME} settings.py ./
+COPY --chown=${USERNAME}:${USERNAME} src ./src
+RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test; fi
+
+# Set environment variables
+ARG BAGEL_LOCAL_HOST=0.0.0.0
+ENV BAGEL_LOCAL_HOST=${BAGEL_LOCAL_HOST}
+
+ARG BAGEL_MCP_LOCAL_PORT=8000
+ENV BAGEL_MCP_LOCAL_PORT=${BAGEL_MCP_LOCAL_PORT}
+
+# Expose MCP server port
+EXPOSE ${BAGEL_MCP_LOCAL_PORT}
+
+# Health check for ECS - check if port is listening
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:${BAGEL_MCP_LOCAL_PORT}/ || nc -z localhost ${BAGEL_MCP_LOCAL_PORT} || exit 1
+
+# Run the MCP server as a long-running service
+CMD ["uv", "run", "python", "server.py"]

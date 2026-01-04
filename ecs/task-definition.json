@@ -1,0 +1,63 @@
+{
+  "family": "bagel-mcp-server",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/ecsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "bagel-mcp-server",
+      "image": "YOUR_ECR_REPO_URI:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp",
+          "hostPort": 8000
+        }
+      ],
+      "environment": [
+        {
+          "name": "BAGEL_LOCAL_HOST",
+          "value": "0.0.0.0"
+        },
+        {
+          "name": "BAGEL_MCP_LOCAL_PORT",
+          "value": "8000"
+        },
+        {
+          "name": "BAGEL_USE_CACHE",
+          "value": "true"
+        },
+        {
+          "name": "BAGEL_CACHE_DIRECTORY",
+          "value": "/tmp/bagel-cache"
+        },
+        {
+          "name": "BAGEL_STORAGE_DIRECTORY",
+          "value": "/tmp/bagel-storage"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/bagel-mcp-server",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:8000/ || nc -z localhost 8000 || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 40
+      }
+    }
+  ]
+}

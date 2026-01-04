@@ -1,0 +1,7 @@
+# ECS deployment artifacts
+task-definition-updated.json
+*.log
+
+# AWS credentials (if accidentally committed)
+.aws/
+credentials
