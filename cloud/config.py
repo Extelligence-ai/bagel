@@ -77,3 +77,7 @@ def clear_config() -> None:
     if CONFIG_FILE.exists():
         CONFIG_FILE.unlink()
 
+
+
+
+
