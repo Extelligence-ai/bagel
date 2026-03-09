@@ -368,6 +368,46 @@ def subscribe_live_topics(  # noqa: PLR0913
 
 
 @server.tool(
+    title="Generate pipeline YAML from natural language",
+    description=(
+        "Translates a natural language description into a valid Bagel pipeline YAML configuration. "
+        "Automatically selects the right gates and tasks from the available module catalog. "
+        "For example: 'Export the /lidar/points topic to parquet every 5 minutes'."
+    ),
+)
+def generate_pipeline_yaml(request: str) -> list[dict[str, Any]]:
+    """Generate a pipeline YAML configuration from a natural language description.
+
+    Uses the pipeline module catalog and a POML template to translate the user's
+    intent into a valid YAML pipeline definition. The LLM selects appropriate gates
+    and tasks, fills in required parameters, and returns ready-to-use YAML.
+
+    Args:
+        request (str): A natural language description of the desired pipeline behavior.
+            Should include what data source to process, what conditions to check,
+            and what actions to take.
+
+    Returns:
+        list[dict[str, Any]]: A structured prompt for the LLM to generate the YAML.
+
+    Examples:
+        As an LLM prompt:
+            Generate a pipeline that exports /imu/data to CSV at the end of
+            the recording at './data/sample/ros2/mcap'.
+
+        As a Python call:
+            >>> generate_pipeline_yaml("email me if /battery drops below 10%")
+
+    """
+    from src.pipeline.catalog import catalog_as_text
+
+    poml_file = pathlib.Path("./src/agent/generate/pipeline_yaml.poml")
+    if not poml_file.exists():
+        raise FileNotFoundError(poml_file)
+    return poml(poml_file, context={"catalog": catalog_as_text(), "request": request})
+
+
+@server.tool(
     title="Run a capability defined in a POML file",
     description=(
         "Use this tool to run a predefined capability described in a `.poml` file. "

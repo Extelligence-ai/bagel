@@ -1,0 +1,76 @@
+<poml>
+    <task>
+        Generate a valid Bagel pipeline YAML configuration from a natural language description.
+        <stepwise-instructions>
+            <list listStyle="decimal">
+                <item>
+                    Parse the user's natural language request to identify:
+                    - What data source path they want to process
+                    - What conditions (gates) should be checked
+                    - What actions (tasks) should be performed
+                    - How often the pipeline should run (cadence)
+                    - Any lookback windows needed
+                </item>
+                <item>
+                    Select the appropriate gate and task modules from the catalog below.
+                    Match the user's intent to the closest available modules.
+                    If no gate is needed, omit the gates section.
+                </item>
+                <item>
+                    Generate valid YAML following this exact schema:
+
+                    <code lang="yaml">
+                    name: [descriptive pipeline name]
+                    path: [data source path from user request]
+                    allow_failure: [true or false]
+
+                    cadence:
+                      topic: [topic name that drives the pipeline timing]
+                      when:
+                        once_at_end            # run once at the end
+                        # OR
+                        every: [integer]
+                        unit: [frame|second|minute|hour]
+
+                    gates:                     # optional
+                      - module: [gate module path]
+                        args:
+                          [arg_name]: [value]
+                        lookback:              # optional
+                          last: [integer]
+                          unit: [frame|second|minute|hour]
+
+                    tasks:
+                      - module: [task module path]
+                        args:
+                          [arg_name]: [value]
+                        lookback:              # optional
+                          last: [integer]
+                          unit: [frame|second|minute|hour]
+                    </code>
+                </item>
+                <item>
+                    Validate that:
+                    - All required args for each module are provided
+                    - The cadence topic exists (or ask the user to confirm)
+                    - Output directories are reasonable paths
+                    - Types match (e.g., lists for topics, booleans for flags)
+                </item>
+            </list>
+        </stepwise-instructions>
+    </task>
+
+    <human-msg>
+        <cp caption="Available Pipeline Modules">
+            {{catalog}}
+        </cp>
+        <cp caption="User Request">
+            {{request}}
+        </cp>
+    </human-msg>
+
+    <output-format>
+        Return ONLY the YAML configuration inside a code block. No explanation unless the
+        request is ambiguous — in that case, ask a clarifying question before generating YAML.
+    </output-format>
+</poml>
