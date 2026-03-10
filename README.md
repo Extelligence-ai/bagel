@@ -101,60 +101,84 @@ correct any errors.
 
 ## ⚡️ Quickstart
 
+Three commands. That’s it.
+
+> [!TIP]
+> **Already have Claude Code?** Just paste the link to this repo and tell Claude
+> what environment you want:
+>
+> > Set up https://github.com/Extelligence-ai/bagel for ROS2 Kilted.
+>
+> Claude will clone the repo, start Docker, and wire up the MCP connection for you.
+
 #### 📋 Prerequisites
 
-Install [Docker Desktop](https://docs.docker.com/get-started/get-docker/), then clone this repo:
+Install [Docker Desktop](https://docs.docker.com/get-started/get-docker/) and
+[Claude Code](https://docs.claude.com/en/docs/claude-code/quickstart) (or another MCP-enabled LLM).
+
+#### 1. Clone and start Bagel
 
 ```bash
-git clone https://github.com/Extelligence-ai/bagel.git; cd bagel
-```
-
-#### 🐳 Run with Docker
-
-Open [compose.yaml](./compose.yaml) and pick a service based on your need (e.g., `ros2-kilted`).
-
-```bash
+git clone https://github.com/Extelligence-ai/bagel.git && cd bagel
 docker compose run --service-ports ros2-kilted
 ```
+
+Pick the service that matches your environment:
+
+| Service           | Use case                |
+| ----------------- | ----------------------- |
+| `ros2-kilted`     | ROS2 Kilted (latest)    |
+| `ros2-jazzy`      | ROS2 Jazzy              |
+| `ros2-iron`       | ROS2 Iron               |
+| `ros2-humble`     | ROS2 Humble             |
+| `ros1-noetic`     | ROS1 Noetic             |
+| `ros1-noetic-cv`  | ROS1 Noetic + CV        |
+| `px4`             | PX4 flight logs         |
+| `ardupilot`       | ArduPilot flight logs   |
+| `betaflight`      | Betaflight flight logs  |
 
 > [!TIP]
 > To give Bagel access to your local files, edit `compose.yaml` before starting Docker:
 > uncomment and update the `volumes` section under your chosen service.
 
-Your terminal should show output similar to:
+Wait for this output:
 
 ```
-INFO:     Started server process [86]
-INFO:     Waiting for application startup.
-INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 ```
 
-#### 🔗 Connect to an LLM
+#### 2. Connect Claude Code
 
-Once the Bagel MCP server is running, connect it to your preferred LLM.
-Bagel should work with any MCP-enabled LLM, though some setup may be required.
-We’ve tested several LLMs—expand the runbooks below for setup instructions.
+In a new terminal:
+
+```bash
+claude mcp add --transport sse bagel http://0.0.0.0:8000/sse
+```
+
+#### 3. Prompt
+
+```bash
+claude
+```
+
+> Summarize the metadata of the ROS2 bag "./data/sample/ros2/mcap".
+
+That’s it — you’re chatting with your data.
 
 <details>
-  <summary>📚 Setup runbooks for tested LLMs</summary>
+  <summary>📚 Using a different LLM?</summary>
 
-- [Claude Code](./doc/runbooks/setup/claude_code.md)
+Bagel works with any MCP-enabled LLM. Setup runbooks for tested alternatives:
+
+- [Claude Code](./doc/runbooks/setup/claude_code.md) (detailed guide)
 - [Gemini CLI](./doc/runbooks/setup/gemini_cli.md)
 - [Codex](./doc/runbooks/setup/codex.md)
 - [Cursor](./doc/runbooks/setup/cursor.md)
 - [Copilot](./doc/runbooks/setup/copilot.md)
 
+Can’t find your LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues).
+
 </details>
-
-Can't find your favorite LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues),
-and we’ll create a runbook for it.
-
-#### 🚀 Launch and Prompt
-
-Now you're ready to launch your LLM and begin prompting. For example:
-
-> Summarize the metadata of the ROS2 bag "./data/sample/ros2/mcap".
 
 ## 🐶 Teach Bagel a New Trick
 
@@ -190,6 +214,10 @@ Result:
 ```
 meow 🐱 4 topics 🐱💤🎯
 ```
+
+## 📦 Integrations
+
+- [Cloudini](./doc/runbooks/cloudini.md) — Decode cloudini-compressed pointcloud data in pipelines
 
 ## 🫶 Contributing
 

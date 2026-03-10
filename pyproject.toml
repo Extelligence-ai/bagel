@@ -54,6 +54,7 @@ ros2 = [
 px4 = ["pyulog >=1.2.0,<2.0.0", "GitPython >=3.1.0,<4.0.0"]
 ardupilot = ["pymavlink >=2.4.0,<3.0.0"]
 betaflight = ["orangebox >=0.4.0,<1.0.0"]
+cloudini = ["wasmtime >=26.0.0", "numpy >=1.24.0,<3.0.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -85,7 +86,7 @@ ignore = [
     "D213",    # conflicts with D212
     "PLC0415", # pylint (non top-level imports)
 ]
-exclude = ["**/*.ipynb"]
+exclude = ["**/*.ipynb", "src/pipeline/tasks/cloudini/vendor/**"]
 
 [tool.ruff.lint.per-file-ignores]
 "./test/**/*.py" = ["S101", "D", "PLR2004"]

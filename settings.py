@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # Column name for timestamps in arrow files, i.e., when messages were recorded
     TIMESTAMP_SECONDS_COLUMN_NAME: str = "timestamp_seconds"
 
+    # Whether to use cloudini for pointcloud compression/decompression by default
+    CLOUDINI_ENABLED: bool = True
+
+    # Default quantization resolution in meters for cloudini lossy compression
+    CLOUDINI_DEFAULT_RESOLUTION: float = 0.001
     ###############################################
     # S3 configuration for uploading artifacts to #
     # the Extelligence platform.                  #
