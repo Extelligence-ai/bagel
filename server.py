@@ -457,5 +457,116 @@ def run_poml_capability(
     return poml(poml_file, context=poml_context)
 
 
+# ---------------------------------------------------------------------------
+# WaffleForm — hardware-as-code tools
+# ---------------------------------------------------------------------------
+
+
+@server.tool(
+    title="Describe robot hardware from a WaffleForm",
+    description=(
+        "Parse a WaffleForm (robot.waffleform.yaml) and return structured hardware metadata. "
+        "Includes: compute, actuators, sensors, firmware versions, software packages, "
+        "calibration references. Use this to answer questions about a robot's hardware config."
+    ),
+)
+def describe_robot_hardware(path: str) -> dict[str, Any]:
+    """Describe a robot's hardware configuration from its WaffleForm.
+
+    Reads a `.waffleform.yaml` file and returns a structured summary of the
+    robot's hardware state: compute platform, actuators, sensors, firmware
+    versions, installed software, and calibration references.
+
+    Args:
+        path (str): Filesystem path to a `.waffleform.yaml` file.
+
+    Returns:
+        dict[str, Any]: Structured hardware summary including:
+            - ``robot_name``: Name of the robot
+            - ``platform``: Robot platform (e.g., clearpath-jackal)
+            - ``compute``: Compute modules (hw, os)
+            - ``actuators``: Actuators with model and firmware
+            - ``sensors``: Sensors with model, firmware, mount position
+            - ``software``: ROS distro, apt/pip/container packages
+            - ``calibration``: References to calibration files
+            - ``firmware_versions``: All firmware versions in one dict
+
+    Examples:
+        As an LLM prompt:
+            Describe the hardware of the robot in "./robot.waffleform.yaml".
+
+        As a Python call:
+            >>> describe_robot_hardware("./robot.waffleform.yaml")
+
+    """
+    from src.source.waffleform.parser import parse_waffleform
+
+    form = parse_waffleform(path)
+    return form.to_summary()
+
+
+@server.tool(
+    title="Compare two WaffleForms",
+    description=(
+        "Diff two WaffleForm files and return the differences. "
+        "Useful for understanding what changed between two hardware snapshots."
+    ),
+)
+def diff_waffleforms(path_a: str, path_b: str) -> dict[str, Any]:
+    """Compare two WaffleForm files and return their differences.
+
+    Args:
+        path_a (str): Path to the first WaffleForm.
+        path_b (str): Path to the second WaffleForm.
+
+    Returns:
+        dict[str, Any]: A diff report with added, removed, and modified fields.
+
+    Examples:
+        As an LLM prompt:
+            Compare the hardware config in "./robot_v1.waffleform.yaml" vs
+            "./robot_v2.waffleform.yaml".
+
+        As a Python call:
+            >>> diff_waffleforms("./v1.waffleform.yaml", "./v2.waffleform.yaml")
+
+    """
+    from src.source.waffleform.parser import parse_waffleform
+
+    form_a = parse_waffleform(path_a)
+    form_b = parse_waffleform(path_b)
+
+    summary_a = form_a.to_summary()
+    summary_b = form_b.to_summary()
+
+    changes: list[dict[str, Any]] = []
+
+    def _diff_dict(a: dict, b: dict, prefix: str = "") -> None:
+        all_keys = set(a.keys()) | set(b.keys())
+        for key in sorted(all_keys):
+            path_key = f"{prefix}.{key}" if prefix else key
+            val_a = a.get(key)
+            val_b = b.get(key)
+
+            if val_a is None and val_b is not None:
+                changes.append({"path": path_key, "change": "added", "value": val_b})
+            elif val_a is not None and val_b is None:
+                changes.append({"path": path_key, "change": "removed", "value": val_a})
+            elif isinstance(val_a, dict) and isinstance(val_b, dict):
+                _diff_dict(val_a, val_b, path_key)
+            elif val_a != val_b:
+                changes.append({"path": path_key, "change": "modified", "old": val_a, "new": val_b})
+
+    _diff_dict(summary_a, summary_b)
+
+    return {
+        "robot_a": form_a.name,
+        "robot_b": form_b.name,
+        "identical": len(changes) == 0,
+        "change_count": len(changes),
+        "changes": changes,
+    }
+
+
 if __name__ == "__main__":
     server.run(transport="sse")

@@ -18,6 +18,7 @@ class DataSource(Enum):
     BETAFLIGHT_BBL = "betaflight.bbl"
     BETAFLIGHT_BFL = "betaflight.bfl"
     BAGEL_SINK = "bagel.sink"
+    WAFFLEFORM = "waffleform"
 
 
 def resolve(path: str) -> DataSource:
@@ -34,7 +35,9 @@ def resolve(path: str) -> DataSource:
 def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # noqa: PLR0911
     """Resolve the data source type from the given file or directory path."""
     path = pathlib.Path(path)
-    if is_bagel_sink_directory(path):
+    if is_waffleform_file(path):
+        return DataSource.WAFFLEFORM
+    elif is_bagel_sink_directory(path):
         return DataSource.BAGEL_SINK
     elif is_ros1_bag_file(path):
         return DataSource.ROS1_BAG
@@ -157,6 +160,11 @@ def is_betaflight_bbl_file(path: pathlib.Path) -> bool:
 def is_betaflight_bfl_file(path: pathlib.Path) -> bool:
     """Check if the given path is a Betaflight .BFL file."""
     return has_magic_bytes(path, b"H Product:") and path.suffix.lower() == ".bfl"
+
+
+def is_waffleform_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a WaffleForm hardware-as-code spec file."""
+    return path.is_file() and path.name.endswith(".waffleform.yaml")
 
 
 def is_bagel_sink_directory(path: pathlib.Path) -> bool:
