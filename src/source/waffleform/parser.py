@@ -220,6 +220,6 @@ def parse_waffleform(path: str | pathlib.Path) -> WaffleForm:
 
 
 def is_waffleform_file(path: str | pathlib.Path) -> bool:
-    """Check if a path points to a WaffleForm YAML file."""
+    """Check if a path points to a WaffleForm file (.wf or .waffleform.yaml)."""
     path = pathlib.Path(path)
-    return path.is_file() and path.name.endswith(".waffleform.yaml")
+    return path.is_file() and (path.name.endswith(".wf") or path.name.endswith(".waffleform.yaml"))

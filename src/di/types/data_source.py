@@ -163,8 +163,8 @@ def is_betaflight_bfl_file(path: pathlib.Path) -> bool:
 
 
 def is_waffleform_file(path: pathlib.Path) -> bool:
-    """Check if the given path is a WaffleForm hardware-as-code spec file."""
-    return path.is_file() and path.name.endswith(".waffleform.yaml")
+    """Check if the given path is a WaffleForm hardware-as-code spec file (.wf or .waffleform.yaml)."""
+    return path.is_file() and (path.name.endswith(".wf") or path.name.endswith(".waffleform.yaml"))
 
 
 def is_bagel_sink_directory(path: pathlib.Path) -> bool:

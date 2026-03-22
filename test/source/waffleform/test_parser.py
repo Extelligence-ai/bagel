@@ -56,16 +56,22 @@ robot:
 
 @pytest.fixture
 def waffleform_path(tmp_path: Path) -> Path:
-    """Write sample WaffleForm to a temp file."""
-    path = tmp_path / "robot.waffleform.yaml"
+    """Write sample WaffleForm to a temp file using .wf extension."""
+    path = tmp_path / "robot.wf"
     path.write_text(SAMPLE_WAFFLEFORM)
     return path
 
 
 def test_is_waffleform_file(waffleform_path: Path, tmp_path: Path) -> None:
+    # .wf extension
     assert is_waffleform_file(waffleform_path) is True
+    # legacy .waffleform.yaml extension
+    legacy = tmp_path / "robot.waffleform.yaml"
+    legacy.write_text(SAMPLE_WAFFLEFORM)
+    assert is_waffleform_file(legacy) is True
+    # non-waffleform files
     assert is_waffleform_file(tmp_path / "foo.bag") is False
-    assert is_waffleform_file(tmp_path / "nonexistent.waffleform.yaml") is False
+    assert is_waffleform_file(tmp_path / "nonexistent.wf") is False
 
 
 def test_parse_basic(waffleform_path: Path) -> None:
