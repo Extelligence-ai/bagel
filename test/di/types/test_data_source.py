@@ -5,14 +5,12 @@ import pytest
 from src.di.types import data_source
 
 
-def test_should_raise_for_stream() -> None:
+def test_should_raise_for_unsupported_url_scheme() -> None:
     # GIVEN
     path = "http://localhost:9092"
 
     # WHEN / THEN
-    with pytest.raises(
-        NotImplementedError, match="Stream-based data sources are not supported yet."
-    ):
+    with pytest.raises(NotImplementedError, match="URL scheme 'http' is not supported"):
         data_source.resolve(path)
 
 

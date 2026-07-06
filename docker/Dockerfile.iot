@@ -36,6 +36,10 @@ RUN if [ "_${DEV_MODE}" = "_true" ]; then \
     uv sync --no-dev --group iot; \
     fi
 
+# Pre-install the DuckDB postgres extension so TimescaleDB/Postgres sources
+# work without runtime network access.
+RUN uv run python -c "import duckdb; duckdb.install_extension('postgres')"
+
 # Expose MCP server port
 ARG MCP_SERVER_PORT
 EXPOSE ${MCP_SERVER_PORT}

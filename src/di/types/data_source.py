@@ -23,6 +23,14 @@ class DataSource(Enum):
     BAGEL_SINK = "bagel.sink"
     PYARROW_JSON = "pyarrow.json"
     PYARROW_CSV = "pyarrow.csv"
+    POSTGRES = "postgres"
+
+
+# URL schemes mapped to their data source types.
+URL_SCHEMES = {
+    "postgres": DataSource.POSTGRES,
+    "postgresql": DataSource.POSTGRES,  # TimescaleDB uses standard postgres URLs
+}
 
 
 def resolve(path: str) -> DataSource:
@@ -30,7 +38,12 @@ def resolve(path: str) -> DataSource:
     result = urlparse(path)
     if all([result.scheme, result.netloc]):
         # path is a URL
-        raise NotImplementedError("Stream-based data sources are not supported yet.")
+        if result.scheme in URL_SCHEMES:
+            return URL_SCHEMES[result.scheme]
+        raise NotImplementedError(
+            f"URL scheme '{result.scheme}' is not supported. "
+            f"Supported schemes: {', '.join(sorted(URL_SCHEMES))}"
+        )
     else:
         # path is a local file or directory
         return resolve_file_based_data_source(path)
