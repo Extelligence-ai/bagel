@@ -49,7 +49,7 @@ Can’t wait to try it out? 👉 Check out the [Quickstart](#️-quickstart).
 | ------------ | ------------------------------ |
 | **Robotics** | ROS1, ROS2, MCAP (any profile) |
 | **Drones**   | PX4, ArduPilot, Betaflight     |
-| **IoT**      | MQTT (live), PostgreSQL / TimescaleDB |
+| **IoT**      | MQTT (live), PostgreSQL / TimescaleDB, InfluxDB 3 |
 
 ## 💬 What Can I Prompt?
 
