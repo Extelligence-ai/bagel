@@ -171,7 +171,28 @@ You can also preview a reduction on the same CSV sample
 (`message['accel_x'] < -10` → 2 events, ~33.6% kept), exercising the full detect/merge
 path without ROS.
 
+## Verify the ROS write paths (integration tests)
+
+The db3/MCAP reduce and snippet writers are covered by integration tests that synthesize
+a bag with real IMU telemetry (two decelerations below -10) and assert on the written
+output. They skip automatically outside ROS; run them in a container:
+
+```bash
+docker compose run --rm -v "$PWD:/home/ubuntu/work" ros2-jazzy bash -c '
+  cd /home/ubuntu/work
+  uv pip install --python /home/ubuntu/runtime/.venv/bin/python -q pytest
+  source /opt/ros/jazzy/setup.bash
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+    /home/ubuntu/runtime/.venv/bin/python -m pytest test/pipeline/integration -v'
+```
+
+To generate a standalone synthetic telemetry bag (db3 or mcap) for manual experiments:
+
+```bash
+uv run python -m test.pipeline.integration.synth --directory ./data/synthetic --storage mcap
+```
+
 > [!NOTE]
 > The bundled ROS2 sample (`data/sample/ros2/db3`) contains only `std_msgs/String`
-> topics over a sub-microsecond span, so it is not a meaningful reduction target — point
-> the reduce pipeline at a bag with real numeric telemetry.
+> topics over a sub-microsecond span, so it is not a meaningful reduction target — use
+> the synthesizer above or a bag with real numeric telemetry.
