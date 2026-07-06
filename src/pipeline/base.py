@@ -18,7 +18,7 @@ from src import artifacts
 from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
-from src.pipeline import progress
+from src.pipeline import progress, windows
 
 SECOND = 1
 MINUTE = 60 * SECOND
@@ -441,19 +441,7 @@ class Pipeline:
         """
         ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
         rows = relation.project(f"{ts_column} AS ts, ({when.predicate}) AS hit").fetchall()
-        rows.sort(key=lambda row: row[0])
-
-        min_gap_seconds = when.min_gap_seconds()
-        previous_hit = False
-        last_event_at = None
-        for raw_timestamp, raw_hit in rows:
-            hit = bool(raw_hit)
-            if hit and not previous_hit:
-                timestamp_seconds = float(raw_timestamp)
-                if last_event_at is None or timestamp_seconds - last_event_at >= min_gap_seconds:
-                    last_event_at = timestamp_seconds
-                    yield timestamp_seconds
-            previous_hit = hit
+        yield from windows.rising_edges(rows, when.min_gap_seconds())
 
     def run_at(self, asof_seconds: float) -> None:
         """Run the pipeline at the given timestamp (in seconds)."""
