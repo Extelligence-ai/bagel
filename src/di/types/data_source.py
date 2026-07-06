@@ -14,7 +14,8 @@ class DataSource(Enum):
 
     ROS1_BAG = "ros1.bag"
     ROS2_DB3 = "ros2.db3"
-    ROS2_MCAP = "ros2.mcap"
+    MCAP = "mcap"
+    ROS2_MCAP = "ros2.mcap"  # zstd-compressed MCAP bags; decompression requires rosbag2
     PX4_ULOG = "px4.ulg"
     ARDUPILOT_BIN = "ardupilot.bin"
     BETAFLIGHT_BBL = "betaflight.bbl"
@@ -44,7 +45,13 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
         return DataSource.ROS1_BAG
     elif is_ros2_db3_file(path) or is_ros2_db3_zstd_file(path) or is_ros2_db3_directory(path):
         return DataSource.ROS2_DB3
-    elif is_ros2_mcap_file(path) or is_ros2_mcap_zstd_file(path) or is_ros2_mcap_directory(path):
+    elif is_mcap_file(path) or is_mcap_directory(path):
+        # MCAP is a first-class, middleware-independent format: any bare .mcap file or
+        # directory of .mcap files (including rosbag2-produced MCAP bags).
+        return DataSource.MCAP
+    elif is_ros2_mcap_zstd_file(path) or is_ros2_mcap_directory(path):
+        # Zstandard-compressed MCAP bags still go through the ROS2 path, which has
+        # the rosbag2-based decompression machinery.
         return DataSource.ROS2_MCAP
     elif is_px4_ulog_file(path):
         return DataSource.PX4_ULOG
@@ -116,9 +123,23 @@ def is_ros2_db3_directory(path: pathlib.Path) -> bool:
     return True
 
 
+def is_mcap_file(path: pathlib.Path) -> bool:
+    """Check if the given path is an MCAP file."""
+    return has_magic_bytes(path, b"\x89MCAP0\r\n")
+
+
+def is_mcap_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing at least one MCAP file."""
+    if not path.is_dir():
+        return False
+
+    files = list(path.glob("*.mcap"))
+    return bool(files) and all(is_mcap_file(file) for file in files)
+
+
 def is_ros2_mcap_file(path: pathlib.Path) -> bool:
     """Check if the given path is a ROS 2 MCAP file."""
-    return has_magic_bytes(path, b"\x89MCAP0\r\n")
+    return is_mcap_file(path)
 
 
 def is_ros2_mcap_zstd_file(path: pathlib.Path) -> bool:

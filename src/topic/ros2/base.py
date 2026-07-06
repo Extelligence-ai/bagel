@@ -4,21 +4,13 @@ import abc
 
 import pyarrow as pa
 import rosbag2_py
-from pydantic import BaseModel
 
 from src.source.ros2.mcap import McapRos2Bag
 from src.topic import base
 
-
-class UnsupportedEncodingError(Exception):
-    """Raised when the message definition's encoding is not supported."""
-
-
-class MessageDefinition(BaseModel):
-    """Contain message definition and its encoding."""
-
-    encoding: str
-    definition: bytes
+# Shared with the format-agnostic MCAP registry; re-exported here for back-compat.
+UnsupportedEncodingError = base.UnsupportedEncodingError
+MessageDefinition = base.MessageDefinition
 
 
 class TopicRegistry(base.TopicRegistry):

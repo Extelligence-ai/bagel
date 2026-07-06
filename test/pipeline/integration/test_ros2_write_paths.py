@@ -144,9 +144,7 @@ def test_reduce_mcap_raw_passthrough(tmp_path: pathlib.Path) -> None:
 
     bag = synth.write_imu_bag(tmp_path / "source_bag", "mcap")
 
-    pipeline = base.Pipeline.build(
-        _reduce_config(bag, "src.pipeline.tasks.reduce.ros2.mcap")
-    )
+    pipeline = base.Pipeline.build(_reduce_config(bag, "src.pipeline.tasks.reduce.mcap"))
     produced = pipeline.run_all()
 
     assert len(produced) == 1

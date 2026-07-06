@@ -166,6 +166,10 @@ dependencies = [
     { name = "humanize" },
     { name = "jinja2" },
     { name = "lark" },
+    { name = "mcap" },
+    { name = "mcap-protobuf-support" },
+    { name = "mcap-ros1-support" },
+    { name = "mcap-ros2-support" },
     { name = "mcp" },
     { name = "pandas" },
     { name = "poml" },
@@ -214,10 +218,6 @@ ros1 = [
     { name = "rospkg" },
 ]
 ros2 = [
-    { name = "mcap" },
-    { name = "mcap-protobuf-support" },
-    { name = "mcap-ros1-support" },
-    { name = "mcap-ros2-support" },
     { name = "roslibpy" },
 ]
 
@@ -229,6 +229,10 @@ requires-dist = [
     { name = "humanize", specifier = ">=4.14.0,<5.0.0" },
     { name = "jinja2", specifier = ">=3.1.0,<4.0.0" },
     { name = "lark", specifier = ">=1.2.0,<2.0.0" },
+    { name = "mcap", specifier = ">=1.3.0,<2.0.0" },
+    { name = "mcap-protobuf-support", specifier = ">=0.5.0,<1.0.0" },
+    { name = "mcap-ros1-support", specifier = ">=0.7.0,<1.0.0" },
+    { name = "mcap-ros2-support", specifier = ">=0.5.0,<1.0.0" },
     { name = "mcp", specifier = ">=1.11.0,<2.0.0" },
     { name = "pandas", specifier = ">=2.2.0,<3.0.0" },
     { name = "poml", specifier = ">=0.0.7,<1.0.0" },
@@ -272,13 +276,7 @@ ros1 = [
     { name = "roslibpy", specifier = ">=1.8.1,<2.0.0" },
     { name = "rospkg", specifier = ">=1.6.0,<2.0.0" },
 ]
-ros2 = [
-    { name = "mcap", specifier = ">=1.3.0,<2.0.0" },
-    { name = "mcap-protobuf-support", specifier = ">=0.5.0,<1.0.0" },
-    { name = "mcap-ros1-support", specifier = ">=0.7.0,<1.0.0" },
-    { name = "mcap-ros2-support", specifier = ">=0.5.0,<1.0.0" },
-    { name = "roslibpy", specifier = ">=1.8.1,<2.0.0" },
-]
+ros2 = [{ name = "roslibpy", specifier = ">=1.8.1,<2.0.0" }]
 
 [[package]]
 name = "beautifulsoup4"

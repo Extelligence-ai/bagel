@@ -65,19 +65,22 @@ and `save_pipeline` (persist a config as YAML for reuse).
 
 ## Reduce an MCAP bag
 
-Point the pipeline at an MCAP source and use the MCAP reduce module. It copies raw
-message records within the kept windows -- no decode/re-encode -- so it needs no rosidl
-typesupport:
+MCAP is a first-class format: any `.mcap` file or directory of them (ros1, ros2, or
+protobuf profiles) works in **every** Bagel image -- no ROS required. The reduce module
+copies raw message records within the kept windows -- no decode/re-encode -- so it needs
+no rosidl typesupport:
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.reduce.ros2.mcap
+  - module: src.pipeline.tasks.reduce.mcap
     args:
       event_topic: /imu
       predicate: "\"/imu\"['linear_acceleration']['x'] < -10"
       pre_seconds: 10
       post_seconds: 10
 ```
+
+(`src.pipeline.tasks.reduce.ros2.mcap` remains as a back-compat alias.)
 
 ## Live edge-recording
 
@@ -128,7 +131,7 @@ SHA-256 already matches the remote object are skipped, so re-runs are cheap:
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.reduce.ros2.mcap
+  - module: src.pipeline.tasks.reduce.mcap
     args: { event_topic: /imu, predicate: "...", pre_seconds: 10, post_seconds: 10 }
   - module: src.pipeline.tasks.upload.s3
     args:

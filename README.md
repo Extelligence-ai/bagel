@@ -45,11 +45,11 @@ Can’t wait to try it out? 👉 Check out the [Quickstart](#️-quickstart).
 
 ### ✅ Supported Data Formats
 
-| Industry     | Formats                    |
-| ------------ | -------------------------- |
-| **Robotics** | ROS1, ROS2                 |
-| **Drones**   | PX4, ArduPilot, Betaflight |
-| **IoT**      | Coming soon...             |
+| Industry     | Formats                        |
+| ------------ | ------------------------------ |
+| **Robotics** | ROS1, ROS2, MCAP (any profile) |
+| **Drones**   | PX4, ArduPilot, Betaflight     |
+| **IoT**      | Coming soon...                 |
 
 ## 💬 What Can I Prompt?
 

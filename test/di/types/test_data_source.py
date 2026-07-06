@@ -68,7 +68,7 @@ def test_should_resolve_ros2_db3_zstd_file() -> None:
     assert result == data_source.DataSource.ROS2_DB3
 
 
-def test_should_resolve_ros2_mcap_directory() -> None:
+def test_should_resolve_mcap_directory_as_first_class_mcap() -> None:
     # GIVEN
     path = "./data/sample/ros2/mcap"
 
@@ -76,10 +76,10 @@ def test_should_resolve_ros2_mcap_directory() -> None:
     result = data_source.resolve(path)
 
     # THEN
-    assert result == data_source.DataSource.ROS2_MCAP
+    assert result == data_source.DataSource.MCAP
 
 
-def test_should_resolve_ros2_mcap_file() -> None:
+def test_should_resolve_mcap_file_as_first_class_mcap() -> None:
     # GIVEN
     path = "./data/sample/ros2/mcap/part_0.mcap"
 
@@ -87,7 +87,7 @@ def test_should_resolve_ros2_mcap_file() -> None:
     result = data_source.resolve(path)
 
     # THEN
-    assert result == data_source.DataSource.ROS2_MCAP
+    assert result == data_source.DataSource.MCAP
 
 
 def test_should_resolve_ros2_mcap_zstd_file() -> None:
