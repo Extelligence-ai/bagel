@@ -365,6 +365,7 @@ class Pipeline:
 
         self._report_progress = report_progress
         self._artifacts = []
+        self._produced: list[pathlib.Path] = []
 
     @property
     def name(self) -> str:
@@ -448,9 +449,11 @@ class Pipeline:
         try:
             if all(gate.evaluate(asof_seconds, lookback) for gate, lookback in self._gates):
                 for task, lookback in self._tasks:
-                    artifacts = task.execute(asof_seconds, lookback)
-                    if task.upload and artifacts and self.can_upload_artifacts():
-                        self._artifacts.extend(artifacts)
+                    produced = task.execute(asof_seconds, lookback)
+                    if produced:
+                        self._produced.extend(produced)
+                    if task.upload and produced and self.can_upload_artifacts():
+                        self._artifacts.extend(produced)
                 logging.info(
                     "Pipeline '%s' executed when topic '%s' received message at %.4f seconds",
                     self.name,
@@ -475,8 +478,13 @@ class Pipeline:
                 str(e),
             )
 
-    def run_all(self) -> None:
-        """Run the pipeline at all applicable timestamps based on its cadence."""
+    def run_all(self) -> list[pathlib.Path]:
+        """Run the pipeline at all applicable timestamps based on its cadence.
+
+        Returns:
+            The artifact paths produced by the pipeline's tasks across all runs.
+
+        """
         for asof_seconds in self._asof_timestamps():
             self.run_at(asof_seconds)
         logging.info("Pipeline '%s' completed.", self.name)
@@ -484,6 +492,8 @@ class Pipeline:
         if self._artifacts:
             self.upload_artifacts()
             logging.info("Uploaded artifacts for pipeline '%s'.", self.name)
+
+        return self._produced
 
     @staticmethod
     def build(config: dict[str, Any]) -> "Pipeline":

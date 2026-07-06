@@ -4,6 +4,7 @@ import pathlib
 from typing import Any
 
 import duckdb
+import yaml
 from mcp.server.fastmcp import FastMCP
 from poml import poml
 
@@ -12,7 +13,7 @@ from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
-from src.pipeline import capabilities, windows
+from src.pipeline import base, capabilities, windows
 
 server = FastMCP(
     name="Bagel MCP Server",
@@ -532,6 +533,84 @@ def preview_pipeline(  # noqa: PLR0913
         "kept_seconds": plan["kept_seconds"],
         "total_seconds": plan["total_seconds"],
         "kept_fraction": plan["kept_fraction"],
+    }
+
+
+@server.tool(
+    title="Save a pipeline to a YAML file",
+    description=(
+        "Persist a pipeline configuration to a YAML file so it can be reused, edited, or "
+        "run later with `run.py`. Returns the path to the written file."
+    ),
+)
+def save_pipeline(
+    config: dict[str, Any], name: str, directory: str = "pipelines"
+) -> str:
+    """Write a pipeline configuration to a YAML file.
+
+    Args:
+        config (dict[str, Any]): The pipeline configuration (the same structure `run_pipeline`
+            accepts and `run.py` loads): `name`, `site`, `asset`, `path`, `allow_failure`,
+            `cadence`, and `tasks`.
+        name (str): The pipeline file name (without extension), in lower_snake_case.
+        directory (str, optional): Directory to write the file into. Created if missing.
+            Defaults to "pipelines".
+
+    Returns:
+        str: The path to the written YAML file.
+
+    Raises:
+        ValueError: If `name` is not a valid lower_snake_case identifier.
+
+    Examples:
+        As an LLM prompt:
+            Save this pipeline as "hard_decel_reduce".
+
+    """
+    from src import artifacts
+
+    if not artifacts.is_lower_snake_case(name):
+        raise ValueError(f"Pipeline name '{name}' must be lower_snake_case.")
+
+    output_directory = pathlib.Path(directory)
+    output_directory.mkdir(parents=True, exist_ok=True)
+    output_file = output_directory / f"{name}.yaml"
+    with open(output_file, "w") as stream:
+        yaml.safe_dump(config, stream, sort_keys=False)
+    return str(output_file)
+
+
+@server.tool(
+    title="Run a pipeline",
+    description=(
+        "Build and run a pipeline from a configuration and return the artifact paths it "
+        "produced. Prefer running `preview_pipeline` first for event-driven reductions so "
+        "the effect is audited before anything is written."
+    ),
+)
+def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
+    """Build and run a pipeline, returning the artifacts it produced.
+
+    Args:
+        config (dict[str, Any]): The pipeline configuration with `name`, `site`, `asset`,
+            `path`, `allow_failure`, `cadence`, and `tasks` (and optional `gates`). This is
+            the same structure accepted by `save_pipeline` and loaded by `run.py`.
+
+    Returns:
+        dict[str, Any]: A summary with `pipeline` (name), `status` ("completed"), and
+            `artifacts` (the paths produced by the pipeline's tasks).
+
+    Examples:
+        As an LLM prompt:
+            Run the reduce pipeline I just previewed.
+
+    """
+    pipeline = base.Pipeline.build(config)
+    produced = pipeline.run_all()
+    return {
+        "pipeline": pipeline.name,
+        "status": "completed",
+        "artifacts": [str(path) for path in produced],
     }
 
 
