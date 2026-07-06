@@ -13,7 +13,7 @@ from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
-from src.pipeline import base, capabilities, windows
+from src.pipeline import base, batch, capabilities, windows
 
 server = FastMCP(
     name="Bagel MCP Server",
@@ -612,6 +612,42 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
         "status": "completed",
         "artifacts": [str(path) for path in produced],
     }
+
+
+@server.tool(
+    title="Run a pipeline across many data sources (batch)",
+    description=(
+        "Run one pipeline configuration against many data sources -- explicit paths or glob "
+        "patterns like 'logs/*'. Each source is processed independently; a failure on one "
+        "source is reported but does not stop the batch. Returns per-source results and a "
+        "summary. For an event reduction, preview a representative source first."
+    ),
+)
+def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, Any]:
+    """Run a pipeline config against every matching data source.
+
+    Args:
+        config (dict[str, Any]): The base pipeline config (same structure as `run_pipeline`).
+            Its `path` is overridden for each source, so it need not be set.
+        paths (list[str]): Data source paths or glob patterns (e.g. ["logs/*.mcap"]). Globs
+            are expanded; patterns that match nothing are treated as literal paths.
+
+    Returns:
+        dict[str, Any]: A summary with `sources`, `completed`, `failed`, `artifacts` (total
+            produced), and `results` (a per-source list with `path`, `status`, and either
+            `artifacts` or `error`).
+
+    Examples:
+        As an LLM prompt:
+            Reduce every bag under "./logs" with this pipeline.
+
+        As a Python call:
+            >>> run_pipeline_batch(config, ["./logs/*"])
+
+    """
+    expanded = batch.expand_paths(paths)
+    results = batch.run_batch(config, expanded)
+    return batch.summarize(results)
 
 
 if __name__ == "__main__":

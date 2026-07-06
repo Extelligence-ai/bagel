@@ -103,6 +103,23 @@ Pass this pipeline to `subscribe_live_topics` (via the `pipeline` argument of
 `TopicSink.subscribe`); it runs on the sink's live message callback and fires once per
 deceleration event, recording only the window around each.
 
+## Batch: reduce many logs at once
+
+Run one reduction across a whole folder or glob of bags. Each source is processed
+independently (its own artifact directory), and a failure on one source is reported but
+does not stop the batch. From an MCP client:
+
+> Reduce every bag under `./logs` with this pipeline.
+
+which calls `run_pipeline_batch(config, ["./logs/*"])` and returns a summary:
+
+```text
+{ "sources": 42, "completed": 40, "failed": 2, "artifacts": 40, "results": [ ... ] }
+```
+
+The base config's `path` is ignored — it is overridden per source. Pair this with a data
+uploader to push the reduced bags to cloud storage.
+
 ## Verify the mechanism without ROS
 
 The event → window → merge → run machinery is format-agnostic; only the bag *writer* needs
