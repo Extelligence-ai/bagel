@@ -117,8 +117,29 @@ which calls `run_pipeline_batch(config, ["./logs/*"])` and returns a summary:
 { "sources": 42, "completed": 40, "failed": 2, "artifacts": 40, "results": [ ... ] }
 ```
 
-The base config's `path` is ignored — it is overridden per source. Pair this with a data
-uploader to push the reduced bags to cloud storage.
+The base config's `path` is ignored — it is overridden per source. Pair this with the
+upload task below to push the reduced bags to cloud storage.
+
+## Upload the reduced data to S3
+
+Add an upload task to the pipeline (or run one afterwards) to push artifacts to S3 or
+any S3-compatible store (MinIO, Cloudflare R2, ...) via `endpoint_url`. Files whose
+SHA-256 already matches the remote object are skipped, so re-runs are cheap:
+
+```yaml
+tasks:
+  - module: src.pipeline.tasks.reduce.ros2.mcap
+    args: { event_topic: /imu, predicate: "...", pre_seconds: 10, post_seconds: 10 }
+  - module: src.pipeline.tasks.upload.s3
+    args:
+      bucket: drone-fleet-reduced
+      source: ~/.bagel/artifacts        # file, directory, or glob
+      prefix: "2026/week-27"
+      filter_modified_at: true          # only files modified within the lookback window
+    lookback: { last: 1, unit: hour }
+```
+
+Credentials use the standard AWS resolution chain (env vars, `~/.aws`, instance role).
 
 ## Verify the mechanism without ROS
 

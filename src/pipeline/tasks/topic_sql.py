@@ -6,7 +6,6 @@ from enum import Enum
 
 import duckdb
 
-from src import artifacts
 from src.di import module
 from src.pipeline import base, messages
 
@@ -18,7 +17,7 @@ class OutputFormat(Enum):
     PARQUET = "parquet"
 
 
-class TopicSqlQuery(messages.TopicMessageMixin, base.Task):
+class TopicSqlQuery(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
     """Run a SQL query on messages from a topic and write the result to a file."""
 
     def __init__(
@@ -48,16 +47,7 @@ class TopicSqlQuery(messages.TopicMessageMixin, base.Task):
         duckdb.register(self._topic, relation)
         result = duckdb.sql(self._statement)
 
-        output_file = artifacts.pipeline_task_artifact_path(
-            self.pipeline,
-            self.name,
-            self.site,
-            self.asset,
-            self.log_id,
-            asof_seconds,
-            f".{self._output_format.value}",
-        )
-        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file = self.artifact_path(asof_seconds, f".{self._output_format.value}")
 
         match self._output_format:
             case OutputFormat.CSV:

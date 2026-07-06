@@ -6,12 +6,11 @@ import pathlib
 import shlex
 import subprocess
 
-from src import artifacts
 from src.di import module
 from src.pipeline import base, messages
 
 
-class SnipRosbag(messages.TopicMessageMixin, base.Task):
+class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
     """Create a new ROS1 bag snippet using the `rosbag filter` CLI tool."""
 
     def __init__(
@@ -75,16 +74,7 @@ class SnipRosbag(messages.TopicMessageMixin, base.Task):
                 end_seconds = asof_seconds + self._post_seconds
                 conditions.append(f"t.to_sec() <= {end_seconds}")
 
-        output_file = artifacts.pipeline_task_artifact_path(
-            self.pipeline,
-            self.name,
-            self.site,
-            self.asset,
-            self.log_id,
-            asof_seconds,
-            ".bag",
-        )
-        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file = self.artifact_path(asof_seconds, ".bag")
 
         command = [
             "rosbag",

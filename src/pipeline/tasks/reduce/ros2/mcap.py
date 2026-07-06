@@ -12,7 +12,6 @@ import pathlib
 from mcap.reader import make_reader
 from mcap.writer import Writer
 
-from src import artifacts
 from src.di import module
 from src.pipeline import base, messages
 from src.pipeline.tasks.reduce.base import ReduceMixin
@@ -28,7 +27,7 @@ def _in_intervals(log_time_ns: int, intervals_ns: list[tuple[int, int]]) -> bool
     return any(start <= log_time_ns <= end for start, end in intervals_ns)
 
 
-class ReduceMcap(ReduceMixin, messages.TopicMessageMixin, base.Task):
+class ReduceMcap(base.ArtifactMixin, ReduceMixin, messages.TopicMessageMixin, base.Task):
     """Reduce a ROS2 MCAP bag to only the windows around events matching a predicate.
 
     Like the db3 reduce task, but writes a single reduced ``.mcap`` file by copying raw
@@ -91,16 +90,7 @@ class ReduceMcap(ReduceMixin, messages.TopicMessageMixin, base.Task):
         data_source = self.factory.build()
         keep_topics = set(self._topics) if self._topics else None
 
-        output_file = artifacts.pipeline_task_artifact_path(
-            self.pipeline,
-            self.name,
-            self.site,
-            self.asset,
-            self.log_id,
-            asof_seconds,
-            ".mcap",
-        )
-        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file = self.artifact_path(asof_seconds, ".mcap")
 
         with open(output_file, "wb") as output_stream:
             writer = Writer(output_stream)

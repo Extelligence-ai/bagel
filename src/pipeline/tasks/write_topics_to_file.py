@@ -4,7 +4,6 @@ import logging
 import pathlib
 from enum import Enum
 
-from src import artifacts
 from src.di import module
 from src.pipeline import base, messages
 
@@ -16,7 +15,7 @@ class OutputFormat(Enum):
     PARQUET = "parquet"
 
 
-class WriteTopicsToFile(messages.TopicMessageMixin, base.Task):
+class WriteTopicsToFile(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
     """Write messages from specified topics to a file in various formats."""
 
     def __init__(
@@ -50,16 +49,7 @@ class WriteTopicsToFile(messages.TopicMessageMixin, base.Task):
             topics=topics, asof_seconds=asof_seconds, lookback=lookback, ffill=self._ffill
         )
 
-        output_file = artifacts.pipeline_task_artifact_path(
-            self.pipeline,
-            self.name,
-            self.site,
-            self.asset,
-            self.log_id,
-            asof_seconds,
-            f".{self._output_format.value}",
-        )
-        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file = self.artifact_path(asof_seconds, f".{self._output_format.value}")
 
         match self._output_format:
             case OutputFormat.CSV:
