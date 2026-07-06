@@ -82,6 +82,22 @@ tasks:
 
 (`src.pipeline.tasks.reduce.ros2.mcap` remains as a back-compat alias.)
 
+For per-event clips instead of one reduced file, pair the snippet variant with an
+`on_event` cadence — same raw passthrough, one `.mcap` per event:
+
+```yaml
+cadence:
+  topic: /imu
+  when:
+    on_event:
+      predicate: "\"/imu\"['linear_acceleration']['x'] < -10"
+      debounce: {last: 2, unit: second}
+tasks:
+  - module: src.pipeline.tasks.snippet.mcap
+    lookback: {last: 10, unit: second}
+    args: {post_seconds: 10}
+```
+
 ## Live edge-recording
 
 Attach the reduction to a live stream so only event windows are ever written. Use an

@@ -165,6 +165,48 @@ def test_reduce_mcap_raw_passthrough(tmp_path: pathlib.Path) -> None:
     assert schemas == {"sensor_msgs/msg/Imu", "std_msgs/msg/String"}, "schemas copied verbatim"
 
 
+def test_snippet_mcap_writes_one_clip_per_event(tmp_path: pathlib.Path) -> None:
+    from mcap.reader import make_reader
+
+    bag = synth.write_imu_bag(tmp_path / "source_bag", "mcap")
+
+    config = {
+        "name": "verify_snippet_mcap",
+        "site": "test_site",
+        "asset": "test_asset",
+        "path": str(bag),
+        "allow_failure": False,
+        "cadence": {
+            "topic": "/imu",
+            "when": {
+                "on_event": {
+                    "predicate": PREDICATE,
+                    "debounce": {"last": 2, "unit": "second"},
+                }
+            },
+        },
+        "tasks": [
+            {
+                "module": "src.pipeline.tasks.snippet.mcap",
+                "lookback": {"last": 1, "unit": "second"},
+                "args": {"post_seconds": POST_SECONDS},
+            }
+        ],
+    }
+    produced = base.Pipeline.build(config).run_all()
+
+    assert len(produced) == len(EXPECTED_EVENTS), "one clip per detected event"
+    for clip_path, event_ts in zip(sorted(produced), EXPECTED_EVENTS, strict=True):
+        with open(clip_path, "rb") as stream:
+            timestamps = [
+                message.log_time / SECOND_NS
+                for _, _, message in make_reader(stream).iter_messages()
+            ]
+        assert timestamps, "clip must not be empty"
+        for ts in timestamps:
+            assert event_ts - PRE_SECONDS <= ts <= event_ts + POST_SECONDS + 1e-6
+
+
 def test_preview_reports_ground_truth_events(tmp_path: pathlib.Path) -> None:
     import server
 
