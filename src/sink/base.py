@@ -246,7 +246,8 @@ class TopicSink(abc.ABC):
             self.pause()
             self._disconnect()
         finally:
-            del _global_sink_singletons[(self.host, self.port)]
+            # pop, not del: close() may run again via the weakref finalizer at GC time.
+            _global_sink_singletons.pop((self.host, self.port), None)
 
             while self._buffers:
                 topic, writer = self._buffers.popitem()

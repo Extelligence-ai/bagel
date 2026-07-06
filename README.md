@@ -49,7 +49,7 @@ Can’t wait to try it out? 👉 Check out the [Quickstart](#️-quickstart).
 | ------------ | ------------------------------ |
 | **Robotics** | ROS1, ROS2, MCAP (any profile) |
 | **Drones**   | PX4, ArduPilot, Betaflight     |
-| **IoT**      | Coming soon...                 |
+| **IoT**      | MQTT (live)                    |
 
 ## 💬 What Can I Prompt?
 
@@ -136,6 +136,7 @@ Pick the service that matches your environment:
 | `px4`             | PX4 flight logs         |
 | `ardupilot`       | ArduPilot flight logs   |
 | `betaflight`      | Betaflight flight logs  |
+| `iot`             | IoT / MQTT (live)       |
 
 > [!TIP]
 > To give Bagel access to your local files, edit `compose.yaml` before starting Docker:
