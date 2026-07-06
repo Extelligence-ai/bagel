@@ -10,6 +10,7 @@ from typing import Any
 
 import boto3
 import botocore
+import duckdb
 from pydantic import BaseModel
 
 from settings import settings
@@ -103,6 +104,30 @@ class Lookback(BaseModel):
                 raise ValueError(f"Invalid 'lookback' value: {config}")
 
 
+class OnEvent(BaseModel):
+    """A `cadence.when` option that triggers on the rising edge of a boolean predicate.
+
+    The predicate is a SQL boolean expression evaluated against each message of the
+    cadence topic (the same table contract as the `gates.sql` gate). The pipeline fires
+    once at the timestamp where the predicate transitions from False to True, so a
+    condition that stays true across many consecutive messages counts as a single event.
+
+    An optional `debounce` window coalesces events that occur closer together than the
+    window, so bursty conditions do not produce a run per message.
+
+    Examples:
+        - Fire when `linear_acceleration_x < -10` (a hard deceleration event).
+
+    """
+
+    predicate: str
+    debounce: Lookback | None = None
+
+    def min_gap_seconds(self) -> float:
+        """Minimum seconds required between consecutive events; 0 if no debounce is set."""
+        return self.debounce.to_seconds() if self.debounce else 0.0
+
+
 class Cadence(BaseModel):
     """Specify how often the pipeline runs and which topic determines its cadence.
 
@@ -113,7 +138,7 @@ class Cadence(BaseModel):
     """
 
     topic: str
-    when: OnceAtEnd | Frequency
+    when: OnceAtEnd | Frequency | OnEvent
 
     @staticmethod
     def build(config: dict[str, Any]) -> "Cadence":
@@ -123,6 +148,9 @@ class Cadence(BaseModel):
                 when = OnceAtEnd()
             case {"every": int(every), "unit": str(unit)}:
                 when = Frequency(every=every, unit=Unit(unit))
+            case {"on_event": {"predicate": str(predicate), **rest}}:
+                debounce = Lookback.build(rest["debounce"]) if "debounce" in rest else None
+                when = OnEvent(predicate=predicate, debounce=debounce)
             case when:
                 raise ValueError(f"Invalid 'when' value: {when}")
         return Cadence(topic=config["topic"], when=when)
@@ -375,6 +403,10 @@ class Pipeline:
             start_seconds=None,
             end_seconds=None,
         )
+        if isinstance(self.cadence.when, OnEvent):
+            yield from self._event_timestamps(relation, self.cadence.when)
+            return
+
         rows = relation.project(settings.TIMESTAMP_SECONDS_COLUMN_NAME).fetchall()
         timestamps = [float(row[0]) for row in rows]
 
@@ -397,6 +429,31 @@ class Pipeline:
                         ):
                             last_run_at = timestamp_seconds
                             yield timestamp_seconds
+
+    def _event_timestamps(
+        self, relation: duckdb.DuckDBPyRelation, when: OnEvent
+    ) -> Iterator[float]:
+        """Yield rising-edge timestamps where `when.predicate` transitions False -> True.
+
+        The predicate is evaluated per message of the cadence topic. A condition that
+        stays true across consecutive messages fires a single event at its onset.
+        Consecutive events closer together than the debounce window are coalesced.
+        """
+        ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
+        rows = relation.project(f"{ts_column} AS ts, ({when.predicate}) AS hit").fetchall()
+        rows.sort(key=lambda row: row[0])
+
+        min_gap_seconds = when.min_gap_seconds()
+        previous_hit = False
+        last_event_at = None
+        for raw_timestamp, raw_hit in rows:
+            hit = bool(raw_hit)
+            if hit and not previous_hit:
+                timestamp_seconds = float(raw_timestamp)
+                if last_event_at is None or timestamp_seconds - last_event_at >= min_gap_seconds:
+                    last_event_at = timestamp_seconds
+                    yield timestamp_seconds
+            previous_hit = hit
 
     def run_at(self, asof_seconds: float) -> None:
         """Run the pipeline at the given timestamp (in seconds)."""
