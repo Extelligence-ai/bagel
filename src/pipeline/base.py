@@ -122,10 +122,20 @@ class OnEvent(BaseModel):
 
     predicate: str
     debounce: Lookback | None = None
+    forward: Lookback | None = None
 
     def min_gap_seconds(self) -> float:
         """Minimum seconds required between consecutive events; 0 if no debounce is set."""
         return self.debounce.to_seconds() if self.debounce else 0.0
+
+    def forward_seconds(self) -> float:
+        """Seconds to buffer forward before firing an event on a live stream.
+
+        On a bounded source this is unused (the whole source is already available). On a
+        live stream it delays firing so the post-window after an event has been captured
+        before the pipeline runs. 0 if unset.
+        """
+        return self.forward.to_seconds() if self.forward else 0.0
 
 
 class Cadence(BaseModel):
@@ -150,7 +160,8 @@ class Cadence(BaseModel):
                 when = Frequency(every=every, unit=Unit(unit))
             case {"on_event": {"predicate": str(predicate), **rest}}:
                 debounce = Lookback.build(rest["debounce"]) if "debounce" in rest else None
-                when = OnEvent(predicate=predicate, debounce=debounce)
+                forward = Lookback.build(rest["forward"]) if "forward" in rest else None
+                when = OnEvent(predicate=predicate, debounce=debounce, forward=forward)
             case when:
                 raise ValueError(f"Invalid 'when' value: {when}")
         return Cadence(topic=config["topic"], when=when)

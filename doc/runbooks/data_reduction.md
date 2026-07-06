@@ -63,6 +63,46 @@ The reduced bag is written under the artifact directory
 Or drive it conversationally from an MCP client with `run_pipeline` (build + run a config)
 and `save_pipeline` (persist a config as YAML for reuse).
 
+## Reduce an MCAP bag
+
+Point the pipeline at an MCAP source and use the MCAP reduce module. It copies raw
+message records within the kept windows -- no decode/re-encode -- so it needs no rosidl
+typesupport:
+
+```yaml
+tasks:
+  - module: src.pipeline.tasks.reduce.ros2.mcap
+    args:
+      event_topic: /imu
+      predicate: "\"/imu\"['linear_acceleration']['x'] < -10"
+      pre_seconds: 10
+      post_seconds: 10
+```
+
+## Live edge-recording
+
+Attach the reduction to a live stream so only event windows are ever written. Use an
+`on_event` cadence with a `forward` window -- the forward window delays firing until the
+post-window data has arrived, so `[event - pre, event + post]` is fully captured:
+
+```yaml
+cadence:
+  topic: /imu
+  when:
+    on_event:
+      predicate: "\"/imu\"['linear_acceleration']['x'] < -10"
+      debounce: {last: 2, unit: second}
+      forward: {last: 10, unit: second}   # buffer 10s past each event before firing
+tasks:
+  - module: src.pipeline.tasks.snippet.ros2.db3
+    lookback: {last: 10, unit: second}
+    args: {post_seconds: 10}
+```
+
+Pass this pipeline to `subscribe_live_topics` (via the `pipeline` argument of
+`TopicSink.subscribe`); it runs on the sink's live message callback and fires once per
+deceleration event, recording only the window around each.
+
 ## Verify the mechanism without ROS
 
 The event → window → merge → run machinery is format-agnostic; only the bag *writer* needs

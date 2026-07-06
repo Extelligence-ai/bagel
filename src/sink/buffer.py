@@ -15,7 +15,8 @@ import pyarrow as pa
 import yaml
 
 from settings import settings
-from src.pipeline.base import Cadence, Frequency, Pipeline, Unit
+from src.pipeline import live
+from src.pipeline.base import Cadence, Frequency, OnEvent, Pipeline, Unit
 
 
 def _topic_uuid(topic: str) -> str:
@@ -123,6 +124,17 @@ class TopicBufferWriter:
         self._last_run_at = None
         self._last_timestamp_seconds = None
 
+        # For an OnEvent cadence, edge-record the live stream: fire the pipeline on each
+        # rising edge of the predicate, delayed by the cadence's forward window so the
+        # post-window is captured before the pipeline runs.
+        self._event_trigger = None
+        if pipeline is not None and isinstance(pipeline.cadence.when, OnEvent):
+            when = pipeline.cadence.when
+            self._event_trigger = live.LiveEventTrigger(
+                forward_seconds=when.forward_seconds(),
+                debounce_seconds=when.min_gap_seconds(),
+            )
+
     @property
     def topic(self) -> str:
         """Topic name for the messages held by this buffer."""
@@ -179,7 +191,14 @@ class TopicBufferWriter:
             with open(self._current_data_file, "a", encoding="utf-8") as f:
                 f.write(line)
 
-        if self.pipeline and self._should_run(
+        if self.pipeline and self._event_trigger is not None:
+            hit = live.evaluate_predicate(
+                self._topic, self._struct, msg, self.pipeline.cadence.when.predicate
+            )
+            for event_seconds in self._event_trigger.feed(timestamp_seconds, hit):
+                self.pipeline.run_at(event_seconds)
+                self._last_run_at = event_seconds
+        elif self.pipeline and self._should_run(
             self.pipeline.cadence, self.message_count, self.last_run_at, timestamp_seconds
         ):
             self.pipeline.run_at(timestamp_seconds)
@@ -187,6 +206,18 @@ class TopicBufferWriter:
 
         self._message_count += 1
         self._last_timestamp_seconds = timestamp_seconds
+
+    def flush_pending_events(self) -> None:
+        """Fire any OnEvent events still waiting on their forward window (called at close).
+
+        On a live stream, events whose post-window had not yet elapsed when the stream
+        ended are fired best-effort with whatever data was buffered.
+        """
+        if self._event_trigger is None or self._pipeline is None:
+            return
+        for event_seconds in self._event_trigger.flush():
+            self._pipeline.run_at(event_seconds)
+            self._last_run_at = event_seconds
 
     def _should_run(
         self, cadence: Cadence, message_count: int, last_run_at: float | None, asof_seconds: float

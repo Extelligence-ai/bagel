@@ -6,10 +6,10 @@ import pathlib
 import rosbag2_py
 from rclpy.serialization import serialize_message
 
-from settings import settings
 from src import artifacts
 from src.di import module
-from src.pipeline import base, messages, windows
+from src.pipeline import base, messages
+from src.pipeline.tasks.reduce.base import ReduceMixin
 
 NANOSECOND = 1
 MICROSECOND = 1_000 * NANOSECOND
@@ -17,7 +17,7 @@ MILLISECOND = 1_000 * MICROSECOND
 SECOND = 1_000 * MILLISECOND
 
 
-class ReduceRosbag(messages.TopicMessageMixin, base.Task):
+class ReduceRosbag(ReduceMixin, messages.TopicMessageMixin, base.Task):
     """Reduce a ROS2 DB3 bag to only the windows around events matching a predicate.
 
     Unlike the ``snippet`` task -- which fires once per event and writes one clip per
@@ -77,18 +77,6 @@ class ReduceRosbag(messages.TopicMessageMixin, base.Task):
         self._output_serialization_format = output_serialization_format
 
         self._output_storage_id = "sqlite3"
-
-    def _kept_intervals(self, asof_seconds: float) -> tuple[list[float], list[tuple[float, float]]]:
-        """Return the detected event timestamps and the merged windows to keep."""
-        relation = self.to_duckdb(topics=[self._event_topic], asof_seconds=asof_seconds)
-        ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
-        rows = relation.project(f"{ts_column} AS ts, ({self._predicate}) AS hit").fetchall()
-
-        events = windows.rising_edges(rows, self._debounce_seconds)
-        intervals = windows.merge_intervals(
-            windows.event_windows(events, self._pre_seconds, self._post_seconds)
-        )
-        return events, intervals
 
     def execute(self, asof_seconds: float, lookback: base.Lookback | None) -> list[pathlib.Path]:
         """Execute the task at the given time."""
