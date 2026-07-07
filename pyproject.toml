@@ -60,6 +60,10 @@ iot = [
     "influxdb3-python>=0.10.0",
     "paho-mqtt>=2.1.0,<3.0.0",
 ]
+upload = [
+    "azure-storage-blob>=12.24.0,<13.0.0",
+    "google-cloud-storage>=2.18.0,<4.0.0",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

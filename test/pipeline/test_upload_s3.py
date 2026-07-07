@@ -7,7 +7,8 @@ import botocore.exceptions
 import pytest
 
 from src.pipeline import base
-from src.pipeline.tasks.upload.s3 import UploadFilesToS3, _glob_root
+from src.pipeline.tasks.upload.base import glob_root
+from src.pipeline.tasks.upload.s3 import UploadFilesToS3
 
 NO_SUCH_KEY = botocore.exceptions.ClientError(
     {"Error": {"Code": "NoSuchKey"}}, "GetObjectAttributes"
@@ -36,8 +37,8 @@ def _run(task: UploadFilesToS3, client: MagicMock, asof: float = 1e12) -> None:
 
 
 def test_glob_root_stops_at_first_wildcard() -> None:
-    assert _glob_root("logs/2026/*/imu.mcap") == pathlib.Path("logs/2026")
-    assert _glob_root("*.csv") == pathlib.Path(".")
+    assert glob_root("logs/2026/*/imu.mcap") == pathlib.Path("logs/2026")
+    assert glob_root("*.csv") == pathlib.Path(".")
 
 
 def test_directory_source_preserves_structure_under_prefix(tmp_path: pathlib.Path) -> None:

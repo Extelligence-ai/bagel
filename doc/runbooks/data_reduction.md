@@ -161,6 +161,11 @@ tasks:
 
 Credentials use the standard AWS resolution chain (env vars, `~/.aws`, instance role).
 
+GCS (`src.pipeline.tasks.upload.gcs`, standard Google credential chain) and Azure Blob
+(`src.pipeline.tasks.upload.azure`, connection string or
+`AZURE_STORAGE_CONNECTION_STRING`) uploaders mirror the same source/prefix/window/skip
+semantics. Their SDKs live in the `upload` dependency group: `uv sync --group upload`.
+
 ## Verify the mechanism without ROS
 
 The event → window → merge → run machinery is format-agnostic; only the bag *writer* needs
