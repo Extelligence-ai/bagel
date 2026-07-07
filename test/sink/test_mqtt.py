@@ -204,3 +204,70 @@ def test_timestamp_field_used_for_buffered_messages(make_sink: MakeSink) -> None
     assert stamps[0] == pytest.approx(1700000000.5)  # retained, redelivered on subscribe
     assert stamps[1] == pytest.approx(1700000001.0)
     assert stamps[2] > 1750000000  # fell back to (much later) arrival time
+
+
+# -- wildcard subscriptions -----------------------------------------------------------
+
+
+def test_wildcard_hash_expands_to_all_matches(make_sink: MakeSink) -> None:
+    sink = make_sink(
+        retained={
+            "freezer/1/status": [b'{"temp": -18.5}'],
+            "freezer/2/status": [b'{"door": "open"}'],
+            "plant/pump": [b'{"pressure": 4.2}'],
+        }
+    )
+    sink.subscribe("freezer/#")
+
+    # Both freezer topics subscribed individually, each with its own schema; plant untouched.
+    assert "freezer/1/status" in sink._fake.topic_callbacks
+    assert "freezer/2/status" in sink._fake.topic_callbacks
+    assert "plant/pump" not in sink._fake.topic_callbacks
+    assert sink._struct("freezer/1/status").field("temp").type == pa.float64()
+    assert sink._struct("freezer/2/status").field("door").type == pa.string()
+
+    sink._fake.deliver("freezer/1/status", b'{"temp": -12.0}')
+    sink._fake.deliver("freezer/2/status", b'{"door": "closed"}')
+    buffers = sorted(pathlib.Path(settings.CACHE_DIRECTORY).rglob("current.jsonl"))
+    assert len(buffers) == 2  # one buffer per concrete topic
+
+
+def test_wildcard_plus_matches_single_level_only(make_sink: MakeSink) -> None:
+    sink = make_sink(
+        retained={
+            "plant/a/temp": [b'{"v": 1}'],
+            "plant/a/b/temp": [b'{"v": 2}'],
+        }
+    )
+    sink.subscribe("plant/+/temp")
+    assert "plant/a/temp" in sink._fake.topic_callbacks
+    assert "plant/a/b/temp" not in sink._fake.topic_callbacks
+
+
+def test_wildcard_without_matches_raises(make_sink: MakeSink) -> None:
+    from src.sink import base as sink_base
+
+    sink = make_sink(retained={"plant/pump": [b'{"v": 1}']})
+    with pytest.raises(sink_base.TopicNotFoundError):
+        sink.subscribe("garage/#")
+
+
+def test_wildcard_with_pipeline_requires_single_match(make_sink: MakeSink) -> None:
+    sink = make_sink(
+        retained={
+            "freezer/1/status": [b'{"temp": -18.5, "t": 0.0}'],
+            "freezer/2/status": [b'{"temp": -17.0, "t": 0.0}'],
+        }
+    )
+    pipeline = MagicMock()
+    pipeline.cadence = Cadence(
+        topic="freezer/1/status",
+        when=OnEvent(predicate="\"freezer/1/status\"['temp'] > -15"),
+    )
+    with pytest.raises(ValueError, match="wildcard"):
+        sink.subscribe("freezer/#", pipeline=pipeline)
+
+    # A wildcard resolving to exactly one topic accepts a pipeline.
+    sink.subscribe("freezer/1/+", pipeline=pipeline, extract_timestamp=lambda m: m["t"])
+    sink._fake.deliver("freezer/1/status", json.dumps({"temp": -12.0, "t": 1.0}).encode())
+    assert [call.args[0] for call in pipeline.run_at.call_args_list] == [1.0]
