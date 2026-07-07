@@ -178,6 +178,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
+    { name = "zstandard" },
 ]
 
 [package.dev-dependencies]
@@ -245,6 +246,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11.0,<3.0.0" },
     { name = "pydantic-settings", specifier = ">=2.9.0,<3.0.0" },
     { name = "pyyaml", specifier = ">=6.0.0,<7.0.0" },
+    { name = "zstandard", specifier = ">=0.23.0,<1.0.0" },
 ]
 
 [package.metadata.requires-dev]
