@@ -1,0 +1,39 @@
+// Minimal Sparkplug B payload definition, sufficient to decode scalar metrics.
+//
+// Field numbers follow the Sparkplug B specification (Eclipse Sparkplug,
+// https://sparkplug.eclipse.org) so the wire format is identical to the
+// reference sparkplug_b.proto. Complex metric values (DataSet, Template,
+// PropertySet, MetaData; fields 8, 9, 17, 18, 19) are intentionally omitted --
+// protobuf skips unknown fields, so payloads containing them still parse and
+// their metrics simply decode without a value.
+syntax = "proto2";
+
+package sparkplug_b_minimal;
+
+message Payload {
+    optional uint64 timestamp = 1;
+    repeated Metric metrics = 2;
+    optional uint64 seq = 3;
+    optional string uuid = 4;
+    optional bytes body = 5;
+
+    message Metric {
+        optional string name = 1;
+        optional uint64 alias = 2;
+        optional uint64 timestamp = 3;
+        optional uint32 datatype = 4;
+        optional bool is_historical = 5;
+        optional bool is_transient = 6;
+        optional bool is_null = 7;
+
+        oneof value {
+            uint32 int_value = 10;
+            uint64 long_value = 11;
+            float float_value = 12;
+            double double_value = 13;
+            bool boolean_value = 14;
+            string string_value = 15;
+            bytes bytes_value = 16;
+        }
+    }
+}

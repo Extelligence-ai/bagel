@@ -65,6 +65,7 @@ pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
+extend-exclude = ["src/sink/sparkplug/sparkplug_b_minimal_pb2.py"]  # generated code
 
 [tool.ruff.lint]
 select = [

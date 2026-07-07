@@ -66,6 +66,7 @@ COPY --chown=${USERNAME}:${USERNAME} src/sink/base.py ./src/sink/base.py
 COPY --chown=${USERNAME}:${USERNAME} src/sink/buffer.py ./src/sink/buffer.py
 COPY --chown=${USERNAME}:${USERNAME} src/sink/reader.py ./src/sink/reader.py
 COPY --chown=${USERNAME}:${USERNAME} src/sink/mqtt.py ./src/sink/mqtt.py
+COPY --chown=${USERNAME}:${USERNAME} src/sink/sparkplug ./src/sink/sparkplug
 COPY --chown=${USERNAME}:${USERNAME} src/source/base.py ./src/source/base.py
 COPY --chown=${USERNAME}:${USERNAME} src/source/errors.py ./src/source/errors.py
 COPY --chown=${USERNAME}:${USERNAME} src/source/bagel ./src/source/bagel

@@ -32,8 +32,13 @@ any time:
 Payloads are parsed as JSON (the ecosystem norm): JSON objects become queryable structs
 (schema inferred from sampled messages), bare scalars become `{"value": ...}`, and
 non-JSON text becomes `{"payload": "<text>"}`. A sample payload doubles as the topic's
-"definition" when you ask Bagel to describe it. Sparkplug B / protobuf payloads are a
-planned extension.
+"definition" when you ask Bagel to describe it.
+
+**Sparkplug B** (the industrial MQTT standard) is decoded automatically on `spBv1.0/`
+topics: scalar metrics flatten to named fields, plus the payload `timestamp` (epoch ms)
+and `seq`. Pair with `timestamp_field: "timestamp", timestamp_unit: "millisecond"` in
+`args` to buffer on the Sparkplug timestamps. Complex metrics (DataSet/Template) decode
+as null in v1; disable entirely with `sparkplug_b: false`.
 
 Authentication and transport: pass `username`/`password`, `tls: true` (with optional
 `tls_ca_certs`), and `transport: "websockets"` via the `args` of `subscribe_live_topics`
