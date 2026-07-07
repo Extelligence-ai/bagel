@@ -65,8 +65,8 @@ and `save_pipeline` (persist a config as YAML for reuse).
 
 ## Reduce an MCAP bag
 
-MCAP is a first-class format: any `.mcap` file or directory of them (ros1, ros2, or
-protobuf profiles) works in **every** Bagel image -- no ROS required. The reduce module
+MCAP is a first-class format: any `.mcap` file or directory of them (ros1, ros2,
+protobuf, or json profiles) works in **every** Bagel image -- no ROS required. The reduce module
 copies raw message records within the kept windows -- no decode/re-encode -- so it needs
 no rosidl typesupport:
 

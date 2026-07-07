@@ -3,8 +3,11 @@
 Topic names, type names, and message counts come from the MCAP summary (channels,
 schemas, statistics). Schemas are converted to PyArrow structs by their embedded
 encoding: ``ros2msg`` via the ros2msg grammar, ``protobuf`` via the embedded file
-descriptor set. Other encodings can be listed and described but not queried yet.
+descriptor set, and ``jsonschema`` via a JSON-Schema type mapper. Other encodings
+can be listed and described but not queried yet.
 """
+
+import json
 
 import pyarrow as pa
 from google.protobuf import descriptor_pb2
@@ -31,6 +34,49 @@ def _channels_with_schemas(data_source: McapBag) -> dict[str, base.MessageDefini
             else:
                 topics.setdefault(channel.topic, None)
     return topics
+
+
+def _jsonschema_type(schema: dict) -> pa.DataType:
+    """Map a JSON-Schema type definition to a PyArrow type (utf8 for unknowns)."""
+    json_type = schema.get("type")
+    if isinstance(json_type, list):  # e.g. ["number", "null"] -> nullable number
+        json_type = next((t for t in json_type if t != "null"), "string")
+
+    match json_type:
+        case "object":
+            properties = schema.get("properties", {})
+            if not properties:
+                return pa.string()  # schemaless object: keep as JSON text
+            return pa.struct(
+                [pa.field(name, _jsonschema_type(sub)) for name, sub in properties.items()]
+            )
+        case "number":
+            return pa.float64()
+        case "integer":
+            return pa.int64()
+        case "boolean":
+            return pa.bool_()
+        case "array":
+            return pa.list_(_jsonschema_type(schema.get("items", {})))
+        case _:
+            return pa.string()
+
+
+def jsonschema_to_struct(definition: bytes) -> pa.StructType:
+    """Convert a JSON-Schema document (top-level object) to a PyArrow StructType.
+
+    Raises:
+        UnsupportedEncodingError: If the document is not valid JSON or not an object schema.
+
+    """
+    try:
+        document = json.loads(definition)
+    except json.JSONDecodeError as error:
+        raise base.UnsupportedEncodingError(f"invalid jsonschema document: {error}") from error
+    struct = _jsonschema_type(document if isinstance(document, dict) else {})
+    if not isinstance(struct, pa.StructType):
+        raise base.UnsupportedEncodingError("jsonschema document is not an object schema")
+    return struct
 
 
 def _type_names(data_source: McapBag) -> dict[str, str]:
@@ -106,6 +152,9 @@ class TopicRegistry(base.TopicRegistry):
                 )
                 return protobuf_schema.to_pa_struct(descriptor)
 
+            case "jsonschema":
+                return jsonschema_to_struct(definition.definition)
+
             case _:
                 raise base.UnsupportedEncodingError(definition.encoding)
 
@@ -118,6 +167,9 @@ class TopicRegistry(base.TopicRegistry):
 
             case "protobuf":
                 return str(descriptor_pb2.FileDescriptorSet.FromString(definition.definition))
+
+            case "jsonschema":
+                return json.dumps(json.loads(definition.definition), indent=2)
 
             case _:
                 raise base.UnsupportedEncodingError(definition.encoding)
