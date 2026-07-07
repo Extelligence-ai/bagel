@@ -38,6 +38,8 @@ Can’t wait to try it out? 👉 Check out the [Quickstart](#️-quickstart).
 
 - **Ask in plain language**: No deep domain expertise needed.
 - **Transparent calculations**: Deterministic SQL queries. No black-box LLM math.
+- **Event-driven data reduction**: "Keep 10s around every hard brake, drop the rest" —
+  previewed before a byte is written, live or in [batch](./doc/runbooks/data_reduction.md).
 - **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, and more.
 - **Dockerized environments**: No local dependencies required.
 - **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
@@ -49,7 +51,7 @@ Can’t wait to try it out? 👉 Check out the [Quickstart](#️-quickstart).
 | ------------ | ------------------------------ |
 | **Robotics** | ROS1, ROS2, MCAP (any profile) |
 | **Drones**   | PX4, ArduPilot, Betaflight     |
-| **IoT**      | MQTT (live), PostgreSQL / TimescaleDB, InfluxDB 3 |
+| **IoT**      | MQTT (live, Sparkplug B), PostgreSQL / TimescaleDB, InfluxDB 3 |
 
 ## 💬 What Can I Prompt?
 
@@ -215,6 +217,15 @@ Result:
 ```
 meow 🐱 4 topics 🐱💤🎯
 ```
+
+## 📚 Guides
+
+- [Event-driven data reduction](./doc/runbooks/data_reduction.md) — detect events, keep
+  windows around them (snippets or one reduced bag), batch across fleets, upload to the cloud
+- [Live ROS2 robots over rosbridge](./doc/tutorials/live_ros2_bridge.md) — a step-by-step tutorial
+- [MQTT](./doc/runbooks/iot_mqtt.md) — live IoT topics, Sparkplug B, edge recording
+- [PostgreSQL / TimescaleDB](./doc/runbooks/iot_postgres.md) — every table is a topic
+- [InfluxDB 3](./doc/runbooks/iot_influxdb.md) — every measurement is a topic
 
 ## 📦 Integrations
 
