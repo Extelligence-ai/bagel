@@ -36,7 +36,7 @@ def _channels_with_schemas(data_source: McapBag) -> dict[str, base.MessageDefini
     return topics
 
 
-def _jsonschema_type(schema: dict) -> pa.DataType:
+def _jsonschema_type(schema: dict) -> pa.DataType:  # noqa: PLR0911 -- one return per JSON type
     """Map a JSON-Schema type definition to a PyArrow type (utf8 for unknowns)."""
     json_type = schema.get("type")
     if isinstance(json_type, list):  # e.g. ["number", "null"] -> nullable number
