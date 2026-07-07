@@ -35,8 +35,11 @@ non-JSON text becomes `{"payload": "<text>"}`. A sample payload doubles as the t
 "definition" when you ask Bagel to describe it. Sparkplug B / protobuf payloads are a
 planned extension.
 
-Authentication: pass `username`/`password` via the `args` of `subscribe_live_topics`
-(they are forwarded to the sink constructor). Timestamps use message arrival time.
+Authentication and transport: pass `username`/`password`, `tls: true` (with optional
+`tls_ca_certs`), and `transport: "websockets"` via the `args` of `subscribe_live_topics`
+(they are forwarded to the sink constructor). Timestamps default to message arrival
+time; if your payloads carry one, set `timestamp_field` (and `timestamp_unit`:
+second/millisecond/microsecond/nanosecond) to use it instead.
 
 ## Live edge-recording
 

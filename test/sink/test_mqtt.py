@@ -223,3 +223,67 @@ def test_guess_defaults() -> None:
         "localhost",
         "host.docker.internal",
     )
+
+
+# -- extras: TLS / transport / timestamp field ---------------------------------------
+
+
+def test_websockets_transport_and_tls_configure_paho(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path / "cache"))
+    captured: dict[str, object] = {}
+
+    class RecordingFake(FakePahoClient):
+        def __init__(self, callback_api_version: object = None, client_id: str | None = None,
+                     transport: str = "tcp") -> None:
+            super().__init__(callback_api_version, client_id)
+            captured["transport"] = transport
+            self.tls_args: dict[str, object] | None = None
+
+        def tls_set(self, ca_certs: str | None = None) -> None:
+            captured["ca_certs"] = ca_certs
+
+        def tls_insecure_set(self, value: bool) -> None:
+            captured["tls_insecure"] = value
+
+    monkeypatch.setattr(mqtt.paho, "Client", RecordingFake)
+    mqtt.TopicSink(
+        host="broker.test",
+        port=next(_PORT_COUNTER),
+        discovery_seconds=0.0,
+        transport="websockets",
+        tls=True,
+        tls_ca_certs="/etc/ssl/ca.pem",
+        tls_insecure=True,
+    )
+    assert captured == {
+        "transport": "websockets",
+        "ca_certs": "/etc/ssl/ca.pem",
+        "tls_insecure": True,
+    }
+
+
+def test_invalid_transport_and_unit_rejected() -> None:
+    with pytest.raises(ValueError, match="transport"):
+        mqtt.TopicSink(host="h", port=next(_PORT_COUNTER), transport="carrier-pigeon")
+    with pytest.raises(ValueError, match="timestamp_unit"):
+        mqtt.TopicSink(host="h", port=next(_PORT_COUNTER), timestamp_unit="fortnight")
+
+
+def test_timestamp_field_used_for_buffered_messages(make_sink: MakeSink) -> None:
+    sink = make_sink(
+        retained={"plant/pump": [b'{"pressure": 4.2, "ts": 1700000000500}']},
+        timestamp_field="ts",
+        timestamp_unit="millisecond",
+    )
+    sink.subscribe("plant/pump")
+    sink._fake.deliver("plant/pump", b'{"pressure": 3.9, "ts": 1700000001000}')
+    sink._fake.deliver("plant/pump", b'{"pressure": 3.7}')  # missing field -> arrival time
+
+    buffers = list(pathlib.Path(settings.CACHE_DIRECTORY).rglob("current.jsonl"))
+    lines = [json.loads(line) for line in buffers[0].read_text().splitlines()]
+    stamps = [record[settings.TIMESTAMP_SECONDS_COLUMN_NAME] for record in lines]
+    assert stamps[0] == pytest.approx(1700000000.5)  # retained, redelivered on subscribe
+    assert stamps[1] == pytest.approx(1700000001.0)
+    assert stamps[2] > 1750000000  # fell back to (much later) arrival time

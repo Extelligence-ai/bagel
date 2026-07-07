@@ -18,15 +18,25 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 import pyarrow as pa
 from paho.mqtt import client as paho
 
+from settings import settings
 from src.di import module
+from src.pipeline.base import Pipeline
 from src.sink import base, buffer
 
 DISCOVERY_WILDCARD = "#"
+
+TIMESTAMP_DIVISORS = {
+    "second": 1.0,
+    "millisecond": 1e3,
+    "microsecond": 1e6,
+    "nanosecond": 1e9,
+}
 
 
 def normalize_payload(payload: bytes) -> dict[str, Any]:
@@ -76,12 +86,19 @@ class TopicSink(base.TopicSink):
         sample_size: int = 5,
         schema_timeout_seconds: float = 5.0,
         client_id: str | None = None,
+        transport: str = "tcp",
+        tls: bool = False,
+        tls_ca_certs: str | None = None,
+        tls_insecure: bool = False,
+        timestamp_field: str | None = None,
+        timestamp_unit: str = "second",
     ) -> None:
         """Initialize the MQTT topic sink.
 
         Args:
             host (str): The hostname of the MQTT broker.
-            port (int): The port number of the MQTT broker (typically 1883).
+            port (int): The port number of the MQTT broker (typically 1883; 8883 for TLS;
+                often 443/8083 for websockets).
             username (str | None, optional): Username for broker authentication.
             password (str | None, optional): Password for broker authentication.
             discovery_seconds (float, optional): How long to listen on the ``#`` wildcard
@@ -94,18 +111,50 @@ class TopicSink(base.TopicSink):
                 its schema before falling back to a raw-payload schema. Defaults to 5.0.
             client_id (str | None, optional): MQTT client identifier. If None, a random
                 one is generated.
+            transport (str, optional): "tcp" or "websockets" (for brokers like AWS IoT
+                Core behind websockets). Defaults to "tcp".
+            tls (bool, optional): If True, connect over TLS. Defaults to False.
+            tls_ca_certs (str | None, optional): Path to a CA bundle for TLS. If None,
+                the system defaults are used. Defaults to None.
+            tls_insecure (bool, optional): If True, skip server certificate verification
+                (testing only). Defaults to False.
+            timestamp_field (str | None, optional): A payload field carrying the message
+                timestamp (e.g. "ts"). If set, buffered messages use it instead of
+                arrival time; messages missing the field fall back to arrival time.
+                Defaults to None (arrival time).
+            timestamp_unit (str, optional): The unit of `timestamp_field`: "second",
+                "millisecond", "microsecond", or "nanosecond". Defaults to "second".
+
+        Raises:
+            ValueError: If 'transport' or 'timestamp_unit' is invalid.
 
         """
+        if transport not in ("tcp", "websockets"):
+            raise ValueError(f"'transport' must be 'tcp' or 'websockets', got {transport!r}.")
+        if timestamp_unit not in TIMESTAMP_DIVISORS:
+            raise ValueError(
+                f"'timestamp_unit' must be one of {sorted(TIMESTAMP_DIVISORS)}, "
+                f"got {timestamp_unit!r}."
+            )
+
         self._paho = paho.Client(
-            callback_api_version=paho.CallbackAPIVersion.VERSION2, client_id=client_id
+            callback_api_version=paho.CallbackAPIVersion.VERSION2,
+            client_id=client_id,
+            transport=transport,
         )
         if username is not None:
             self._paho.username_pw_set(username, password)
+        if tls:
+            self._paho.tls_set(ca_certs=tls_ca_certs)
+            if tls_insecure:
+                self._paho.tls_insecure_set(True)
         self._paho.on_message = self._on_discovery_message
 
         self._discovery_seconds = discovery_seconds
         self._sample_size = sample_size
         self._schema_timeout_seconds = schema_timeout_seconds
+        self._timestamp_field = timestamp_field
+        self._timestamp_divisor = TIMESTAMP_DIVISORS[timestamp_unit]
 
         self._samples: dict[str, list[dict[str, Any]]] = {}
         self._samples_lock = threading.Lock()
@@ -175,6 +224,32 @@ class TopicSink(base.TopicSink):
 
     def _struct(self, topic: str) -> pa.StructType:
         return infer_struct(self._sample(topic))
+
+    def _extract_payload_timestamp(self, message: dict[str, Any]) -> float:
+        """Read the configured timestamp field, falling back to arrival time."""
+        value = message.get(self._timestamp_field)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return float(value) / self._timestamp_divisor
+        return time.time()
+
+    def subscribe(
+        self,
+        topic: str,
+        pipeline: Pipeline | None = None,
+        overwrite: bool = False,
+        buffer_size_bytes: int | None = settings.JSONL_BUFFER_SIZE_PER_TOPIC_BYTES,
+        extract_timestamp: Callable[[dict[str, Any]], float] | None = None,
+    ) -> None:
+        """Subscribe to a topic, defaulting timestamps to the configured payload field."""
+        if extract_timestamp is None and self._timestamp_field is not None:
+            extract_timestamp = self._extract_payload_timestamp
+        super().subscribe(
+            topic,
+            pipeline=pipeline,
+            overwrite=overwrite,
+            buffer_size_bytes=buffer_size_bytes,
+            extract_timestamp=extract_timestamp,
+        )
 
     def _subscribe(self, writer: buffer.TopicBufferWriter) -> None:
         def _on_message(client: object, userdata: object, message: object) -> None:
