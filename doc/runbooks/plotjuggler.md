@@ -37,6 +37,23 @@ Or conversationally:
 Non-scalar fields (lists, maps) are skipped; the `timestamp_seconds` column comes
 first, ready for PlotJuggler's "use column as X axis" prompt.
 
+## One-sentence sessions: pre-framed layouts
+
+Ask Bagel to hand an event straight to PlotJuggler:
+
+> Show me the second brake event in PlotJuggler.
+
+Bagel calls `export_for_plotjuggler`, which writes the flattened CSV **plus a layout
+file** with the curves pre-added and the window pre-framed, then returns the command:
+
+```bash
+plotjuggler -n -l ~/.bagel/artifacts/plotjuggler/brake_event_2/brake_event_2_layout.xml
+```
+
+PlotJuggler opens with the event already plotted and zoomed -- the layout references
+the data file, so a single `-l` flag reloads everything. Pass `signals` to choose
+which curves to plot (default: all numeric signals, capped at 8).
+
 ## Watching live data side by side
 
 PlotJuggler's MQTT/ROS streaming plugins can subscribe to the **same broker or bridge**

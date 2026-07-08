@@ -13,7 +13,7 @@ from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
-from src.pipeline import base, batch, capabilities, windows
+from src.pipeline import base, batch, capabilities, plotjuggler, windows
 from src.sink import startup
 
 server = FastMCP(
@@ -657,6 +657,76 @@ def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, An
     expanded = batch.expand_paths(paths)
     results = batch.run_batch(config, expanded)
     return batch.summarize(results)
+
+
+@server.tool(
+    title="Export an event window for PlotJuggler",
+    description=(
+        "Export a time window of topic data as a PlotJuggler session: a flattened CSV "
+        "(one scalar column per signal) plus a layout file with the curves pre-added "
+        "and the window pre-framed. Opening the returned command shows the event "
+        "already plotted and zoomed. Use after preview_pipeline to hand an event to a "
+        "human for visual inspection."
+    ),
+)
+def export_for_plotjuggler(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    start_seconds: float,
+    end_seconds: float,
+    name: str = "event",
+    signals: list[str] | None = None,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export a time window as a ready-to-open PlotJuggler session.
+
+    Writes a flattened CSV of the window (columns named `topic/field/subfield`, the
+    naming PlotJuggler users expect) and a layout `.xml` that references the CSV,
+    pre-adds the signal curves, and frames the time range -- so PlotJuggler opens the
+    event already plotted and zoomed.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics to include in the export.
+        start_seconds (float): Window start (also the plot's framed x range start).
+        end_seconds (float): Window end.
+        name (str, optional): Session name, used for the output files and the tab
+            title. Defaults to "event".
+        signals (list[str] | None, optional): Flattened signal names to plot (e.g.
+            "/imu/linear_acceleration/x"). If None, all numeric signals are plotted,
+            capped at 8. Defaults to None.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: `csv` and `layout` paths, the plotted `curves`, and `command`
+            -- run it (or double-click the layout) to open the session in PlotJuggler.
+
+    Examples:
+        As an LLM prompt:
+            Show me the second brake event in PlotJuggler.
+
+        As a Python call:
+            >>> export_for_plotjuggler("./flight.mcap", ["/imu"], 118.9, 138.9)
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    relation = dataset.to_duckdb(
+        factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+    )
+    return plotjuggler.export_window(
+        relation,
+        name=name,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        signals=signals,
+    )
 
 
 if __name__ == "__main__":
