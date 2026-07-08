@@ -247,7 +247,13 @@ class TopicSink(abc.ABC):
 
         """
         if not getattr(self, "_is_singleton_initialized", False):
-            return  # construction failed part-way; there is nothing to clean up
+            # Construction failed part-way; avoid touching attributes that may not exist,
+            # but do a best-effort disconnect to avoid leaking live connections.
+            try:
+                self._disconnect()
+            except Exception:
+                pass
+            return
         try:
             self.pause()
             self._disconnect()
