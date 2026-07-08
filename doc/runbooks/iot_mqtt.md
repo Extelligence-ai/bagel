@@ -86,6 +86,8 @@ docker exec mosquitto mosquitto_pub -t 'freezer/1/status' \
 
 ## Notes and limits (v1)
 
-- Subscribe to exact topic names; wildcards are used internally for discovery only.
+- Wildcard subscriptions (`freezer/#`, `plant/+/temp`) expand against the topics seen
+  during discovery, each match getting its own buffer and schema; topics that first
+  appear later are not auto-added -- re-subscribe to pick them up.
 - Schema is inferred from early samples; fields that appear later read as NULL.
 - Messages carry no standard timestamp, so arrival time is used.

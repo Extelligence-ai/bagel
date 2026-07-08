@@ -262,9 +262,46 @@ class TopicSink(base.TopicSink):
         buffer_size_bytes: int | None = settings.JSONL_BUFFER_SIZE_PER_TOPIC_BYTES,
         extract_timestamp: Callable[[dict[str, Any]], float] | None = None,
     ) -> None:
-        """Subscribe to a topic, defaulting timestamps to the configured payload field."""
+        """Subscribe to a topic or wildcard, defaulting timestamps to the payload field.
+
+        MQTT wildcards (``+`` single level, ``#`` multi level) expand against the topics
+        seen during discovery -- each match gets its own buffer and inferred schema.
+        Topics that first appear after discovery are not auto-added; re-subscribe to
+        pick them up.
+
+        Raises:
+            TopicNotFoundError: If a wildcard matches no discovered topic.
+            ValueError: If a pipeline is attached to a wildcard matching several topics
+                (a pipeline's cadence is defined over exactly one topic).
+
+        """
         if extract_timestamp is None and self._timestamp_field is not None:
             extract_timestamp = self._extract_payload_timestamp
+
+        if "+" in topic or "#" in topic:
+            matches = [
+                candidate
+                for candidate in self.available_topics
+                if paho.topic_matches_sub(topic, candidate)
+            ]
+            if not matches:
+                raise base.TopicNotFoundError(topic)
+            if pipeline is not None and len(matches) > 1:
+                raise ValueError(
+                    f"Cannot attach a pipeline to wildcard '{topic}' matching "
+                    f"{len(matches)} topics; a pipeline's cadence is defined over one topic."
+                )
+            for match in matches:
+                super().subscribe(
+                    match,
+                    pipeline=pipeline,
+                    overwrite=overwrite,
+                    buffer_size_bytes=buffer_size_bytes,
+                    extract_timestamp=extract_timestamp,
+                )
+            logging.info("Wildcard '%s' expanded to %d topic(s)", topic, len(matches))
+            return
+
         super().subscribe(
             topic,
             pipeline=pipeline,
