@@ -18,8 +18,12 @@ services:
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # volumes:
-    #   - <path-to-local-data>:/home/ubuntu/data
+    volumes:
+      # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
+      # tools like PlotJuggler can open them directly. On Linux, run
+      # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
+      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-jazzy:
     image: ghcr.io/extelligence-ai/bagel/ros2-jazzy:latest
@@ -40,8 +44,12 @@ services:
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # volumes:
-    #   - <path-to-local-data>:/home/ubuntu/data
+    volumes:
+      # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
+      # tools like PlotJuggler can open them directly. On Linux, run
+      # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
+      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-iron:
     image: ghcr.io/extelligence-ai/bagel/ros2-iron:latest
@@ -62,8 +70,12 @@ services:
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # volumes:
-    #   - <path-to-local-data>:/home/ubuntu/data
+    volumes:
+      # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
+      # tools like PlotJuggler can open them directly. On Linux, run
+      # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
+      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-humble:
     image: ghcr.io/extelligence-ai/bagel/ros2-humble:latest
@@ -84,8 +96,12 @@ services:
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # volumes:
-    #   - <path-to-local-data>:/home/ubuntu/data
+    volumes:
+      # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
+      # tools like PlotJuggler can open them directly. On Linux, run
+      # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
+      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic:
     image: ghcr.io/extelligence-ai/bagel/ros1-noetic:latest
@@ -104,8 +120,12 @@ services:
     ports:
       - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
-    # volumes:
-    #   - <path-to-local-data>:/home/ubuntu/data
+    volumes:
+      # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
+      # tools like PlotJuggler can open them directly. On Linux, run
+      # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
+      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic-cv:
     image: ghcr.io/extelligence-ai/bagel/ros1-noetic-cv:latest
@@ -124,8 +144,12 @@ services:
     ports:
       - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
-    # volumes:
-    #   - <path-to-local-data>:/home/ubuntu/data
+    volumes:
+      # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
+      # tools like PlotJuggler can open them directly. On Linux, run
+      # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
+      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # - <path-to-local-data>:/home/ubuntu/data
 
   px4:
     image: ghcr.io/extelligence-ai/bagel/px4:latest
@@ -143,8 +167,12 @@ services:
     ports:
       - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
-    # volumes:
-    #   - <path-to-local-data>:/home/ubuntu/data
+    volumes:
+      # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
+      # tools like PlotJuggler can open them directly. On Linux, run
+      # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
+      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # - <path-to-local-data>:/home/ubuntu/data
 
   ardupilot:
     image: ghcr.io/extelligence-ai/bagel/ardupilot:latest
@@ -162,8 +190,12 @@ services:
     ports:
       - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
-    # volumes:
-    #   - <path-to-local-data>:/home/ubuntu/data
+    volumes:
+      # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
+      # tools like PlotJuggler can open them directly. On Linux, run
+      # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
+      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # - <path-to-local-data>:/home/ubuntu/data
 
   betaflight:
     image: ghcr.io/extelligence-ai/bagel/betaflight:latest
@@ -181,8 +213,12 @@ services:
     ports:
       - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
-    # volumes:
-    #   - <path-to-local-data>:/home/ubuntu/data
+    volumes:
+      # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
+      # tools like PlotJuggler can open them directly. On Linux, run
+      # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
+      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # - <path-to-local-data>:/home/ubuntu/data
 
   apache-arrow:
     image: ghcr.io/extelligence-ai/bagel/arrow:latest
@@ -200,8 +236,12 @@ services:
     ports:
       - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
-    # volumes:
-    #   - <path-to-local-data>:/home/ubuntu/data
+    volumes:
+      # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
+      # tools like PlotJuggler can open them directly. On Linux, run
+      # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
+      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # - <path-to-local-data>:/home/ubuntu/data
 
   iot:
     image: ghcr.io/extelligence-ai/bagel/iot:latest
@@ -221,5 +261,9 @@ services:
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # volumes:
-    #   - <path-to-local-data>:/home/ubuntu/data
+    volumes:
+      # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
+      # tools like PlotJuggler can open them directly. On Linux, run
+      # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
+      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # - <path-to-local-data>:/home/ubuntu/data

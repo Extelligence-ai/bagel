@@ -11,7 +11,11 @@ PlotJuggler (≥ 3.6) opens them natively, any profile:
 
 > Find every hard brake in this bag and cut ±10s clips around each.
 
-…then drag the clips from `~/.bagel/artifacts/` into PlotJuggler.
+…then drag the clips from `~/.bagel/artifacts/` into PlotJuggler. This works even when
+Bagel runs in Docker: the compose services mount the artifact directory to the host, so
+everything Bagel writes is immediately visible to desktop tools. (On Linux, run
+`mkdir -p ~/.bagel/artifacts` once before the first `docker compose run` so the
+directory is owned by your user.)
 
 ## Flattened exports for the CSV/Parquet loaders
 
