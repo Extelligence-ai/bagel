@@ -13,7 +13,7 @@ import uuid
 from typing import Any
 
 import duckdb
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.di import module
 
