@@ -3,6 +3,7 @@
 import abc
 import logging
 import pathlib
+import threading
 import uuid
 import weakref
 from collections.abc import Callable
@@ -18,6 +19,7 @@ from src.sink.buffer import TopicBufferWriter
 
 # A global registry to hold singleton instances of TopicSink instances.
 _global_sink_singletons: dict[tuple[str, int], "TopicSink"] = {}  # (host, port) -> instance
+_global_sink_singletons_lock = threading.Lock()
 
 
 class TopicNotFoundError(Exception):
@@ -50,11 +52,15 @@ class TopicSink(abc.ABC):
 
     def __new__(cls, host: str, port: str, *args: object, **kwargs: object) -> "TopicSink":
         """Implement singleton pattern to ensure only one instance per (host, port)."""
-        if (host, port) in _global_sink_singletons:
-            return _global_sink_singletons[(host, port)]
-        instance = super().__new__(cls)
-        instance._is_singleton_initialized = False
-        return instance
+        key = (host, port)
+        with _global_sink_singletons_lock:
+            if key in _global_sink_singletons:
+                return _global_sink_singletons[key]
+            instance = super().__new__(cls)
+            instance._is_singleton_initialized = False
+            instance._singleton_init_lock = threading.Lock()
+            _global_sink_singletons[key] = instance
+            return instance
 
     def __init__(self, host: str, port: str) -> None:
         """Initialize the topic sink.
@@ -64,35 +70,34 @@ class TopicSink(abc.ABC):
             port (str): Port number of the live data stream.
 
         """
-        if self._is_singleton_initialized:
-            return
+        with self._singleton_init_lock:
+            if self._is_singleton_initialized:
+                return
+            try:
+                weakref.finalize(self, self.close)  # ensure clean-up on deletion
+                self._connect()
 
-        weakref.finalize(self, self.close)  # ensure clean-up on deletion
-        self._connect()
+                # Assign attributes
+                self._host = host
+                self._port = port
+                self._all_topics = self._available_topics()
 
-        # Assign attributes
-        self._host = host
-        self._port = port
-        self._all_topics = self._available_topics()
+                # Prepare the sink local directory
+                self._directory = artifacts.sink_directory(
+                    str(uuid.uuid5(uuid.NAMESPACE_OID, "_".join([self._host, str(self._port)])))
+                )
+                self._directory.mkdir(parents=True, exist_ok=True)
+                metadata_file = self._directory / "metadata.yaml"
+                if not metadata_file.exists():
+                    with open(metadata_file, "w", encoding="utf-8") as f:
+                        f.write(yaml.safe_dump(self.metadata))
 
-        # Prepare the sink local directory
-        self._directory = artifacts.sink_directory(
-            str(uuid.uuid5(uuid.NAMESPACE_OID, "_".join([self._host, str(self._port)])))
-        )
-        self._directory.mkdir(parents=True, exist_ok=True)
-        metadata_file = self._directory / "metadata.yaml"
-        if not metadata_file.exists():
-            with open(metadata_file, "w", encoding="utf-8") as f:
-                f.write(yaml.safe_dump(self.metadata))
-
-        # Initialize topic buffers
-        self._buffers: dict[str, TopicBufferWriter] = {}  # topic -> buffer
-
-        # Register the singleton only after successful initialization: a failed
-        # construction (e.g. broker down at boot) must not poison the cache, so a
-        # later retry constructs a fresh instance.
-        _global_sink_singletons[(host, port)] = self
-        self._is_singleton_initialized = True
+                # Initialize topic buffers
+                self._buffers: dict[str, TopicBufferWriter] = {}  # topic -> buffer
+                self._is_singleton_initialized = True
+            except Exception:
+                _global_sink_singletons.pop((host, port), None)
+                raise
 
     @abc.abstractmethod
     def _connect(self) -> None:
