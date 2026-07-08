@@ -106,8 +106,18 @@ def start(manifest_file: str | pathlib.Path) -> list[dict[str, Any]]:
         One report per subscription entry: `{"sink", "status", "topics" | "error"}`.
 
     """
-    manifest = yaml.safe_load(pathlib.Path(manifest_file).read_text()) or {}
-    reports: list[dict[str, Any]] = []
+    try:
+        manifest = yaml.safe_load(pathlib.Path(manifest_file).read_text()) or {}
+    except (OSError, yaml.YAMLError) as error:
+        logging.error("Failed to read startup manifest '%s': %s", manifest_file, error)
+        return []
+    if not isinstance(manifest, dict):
+        logging.error(
+            "Startup manifest '%s' must be a mapping, got %s",
+            manifest_file,
+            type(manifest).__name__,
+        )
+        return []
 
     for entry in manifest.get("subscriptions", []):
         sink_type = TopicSink(entry["sink"])
