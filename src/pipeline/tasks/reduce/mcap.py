@@ -10,22 +10,14 @@ still uses the decoded path (``to_duckdb``); only the write is a raw byte passth
 import logging
 import pathlib
 
-from mcap.reader import make_reader
-from mcap.writer import Writer
-
 from src.di import module
-from src.pipeline import base, messages
+from src.pipeline import base, mcap_raw, messages
 from src.pipeline.tasks.reduce.base import ReduceMixin
 
 NANOSECOND = 1
 MICROSECOND = 1_000 * NANOSECOND
 MILLISECOND = 1_000 * MICROSECOND
 SECOND = 1_000 * MILLISECOND
-
-
-def _in_intervals(log_time_ns: int, intervals_ns: list[tuple[int, int]]) -> bool:
-    """Return True if a nanosecond log time falls within any kept interval."""
-    return any(start <= log_time_ns <= end for start, end in intervals_ns)
 
 
 class ReduceMcap(base.ArtifactMixin, ReduceMixin, messages.TopicMessageMixin, base.Task):
@@ -89,46 +81,14 @@ class ReduceMcap(base.ArtifactMixin, ReduceMixin, messages.TopicMessageMixin, ba
         intervals_ns = [(int(start * SECOND), int(end * SECOND)) for start, end in intervals]
 
         data_source = self.factory.build()
-        keep_topics = set(self._topics) if self._topics else None
-
         output_file = self.artifact_path(asof_seconds, ".mcap")
 
-        with open(output_file, "wb") as output_stream:
-            writer = Writer(output_stream)
-            writer.start()
-            schema_ids: dict[int, int] = {}  # source schema id -> output schema id
-            channel_ids: dict[int, int] = {}  # source channel id -> output channel id
-
-            for mcap_file in data_source.mcap_files:
-                with open(mcap_file, "rb") as input_stream:
-                    reader = make_reader(input_stream)
-                    for schema, channel, message in reader.iter_messages(
-                        topics=self._topics, log_time_order=True
-                    ):
-                        if keep_topics is not None and channel.topic not in keep_topics:
-                            continue
-                        if not _in_intervals(message.log_time, intervals_ns):
-                            continue
-
-                        if schema is not None and schema.id not in schema_ids:
-                            schema_ids[schema.id] = writer.register_schema(
-                                name=schema.name, encoding=schema.encoding, data=schema.data
-                            )
-                        if channel.id not in channel_ids:
-                            channel_ids[channel.id] = writer.register_channel(
-                                topic=channel.topic,
-                                message_encoding=channel.message_encoding,
-                                schema_id=schema_ids.get(schema.id, 0) if schema else 0,
-                                metadata=dict(channel.metadata),
-                            )
-                        writer.add_message(
-                            channel_id=channel_ids[channel.id],
-                            log_time=message.log_time,
-                            data=message.data,
-                            publish_time=message.publish_time,
-                            sequence=message.sequence,
-                        )
-            writer.finish()
+        records = (
+            record
+            for record in mcap_raw.iter_raw_messages(data_source.mcap_files, self._topics)
+            if mcap_raw.in_intervals(record[2].log_time, intervals_ns)
+        )
+        mcap_raw.write_raw_messages(output_file, records)
 
         logging.info("Wrote %s", output_file)
 
