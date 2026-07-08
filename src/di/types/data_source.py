@@ -24,12 +24,14 @@ class DataSource(Enum):
     PYARROW_JSON = "pyarrow.json"
     PYARROW_CSV = "pyarrow.csv"
     POSTGRES = "postgres"
+    INFLUXDB = "influxdb"
 
 
 # URL schemes mapped to their data source types.
 URL_SCHEMES = {
     "postgres": DataSource.POSTGRES,
     "postgresql": DataSource.POSTGRES,  # TimescaleDB uses standard postgres URLs
+    "influxdb": DataSource.INFLUXDB,  # InfluxDB 3 (SQL / Arrow Flight)
 }
 
 
