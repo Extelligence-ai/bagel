@@ -103,7 +103,15 @@ def test_manifest_startup_end_to_end(
     sink_base._global_sink_singletons.clear()
 
 
-def test_manifest_isolates_failures(tmp_path: pathlib.Path) -> None:
+def test_manifest_isolates_failures(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FailingPahoClient(FakePahoClient):
+        def connect(self, host: str, port: int, keepalive: int = 60) -> None:  # noqa: ARG002
+            raise OSError("broker down")
+
+    monkeypatch.setattr(mqtt.paho, "Client", lambda **_: FailingPahoClient())
+
     manifest = {
         "subscriptions": [
             {"sink": "mqtt", "host": "down.test", "port": 29998, "topics": ["x"]},
@@ -112,12 +120,10 @@ def test_manifest_isolates_failures(tmp_path: pathlib.Path) -> None:
     manifest_file = tmp_path / "startup.yaml"
     manifest_file.write_text(yaml.safe_dump(manifest))
 
-    # No paho patching: the connection genuinely fails, and start() reports it
-    # instead of raising -- a dead broker must not prevent server boot.
+    # Connection failure is reported instead of raising -- a dead broker must not prevent server boot.
     reports = startup.start(manifest_file)
     assert reports[0]["status"] == "failed"
     assert "error" in reports[0]
-
 
 def test_empty_manifest_is_fine(tmp_path: pathlib.Path) -> None:
     manifest_file = tmp_path / "startup.yaml"
