@@ -28,6 +28,7 @@ from settings import settings
 from src.di import module
 from src.pipeline.base import Pipeline
 from src.sink import base, buffer
+from src.sink.sparkplug import decode as sparkplug
 
 DISCOVERY_WILDCARD = "#"
 
@@ -92,6 +93,7 @@ class TopicSink(base.TopicSink):
         tls_insecure: bool = False,
         timestamp_field: str | None = None,
         timestamp_unit: str = "second",
+        sparkplug_b: bool = True,
     ) -> None:
         """Initialize the MQTT topic sink.
 
@@ -124,6 +126,11 @@ class TopicSink(base.TopicSink):
                 Defaults to None (arrival time).
             timestamp_unit (str, optional): The unit of `timestamp_field`: "second",
                 "millisecond", "microsecond", or "nanosecond". Defaults to "second".
+            sparkplug_b (bool, optional): If True, payloads on `spBv1.0/` topics are
+                decoded as Sparkplug B: scalar metrics flatten to named fields, plus
+                `timestamp` (epoch ms) and `seq`. Pair with
+                `timestamp_field="timestamp", timestamp_unit="millisecond"` to use the
+                Sparkplug timestamps for buffering. Defaults to True.
 
         Raises:
             ValueError: If 'transport' or 'timestamp_unit' is invalid.
@@ -155,6 +162,7 @@ class TopicSink(base.TopicSink):
         self._schema_timeout_seconds = schema_timeout_seconds
         self._timestamp_field = timestamp_field
         self._timestamp_divisor = TIMESTAMP_DIVISORS[timestamp_unit]
+        self._sparkplug_b = sparkplug_b
 
         self._samples: dict[str, list[dict[str, Any]]] = {}
         self._samples_lock = threading.Lock()
@@ -178,12 +186,24 @@ class TopicSink(base.TopicSink):
         self._paho.loop_stop()
         self._paho.disconnect()
 
+    def _normalize(self, topic: str, payload: bytes) -> dict[str, Any]:
+        """Normalize a payload, decoding Sparkplug B on its namespace when enabled."""
+        if self._sparkplug_b and sparkplug.is_sparkplug_topic(topic):
+            try:
+                return sparkplug.decode_payload(payload)
+            except Exception:
+                logging.warning(
+                    "Failed to decode '%s' as Sparkplug B; treating payload as JSON/text",
+                    topic,
+                )
+        return normalize_payload(payload)
+
     def _on_discovery_message(self, client: object, userdata: object, message: object) -> None:
         """Collect topic names and payload samples from the discovery wildcard."""
         with self._samples_lock:
             samples = self._samples.setdefault(message.topic, [])
             if len(samples) < self._sample_size:
-                samples.append(normalize_payload(message.payload))
+                samples.append(self._normalize(message.topic, message.payload))
 
     def _available_topics(self) -> list[str]:
         """Discover topics by listening on the wildcard for the discovery window."""
@@ -215,6 +235,8 @@ class TopicSink(base.TopicSink):
         return [{"payload": ""}]
 
     def _type_name(self, topic: str) -> str:
+        if self._sparkplug_b and sparkplug.is_sparkplug_topic(topic):
+            return "mqtt/sparkplugb"
         return "mqtt/json"
 
     def _definition(self, topic: str) -> str:
@@ -254,7 +276,7 @@ class TopicSink(base.TopicSink):
     def _subscribe(self, writer: buffer.TopicBufferWriter) -> None:
         def _on_message(client: object, userdata: object, message: object) -> None:
             try:
-                writer.append(normalize_payload(message.payload))
+                writer.append(self._normalize(message.topic, message.payload))
             except Exception:
                 # A malformed payload must not kill the subscription's network thread.
                 logging.exception("Failed to buffer message on topic '%s'", message.topic)
