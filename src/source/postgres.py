@@ -54,8 +54,9 @@ def attach(url: str) -> str:
     duckdb.install_extension("postgres")
     duckdb.load_extension("postgres")
     name = attach_name(url)
+    safe_url = url.replace("'", "''")
     duckdb.execute(
-        f"ATTACH IF NOT EXISTS '{url}' AS {name} (TYPE postgres, READ_ONLY)"
+        f"ATTACH IF NOT EXISTS '{safe_url}' AS {name} (TYPE postgres, READ_ONLY)"
     )
     return name
 
