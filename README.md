@@ -226,6 +226,7 @@ meow 🐱 4 topics 🐱💤🎯
 - [MQTT](./doc/runbooks/iot_mqtt.md) — live IoT topics, Sparkplug B, edge recording
 - [PostgreSQL / TimescaleDB](./doc/runbooks/iot_postgres.md) — every table is a topic
 - [InfluxDB 3](./doc/runbooks/iot_influxdb.md) — every measurement is a topic
+- [PlotJuggler](./doc/runbooks/plotjuggler.md) — open Bagel's MCAP outputs directly; flattened CSV/Parquet exports
 
 ## 📦 Integrations
 
