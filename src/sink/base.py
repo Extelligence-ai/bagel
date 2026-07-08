@@ -257,7 +257,7 @@ class TopicSink(abc.ABC):
             try:
                 self._disconnect()
             except Exception:
-                pass
+                logging.debug("Best-effort disconnect of a partially constructed sink failed")
             return
         try:
             self.pause()

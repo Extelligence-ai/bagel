@@ -107,7 +107,7 @@ def test_manifest_isolates_failures(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class FailingPahoClient(FakePahoClient):
-        def connect(self, host: str, port: int, keepalive: int = 60) -> None:  # noqa: ARG002
+        def connect(self, host: str, port: int, keepalive: int = 60) -> None:
             raise OSError("broker down")
 
     monkeypatch.setattr(mqtt.paho, "Client", lambda **_: FailingPahoClient())
@@ -120,10 +120,12 @@ def test_manifest_isolates_failures(
     manifest_file = tmp_path / "startup.yaml"
     manifest_file.write_text(yaml.safe_dump(manifest))
 
-    # Connection failure is reported instead of raising -- a dead broker must not prevent server boot.
+    # Connection failure is reported instead of raising -- a dead broker
+    # must not prevent server boot.
     reports = startup.start(manifest_file)
     assert reports[0]["status"] == "failed"
     assert "error" in reports[0]
+
 
 def test_empty_manifest_is_fine(tmp_path: pathlib.Path) -> None:
     manifest_file = tmp_path / "startup.yaml"
