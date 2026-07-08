@@ -119,6 +119,7 @@ def start(manifest_file: str | pathlib.Path) -> list[dict[str, Any]]:
         )
         return []
 
+    reports: list[dict[str, Any]] = []
     for entry in manifest.get("subscriptions", []):
         try:
             sink_type = TopicSink(entry["sink"])
