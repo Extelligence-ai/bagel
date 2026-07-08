@@ -221,12 +221,16 @@ class TopicSink(base.TopicSink):
 
         # Topic unseen during discovery: listen for a first message to infer its schema.
         self._paho.subscribe(topic)
-        deadline = time.monotonic() + self._schema_timeout_seconds
-        while time.monotonic() < deadline:
-            with self._samples_lock:
-                if self._samples.get(topic):
-                    return list(self._samples[topic])
-            time.sleep(0.05)
+        try:
+            deadline = time.monotonic() + self._schema_timeout_seconds
+            while time.monotonic() < deadline:
+                with self._samples_lock:
+                    if self._samples.get(topic):
+                        return list(self._samples[topic])
+                time.sleep(0.05)
+        finally:
+            self._paho.unsubscribe(topic)
+
         logging.warning(
             "No message received on '%s' within %.1fs; using raw-payload schema",
             topic,
