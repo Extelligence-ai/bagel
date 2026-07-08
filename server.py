@@ -4,6 +4,7 @@ import pathlib
 from typing import Any
 
 import duckdb
+import yaml
 from mcp.server.fastmcp import FastMCP
 from poml import poml
 
@@ -12,6 +13,7 @@ from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
+from src.pipeline import base, batch, capabilities, windows
 
 server = FastMCP(
     name="Bagel MCP Server",
@@ -415,6 +417,237 @@ def run_poml_capability(
     if not poml_file.exists():
         raise FileNotFoundError(poml_file)
     return poml(poml_file, context=poml_context)
+
+
+@server.tool(
+    title="List pipeline capabilities",
+    description=(
+        "List the tasks and gates available to compose a data pipeline, including "
+        "each one's module path, kind (task or gate), constructor parameters, and a "
+        "short summary. Use this before authoring a pipeline so the correct `module` "
+        "and `args` are chosen instead of guessed."
+    ),
+)
+def list_pipeline_capabilities(include_unavailable: bool = False) -> list[dict[str, Any]]:
+    """List the tasks and gates that can be composed into a pipeline.
+
+    Each capability is a building block referenced by its `module` path in a pipeline
+    YAML. Tasks perform actions (e.g. snippet or reduce a bag); gates decide whether
+    downstream tasks run. The reported `parameters` map directly to a task/gate's
+    `args` in the pipeline config.
+
+    Args:
+        include_unavailable (bool, optional): If True, also list modules that cannot be
+            imported in this environment (e.g. ROS tasks without ROS installed), marked
+            with `available: False`. Defaults to False.
+
+    Returns:
+        list[dict[str, Any]]: Capability descriptions, each with `module`, `kind`,
+            `class`, `summary`, `parameters`, and `available`.
+
+    Examples:
+        As an LLM prompt:
+            What pipeline tasks can I use?
+
+        As a Python call:
+            >>> list_pipeline_capabilities()
+
+    """
+    return capabilities.list_capabilities(include_unavailable=include_unavailable)
+
+
+@server.tool(
+    title="Preview an event-driven data reduction",
+    description=(
+        "Dry-run an event-windowed reduction WITHOUT writing any files. Detects the "
+        "rising-edge events where a SQL predicate becomes true on a topic, builds "
+        "pre/post windows around them, merges overlaps, and reports how much data would "
+        "be kept. Use this to audit a reduce/snippet pipeline before running it."
+    ),
+)
+def preview_pipeline(  # noqa: PLR0913
+    path: str,
+    event_topic: str,
+    predicate: str,
+    pre_seconds: float,
+    post_seconds: float = 0.0,
+    debounce_seconds: float = 0.0,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Preview the reduction that a pipeline would perform, without writing anything.
+
+    Evaluates `predicate` against every message of `event_topic`, finds the rising-edge
+    events (False -> True transitions), builds `[event - pre_seconds, event + post_seconds]`
+    windows, merges overlapping windows, and returns the resulting event count, kept
+    windows, and kept fraction of the source. Nothing is written to disk.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        event_topic (str): The topic to evaluate the predicate against.
+        predicate (str): A SQL boolean expression over `event_topic` columns, e.g.
+            "linear_acceleration_x < -10".
+        pre_seconds (float): Seconds to keep before each event.
+        post_seconds (float, optional): Seconds to keep after each event. Defaults to 0.0.
+        debounce_seconds (float, optional): Minimum seconds between consecutive events;
+            closer events are coalesced. Defaults to 0.0.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used to
+            create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: A summary with `event_count`, `events` (timestamps), `intervals`
+            (kept windows as start/end seconds), `kept_seconds`, `total_seconds`, and
+            `kept_fraction`.
+
+    Examples:
+        As an LLM prompt:
+            Preview keeping 10s before and after every deceleration below -10 on `/imu`.
+
+        As a Python call:
+            >>> preview_pipeline("./data/sample/ros2/mcap", "/imu",
+            ...                  "linear_acceleration_x < -10", pre_seconds=10, post_seconds=10)
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    relation = dataset.to_duckdb(factory, registry, [event_topic])
+    ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
+    rows = relation.project(f"{ts_column} AS ts, ({predicate}) AS hit").fetchall()
+
+    timestamps = [float(row[0]) for row in rows]
+    span_seconds = (max(timestamps) - min(timestamps)) if timestamps else 0.0
+
+    plan = windows.plan_reduction(
+        rows, pre_seconds, post_seconds, span_seconds, min_gap_seconds=debounce_seconds
+    )
+    return {
+        "event_count": len(plan["events"]),
+        "events": plan["events"],
+        "intervals": [
+            {"start_seconds": start, "end_seconds": end} for start, end in plan["intervals"]
+        ],
+        "kept_seconds": plan["kept_seconds"],
+        "total_seconds": plan["total_seconds"],
+        "kept_fraction": plan["kept_fraction"],
+    }
+
+
+@server.tool(
+    title="Save a pipeline to a YAML file",
+    description=(
+        "Persist a pipeline configuration to a YAML file so it can be reused, edited, or "
+        "run later with `run.py`. Returns the path to the written file."
+    ),
+)
+def save_pipeline(
+    config: dict[str, Any], name: str, directory: str = "pipelines"
+) -> str:
+    """Write a pipeline configuration to a YAML file.
+
+    Args:
+        config (dict[str, Any]): The pipeline configuration (the same structure `run_pipeline`
+            accepts and `run.py` loads): `name`, `site`, `asset`, `path`, `allow_failure`,
+            `cadence`, and `tasks`.
+        name (str): The pipeline file name (without extension), in lower_snake_case.
+        directory (str, optional): Directory to write the file into. Created if missing.
+            Defaults to "pipelines".
+
+    Returns:
+        str: The path to the written YAML file.
+
+    Raises:
+        ValueError: If `name` is not a valid lower_snake_case identifier.
+
+    Examples:
+        As an LLM prompt:
+            Save this pipeline as "hard_decel_reduce".
+
+    """
+    from src import artifacts
+
+    if not artifacts.is_lower_snake_case(name):
+        raise ValueError(f"Pipeline name '{name}' must be lower_snake_case.")
+
+    output_directory = pathlib.Path(directory)
+    output_directory.mkdir(parents=True, exist_ok=True)
+    output_file = output_directory / f"{name}.yaml"
+    with open(output_file, "w") as stream:
+        yaml.safe_dump(config, stream, sort_keys=False)
+    return str(output_file)
+
+
+@server.tool(
+    title="Run a pipeline",
+    description=(
+        "Build and run a pipeline from a configuration and return the artifact paths it "
+        "produced. Prefer running `preview_pipeline` first for event-driven reductions so "
+        "the effect is audited before anything is written."
+    ),
+)
+def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
+    """Build and run a pipeline, returning the artifacts it produced.
+
+    Args:
+        config (dict[str, Any]): The pipeline configuration with `name`, `site`, `asset`,
+            `path`, `allow_failure`, `cadence`, and `tasks` (and optional `gates`). This is
+            the same structure accepted by `save_pipeline` and loaded by `run.py`.
+
+    Returns:
+        dict[str, Any]: A summary with `pipeline` (name), `status` ("completed"), and
+            `artifacts` (the paths produced by the pipeline's tasks).
+
+    Examples:
+        As an LLM prompt:
+            Run the reduce pipeline I just previewed.
+
+    """
+    pipeline = base.Pipeline.build(config)
+    produced = pipeline.run_all()
+    return {
+        "pipeline": pipeline.name,
+        "status": "completed",
+        "artifacts": [str(path) for path in produced],
+    }
+
+
+@server.tool(
+    title="Run a pipeline across many data sources (batch)",
+    description=(
+        "Run one pipeline configuration against many data sources -- explicit paths or glob "
+        "patterns like 'logs/*'. Each source is processed independently; a failure on one "
+        "source is reported but does not stop the batch. Returns per-source results and a "
+        "summary. For an event reduction, preview a representative source first."
+    ),
+)
+def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, Any]:
+    """Run a pipeline config against every matching data source.
+
+    Args:
+        config (dict[str, Any]): The base pipeline config (same structure as `run_pipeline`).
+            Its `path` is overridden for each source, so it need not be set.
+        paths (list[str]): Data source paths or glob patterns (e.g. ["logs/*.mcap"]). Globs
+            are expanded; patterns that match nothing are treated as literal paths.
+
+    Returns:
+        dict[str, Any]: A summary with `sources`, `completed`, `failed`, `artifacts` (total
+            produced), and `results` (a per-source list with `path`, `status`, and either
+            `artifacts` or `error`).
+
+    Examples:
+        As an LLM prompt:
+            Reduce every bag under "./logs" with this pipeline.
+
+        As a Python call:
+            >>> run_pipeline_batch(config, ["./logs/*"])
+
+    """
+    expanded = batch.expand_paths(paths)
+    results = batch.run_batch(config, expanded)
+    return batch.summarize(results)
 
 
 if __name__ == "__main__":

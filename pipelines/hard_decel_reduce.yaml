@@ -1,0 +1,26 @@
+# Keep 10s before and 10s after every hard deceleration and discard the rest,
+# writing a SINGLE reduced ROS2 bag.
+#
+# An event is the rising edge where `predicate` becomes true on `event_topic`.
+# Overlapping windows are merged; only the kept windows are written.
+#
+# Before running, confirm the exact field paths and the predicate quoting with
+# `describe_topic` or the `preview_pipeline` MCP tool -- the topic column is a
+# DuckDB STRUCT, so fields are accessed as "<topic>"['field']['subfield'].
+name: hard_decel_reduce
+site: warehouse
+asset: forklift
+path: ./data/logs/flight_042 # <-- point this at your ROS2 bag (db3 directory)
+allow_failure: false
+cadence:
+  topic: /imu # the reduce task scans the whole source once
+  when: once_at_end
+tasks:
+  - module: src.pipeline.tasks.reduce.ros2.db3
+    args:
+      event_topic: /imu
+      predicate: "\"/imu\"['linear_acceleration']['x'] < -10"
+      pre_seconds: 10
+      post_seconds: 10
+      debounce_seconds: 2
+      # topics: ["/imu", "/camera/image"]  # optional: keep only these topics

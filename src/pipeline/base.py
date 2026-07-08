@@ -10,6 +10,7 @@ from typing import Any
 
 import boto3
 import botocore
+import duckdb
 from pydantic import BaseModel
 
 from settings import settings
@@ -17,7 +18,7 @@ from src import artifacts
 from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
-from src.pipeline import progress
+from src.pipeline import progress, windows
 
 SECOND = 1
 MINUTE = 60 * SECOND
@@ -103,6 +104,40 @@ class Lookback(BaseModel):
                 raise ValueError(f"Invalid 'lookback' value: {config}")
 
 
+class OnEvent(BaseModel):
+    """A `cadence.when` option that triggers on the rising edge of a boolean predicate.
+
+    The predicate is a SQL boolean expression evaluated against each message of the
+    cadence topic (the same table contract as the `gates.sql` gate). The pipeline fires
+    once at the timestamp where the predicate transitions from False to True, so a
+    condition that stays true across many consecutive messages counts as a single event.
+
+    An optional `debounce` window coalesces events that occur closer together than the
+    window, so bursty conditions do not produce a run per message.
+
+    Examples:
+        - Fire when `linear_acceleration_x < -10` (a hard deceleration event).
+
+    """
+
+    predicate: str
+    debounce: Lookback | None = None
+    forward: Lookback | None = None
+
+    def min_gap_seconds(self) -> float:
+        """Minimum seconds required between consecutive events; 0 if no debounce is set."""
+        return self.debounce.to_seconds() if self.debounce else 0.0
+
+    def forward_seconds(self) -> float:
+        """Seconds to buffer forward before firing an event on a live stream.
+
+        On a bounded source this is unused (the whole source is already available). On a
+        live stream it delays firing so the post-window after an event has been captured
+        before the pipeline runs. 0 if unset.
+        """
+        return self.forward.to_seconds() if self.forward else 0.0
+
+
 class Cadence(BaseModel):
     """Specify how often the pipeline runs and which topic determines its cadence.
 
@@ -113,7 +148,7 @@ class Cadence(BaseModel):
     """
 
     topic: str
-    when: OnceAtEnd | Frequency
+    when: OnceAtEnd | Frequency | OnEvent
 
     @staticmethod
     def build(config: dict[str, Any]) -> "Cadence":
@@ -123,6 +158,10 @@ class Cadence(BaseModel):
                 when = OnceAtEnd()
             case {"every": int(every), "unit": str(unit)}:
                 when = Frequency(every=every, unit=Unit(unit))
+            case {"on_event": {"predicate": str(predicate), **rest}}:
+                debounce = Lookback.build(rest["debounce"]) if "debounce" in rest else None
+                forward = Lookback.build(rest["forward"]) if "forward" in rest else None
+                when = OnEvent(predicate=predicate, debounce=debounce, forward=forward)
             case when:
                 raise ValueError(f"Invalid 'when' value: {when}")
         return Cadence(topic=config["topic"], when=when)
@@ -337,6 +376,7 @@ class Pipeline:
 
         self._report_progress = report_progress
         self._artifacts = []
+        self._produced: list[pathlib.Path] = []
 
     @property
     def name(self) -> str:
@@ -375,6 +415,10 @@ class Pipeline:
             start_seconds=None,
             end_seconds=None,
         )
+        if isinstance(self.cadence.when, OnEvent):
+            yield from self._event_timestamps(relation, self.cadence.when)
+            return
+
         rows = relation.project(settings.TIMESTAMP_SECONDS_COLUMN_NAME).fetchall()
         timestamps = [float(row[0]) for row in rows]
 
@@ -398,14 +442,29 @@ class Pipeline:
                             last_run_at = timestamp_seconds
                             yield timestamp_seconds
 
+    def _event_timestamps(
+        self, relation: duckdb.DuckDBPyRelation, when: OnEvent
+    ) -> Iterator[float]:
+        """Yield rising-edge timestamps where `when.predicate` transitions False -> True.
+
+        The predicate is evaluated per message of the cadence topic. A condition that
+        stays true across consecutive messages fires a single event at its onset.
+        Consecutive events closer together than the debounce window are coalesced.
+        """
+        ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
+        rows = relation.project(f"{ts_column} AS ts, ({when.predicate}) AS hit").fetchall()
+        yield from windows.rising_edges(rows, when.min_gap_seconds())
+
     def run_at(self, asof_seconds: float) -> None:
         """Run the pipeline at the given timestamp (in seconds)."""
         try:
             if all(gate.evaluate(asof_seconds, lookback) for gate, lookback in self._gates):
                 for task, lookback in self._tasks:
-                    artifacts = task.execute(asof_seconds, lookback)
-                    if task.upload and artifacts and self.can_upload_artifacts():
-                        self._artifacts.extend(artifacts)
+                    produced = task.execute(asof_seconds, lookback)
+                    if produced:
+                        self._produced.extend(produced)
+                    if task.upload and produced and self.can_upload_artifacts():
+                        self._artifacts.extend(produced)
                 logging.info(
                     "Pipeline '%s' executed when topic '%s' received message at %.4f seconds",
                     self.name,
@@ -430,8 +489,13 @@ class Pipeline:
                 str(e),
             )
 
-    def run_all(self) -> None:
-        """Run the pipeline at all applicable timestamps based on its cadence."""
+    def run_all(self) -> list[pathlib.Path]:
+        """Run the pipeline at all applicable timestamps based on its cadence.
+
+        Returns:
+            The artifact paths produced by the pipeline's tasks across all runs.
+
+        """
         for asof_seconds in self._asof_timestamps():
             self.run_at(asof_seconds)
         logging.info("Pipeline '%s' completed.", self.name)
@@ -439,6 +503,8 @@ class Pipeline:
         if self._artifacts:
             self.upload_artifacts()
             logging.info("Uploaded artifacts for pipeline '%s'.", self.name)
+
+        return self._produced
 
     @staticmethod
     def build(config: dict[str, Any]) -> "Pipeline":

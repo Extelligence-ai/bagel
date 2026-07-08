@@ -250,6 +250,8 @@ class TopicSink(abc.ABC):
 
             while self._buffers:
                 topic, writer = self._buffers.popitem()
+                # Fire any live OnEvent events still waiting on their forward window.
+                writer.flush_pending_events()
                 if writer.pipeline is not None and isinstance(
                     writer.pipeline.cadence.when, OnceAtEnd
                 ):
