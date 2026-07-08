@@ -9,7 +9,7 @@ Pure Python (paho-mqtt); no robotics middleware required. MQTT specifics handled
 - **Schemas**: payloads are JSON in the vast majority of deployments, so structure is
   inferred from sampled payloads. Bare JSON scalars/arrays are wrapped as
   ``{"value": ...}`` and non-JSON payloads as ``{"payload": "<text>"}``, so every topic
-  gets a queryable struct. (Sparkplug B / protobuf payloads are a future extension.)
+  gets a queryable struct. (Sparkplug B is supported; other protobuf payloads are future work.)
 - **Timestamps**: MQTT messages carry no standard timestamp; arrival time is used
   (the `TopicBufferWriter` default).
 """
