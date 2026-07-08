@@ -120,7 +120,22 @@ def start(manifest_file: str | pathlib.Path) -> list[dict[str, Any]]:
         return []
 
     for entry in manifest.get("subscriptions", []):
-        sink_type = TopicSink(entry["sink"])
+        try:
+            sink_type = TopicSink(entry["sink"])
+        except Exception as error:
+            logging.error(
+                "Startup subscription failed for sink '%s': %s",
+                entry.get("sink", "<missing>"),
+                error,
+            )
+            reports.append(
+                {
+                    "sink": entry.get("sink", "<missing>"),
+                    "status": "failed",
+                    "error": str(error),
+                }
+            )
+            continue
         try:
             sink = module.provide(
                 f"{BaseModule.TOPIC_SINK.value}.{sink_type.value}",
