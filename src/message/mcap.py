@@ -65,7 +65,11 @@ class MessageDataset(base.MessageDataset):
         for mcap_file in data_source.mcap_files:
             with open(mcap_file, "rb") as stream:
                 reader = make_reader(stream)
-                start_time = start_seconds_inclusive * SECOND if start_seconds_inclusive else None
+                start_time = (
+                    start_seconds_inclusive * SECOND
+                    if start_seconds_inclusive is not None
+                    else None
+                )
                 decoders: dict[int, Callable[[bytes], object]] = {}
                 messages = reader.iter_messages(
                     topics, start_time=start_time, end_time=None, log_time_order=True
