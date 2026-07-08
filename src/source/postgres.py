@@ -65,7 +65,8 @@ class PostgresDatabase(BaseModel):
     """Represent a PostgreSQL/TimescaleDB data source."""
 
     url: str
-    timestamp_columns: dict[str, str] = Field(default_factory=dict)  # topic -> timestamp column override
+    # topic -> timestamp column override
+    timestamp_columns: dict[str, str] = Field(default_factory=dict)
 
     @property
     def catalog(self) -> str:
