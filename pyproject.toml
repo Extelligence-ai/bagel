@@ -55,6 +55,9 @@ px4 = ["pyulog >=1.2.0,<2.0.0", "GitPython >=3.1.0,<4.0.0"]
 ardupilot = ["pymavlink >=2.4.0,<3.0.0"]
 betaflight = ["orangebox >=0.4.0,<1.0.0"]
 cloudini = ["wasmtime >=26.0.0", "numpy >=1.24.0,<3.0.0"]
+iot = [
+    "paho-mqtt>=2.1.0,<3.0.0",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
