@@ -3,17 +3,22 @@
 Reads everything from the MCAP container itself (header, summary, statistics) --
 no rosbag2 metadata.yaml or ROS installation required. Handles a single ``.mcap``
 file or a directory of ``.mcap`` files (including rosbag2-produced MCAP bags,
-whose ``metadata.yaml`` is simply ignored).
+whose ``metadata.yaml`` is simply ignored). Zstandard-compressed files
+(``.mcap.zstd``) are decompressed transparently into the cache directory,
+leaving the source untouched.
 """
 
 import functools
 import pathlib
+import uuid
 from typing import Any
 
+import zstandard
 from mcap.reader import make_reader
 from mcap.summary import Summary
 from pydantic import BaseModel
 
+from settings import settings
 from src.di import module
 from src.source import base
 
@@ -21,6 +26,29 @@ NANOSECOND = 1
 SECOND = 1_000_000_000 * NANOSECOND
 
 MCAP_MAGIC = b"\x89MCAP0\r\n"
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
+
+
+def decompress(file: pathlib.Path) -> pathlib.Path:
+    """Decompress a ``.mcap.zstd`` file into the cache and return the decompressed path.
+
+    The cache key includes the source path, size, and mtime, so a changed source is
+    re-decompressed while repeat reads are free. The source file is never modified.
+    """
+    stat = file.stat()
+    key = str(
+        uuid.uuid5(uuid.NAMESPACE_OID, f"{file.resolve()}_{stat.st_size}_{stat.st_mtime_ns}")
+    )
+    output = pathlib.Path(settings.CACHE_DIRECTORY) / "decompressed" / key / file.stem
+    if output.exists():
+        return output
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    partial = output.with_suffix(".partial")
+    with open(file, "rb") as f_in, open(partial, "wb") as f_out:
+        zstandard.ZstdDecompressor().copy_stream(f_in, f_out)
+    partial.rename(output)  # atomic-ish: readers only ever see complete files
+    return output
 
 
 class McapBag(BaseModel):
@@ -30,10 +58,15 @@ class McapBag(BaseModel):
 
     @property
     def mcap_files(self) -> list[pathlib.Path]:
-        """Return all .mcap files in the data source."""
+        """Return all .mcap files in the data source, decompressing .mcap.zstd as needed."""
         if self.path.is_file():
-            return [self.path]
-        return sorted(self.path.glob("*.mcap"))
+            candidates = [self.path]
+        else:
+            candidates = sorted([*self.path.glob("*.mcap"), *self.path.glob("*.mcap.zstd")])
+        return [
+            decompress(file) if file.name.endswith(".mcap.zstd") else file
+            for file in candidates
+        ]
 
     def __hash__(self) -> int:
         """Needed for functools caching."""
