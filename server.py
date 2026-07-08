@@ -14,6 +14,7 @@ from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
 from src.pipeline import base, batch, capabilities, windows
+from src.sink import startup
 
 server = FastMCP(
     name="Bagel MCP Server",
@@ -310,7 +311,9 @@ def list_live_topics(
     description=(
         "Use this tool to connect to a live data stream and subscribe to one or more topics. "
         "Messages are written to a local sink directory, which can be used later as input "
-        "for other tools (via the `path` argument in SourceFactory)."
+        "for other tools (via the `path` argument in SourceFactory). Optionally attach a "
+        "pipeline config to create a STANDING pipeline that runs on incoming messages -- "
+        "e.g. an on_event cadence that captures and uploads a window around every anomaly."
     ),
 )
 def subscribe_live_topics(  # noqa: PLR0913
@@ -320,6 +323,7 @@ def subscribe_live_topics(  # noqa: PLR0913
     port: int | None = None,
     overwrite: bool = False,
     args: dict[str, Any] | None = None,
+    pipeline: dict[str, Any] | None = None,
 ) -> str:
     """Subscribe to real-time messages from a live data stream.
 
@@ -328,7 +332,7 @@ def subscribe_live_topics(  # noqa: PLR0913
     sink directory for subsequent analysis or playback.
 
     Args:
-        type_ (str): The type of `TopicSink` to use (e.g., ROS1, ROS2, PX4). For the full
+        type_ (str): The type of `TopicSink` to use (e.g., ROS1, ROS2, MQTT). For the full
             list of supported types, see `TopicSink` in `src/di/types/topic_sink.py`.
         topics (list[str] | None, optional): The topics to subscribe to. If None, subscribes
             to all available topics.
@@ -340,6 +344,12 @@ def subscribe_live_topics(  # noqa: PLR0913
             i.e., clear out the disk buffer of the selected topics. Defaults to False.
         args (dict[str, Any] | None, optional): Additional constructor arguments for
             creating the `TopicSink`.
+        pipeline (dict[str, Any] | None, optional): A pipeline configuration (the same
+            structure `run_pipeline` accepts) to run as a STANDING pipeline on incoming
+            messages for the life of the subscription. Its `cadence.topic` must be among
+            the subscribed topics; its `path` defaults to the sink directory so tasks read
+            the live buffer. Use an `on_event` cadence (with `debounce`/`forward`) for
+            edge recording. Defaults to None.
 
     Returns:
         str: Filesystem path to the sink directory where subscribed messages are stored.
@@ -348,10 +358,11 @@ def subscribe_live_topics(  # noqa: PLR0913
 
     Examples:
         As an LLM prompt:
-            Subscribe to the `/odom` and `/scan` topics from a ROS2 bridge.
+            Subscribe to `freezer/1/status` from the MQTT broker, and every time temp rises
+            above -15 for 2 minutes, snapshot the last 30 seconds to a CSV.
 
         As a Python call:
-            >>> subscribe_live_topics("ros2.bridge", topics=["/odom", "/scan"])
+            >>> subscribe_live_topics("mqtt", topics=["freezer/1/status"], pipeline={...})
 
     """
     ts_type = TopicSink(type_)
@@ -363,9 +374,7 @@ def subscribe_live_topics(  # noqa: PLR0913
             **(args or {}),
         },
     )
-    topics = topics or sink.available_topics
-    for topic in topics:
-        sink.subscribe(topic, overwrite=overwrite)
+    startup.subscribe_with_pipeline(sink, topics, pipeline, overwrite=overwrite)
     return str(sink.directory)
 
 
@@ -651,4 +660,8 @@ def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, An
 
 
 if __name__ == "__main__":
+    if settings.STARTUP_PIPELINES_FILE and pathlib.Path(settings.STARTUP_PIPELINES_FILE).exists():
+        # Standing pipelines: re-establish subscriptions (and their attached pipelines)
+        # on boot, so they survive container restarts.
+        startup.start(settings.STARTUP_PIPELINES_FILE)
     server.run(transport="sse")

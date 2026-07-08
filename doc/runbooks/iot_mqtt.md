@@ -74,6 +74,39 @@ The `on_event` cadence fires once per excursion (debounced), the `forward` windo
 firing until the post-event data has been buffered, and the task snapshots the window --
 swap in `send_email` or the S3 upload task as needed.
 
+Attach it conversationally by passing the config as the `pipeline` argument of
+`subscribe_live_topics` -- the pipeline then runs on incoming messages for the life of
+the subscription.
+
+### Surviving restarts
+
+To make standing pipelines permanent, declare them in a startup manifest and point
+`STARTUP_PIPELINES_FILE` at it (e.g. in `.env`); the server re-establishes every
+subscription and its pipeline on boot, so a container restart policy is all you need:
+
+```yaml
+# startup.yaml
+subscriptions:
+  - sink: mqtt
+    topics: ["freezer/1/status"]
+    args: {timestamp_field: t}
+    pipeline:
+      name: freezer_excursion
+      site: warehouse
+      asset: freezer_1
+      allow_failure: true
+      cadence:
+        topic: freezer/1/status
+        when: {on_event: {predicate: "\"freezer/1/status\"['temp'] > -15"}}
+      tasks:
+        - module: src.pipeline.tasks.write_topics_to_file
+          args: {topics: ["freezer/1/status"], output_format: csv}
+          lookback: {last: 60, unit: second}
+```
+
+A broker that is down at boot logs an error without preventing the server (or the other
+subscriptions) from starting.
+
 ## Local test broker
 
 ```bash

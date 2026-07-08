@@ -50,11 +50,11 @@ class TopicSink(abc.ABC):
 
     def __new__(cls, host: str, port: str, *args: object, **kwargs: object) -> "TopicSink":
         """Implement singleton pattern to ensure only one instance per (host, port)."""
-        if (host, port) not in _global_sink_singletons:
-            instance = super().__new__(cls)
-            instance._is_singleton_initialized = False
-            _global_sink_singletons[(host, port)] = instance
-        return _global_sink_singletons[(host, port)]
+        if (host, port) in _global_sink_singletons:
+            return _global_sink_singletons[(host, port)]
+        instance = super().__new__(cls)
+        instance._is_singleton_initialized = False
+        return instance
 
     def __init__(self, host: str, port: str) -> None:
         """Initialize the topic sink.
@@ -88,6 +88,10 @@ class TopicSink(abc.ABC):
         # Initialize topic buffers
         self._buffers: dict[str, TopicBufferWriter] = {}  # topic -> buffer
 
+        # Register the singleton only after successful initialization: a failed
+        # construction (e.g. broker down at boot) must not poison the cache, so a
+        # later retry constructs a fresh instance.
+        _global_sink_singletons[(host, port)] = self
         self._is_singleton_initialized = True
 
     @abc.abstractmethod
@@ -242,6 +246,8 @@ class TopicSink(abc.ABC):
             After closing, the sink must not be reused.
 
         """
+        if not getattr(self, "_is_singleton_initialized", False):
+            return  # construction failed part-way; there is nothing to clean up
         try:
             self.pause()
             self._disconnect()
