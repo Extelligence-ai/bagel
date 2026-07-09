@@ -228,6 +228,7 @@ meow 🐱 4 topics 🐱💤🎯
 - [PostgreSQL / TimescaleDB](./doc/runbooks/iot_postgres.md) — every table is a topic
 - [InfluxDB 3](./doc/runbooks/iot_influxdb.md) — every measurement is a topic
 - [PlotJuggler](./doc/runbooks/plotjuggler.md) — open Bagel's MCAP outputs directly; flattened CSV/Parquet exports
+- [Local LLMs](./doc/runbooks/local_llm.md) — fully offline with Ollama: your data and your model never leave the machine
 
 ## 📦 Integrations
 
