@@ -64,6 +64,11 @@ answers the questions they make you work for, then hands off to them:
 | `ros2 topic echo /imu` and eyeball raw values | *"What's the peak z-deceleration in /imu? Running average over 5 s?"* — real SQL underneath: peaks, running averages, percentiles, cross-topic correlations |
 | Scrub PlotJuggler timelines hunting for the event | *"Find every deceleration under −10 m/s² and cut ±30 s snippets"* — then open the result in PlotJuggler with a [pre-framed layout](./doc/runbooks/plotjuggler.md) |
 | `rqt_console`, or grep `~/.ros/log` | *"Read the ERRORs from ~/.ros/log and tell me what went wrong"* — tracebacks included, [no bag needed](./doc/runbooks/ros_text_logs.md) |
+| Echo two topics in two terminals, correlate in a spreadsheet | *"What's the correlation between current and voltage?"* — topics live in one SQL relation, so joins and `corr()` are one question |
+| `ros2 bag record -a` and babysit the disk | A [standing edge pipeline](./doc/runbooks/data_reduction.md): record continuously, keep only event windows, drop the rest |
+| A bash loop over 200 bags | *"Run this pipeline on every bag in the folder"* — [one pipeline, whole fleet](./doc/runbooks/data_reduction.md), with a combined report |
+| `scp`/`aws s3 sync` scripts to ship data off the robot | Upload to S3, GCS, or Azure as a pipeline step, checksum-skipping files already there |
+| A different viewer per format: FlightPlot for PX4, MAVExplorer for ArduPilot, Blackbox Explorer for Betaflight | The same conversation for all of them — and ROS, MCAP, MQTT, Postgres, InfluxDB |
 | Write a one-off pandas script per question | Ask the question; Bagel writes and runs the query |
 
 One sentence of plain language, one answer — instead of a pipeline of commands and
