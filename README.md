@@ -76,7 +76,8 @@ a script you'll delete tomorrow. Here it is reducing a bag around detected event
 
 <p align="center">
   <picture>
-    <img src="./doc/assets/nl_reduction.gif" width="80%">
+    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/nl_reduction_dark_mode.gif">
+    <img src="./doc/assets/nl_reduction_light_mode.gif" width="80%">
   </picture>
 </p>
 
