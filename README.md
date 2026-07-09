@@ -38,8 +38,9 @@ Can’t wait to try it out? 👉 Check out the [Quickstart](#️-quickstart).
 
 - **Ask in plain language**: No deep domain expertise needed.
 - **Transparent calculations**: Deterministic SQL queries. No black-box LLM math.
-- **Event-driven data reduction**: "Keep 10s around every hard brake, drop the rest" —
-  previewed before a byte is written, live or in [batch](./doc/runbooks/data_reduction.md).
+- **Natural-language pipelines**: "Keep 10s around every hard brake, drop the rest" —
+  one sentence becomes an auditable [pipeline](./doc/runbooks/pipelines.md): previewed
+  before a byte is written, then run once, across a fleet, or standing at the edge.
 - **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, and more.
 - **Dockerized environments**: No local dependencies required.
 - **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
@@ -72,7 +73,8 @@ answers the questions they make you work for, then hands off to them:
 | Write a one-off pandas script per question | Ask the question; Bagel writes and runs the query |
 
 One sentence of plain language, one answer — instead of a pipeline of commands and
-a script you'll delete tomorrow. Here it is reducing a bag around detected events:
+a script you'll delete tomorrow. Here's a sentence becoming a
+[data pipeline](./doc/runbooks/pipelines.md) that reduces a bag around detected events:
 
 <p align="center">
   <picture>
@@ -260,6 +262,8 @@ meow 🐱 4 topics 🐱💤🎯
 
 ## 📚 Guides
 
+- [Natural-language pipelines](./doc/runbooks/pipelines.md) — the model: a cadence, gates,
+  and tasks; preview → run → save → batch → standing at the edge
 - [Event-driven data reduction](./doc/runbooks/data_reduction.md) — detect events, keep
   windows around them (snippets or one reduced bag), batch across fleets, upload to the cloud
 - [Live ROS2 robots over rosbridge](./doc/tutorials/live_ros2_bridge.md) — a step-by-step tutorial
