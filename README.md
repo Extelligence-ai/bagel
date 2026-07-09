@@ -275,6 +275,7 @@ meow 🐱 4 topics 🐱💤🎯
 
 ## 📦 Integrations
 
+- [Rerun](./doc/runbooks/rerun.md) — "show me that event in Rerun": any time window as a ready-to-open recording
 - [PlotJuggler](./doc/runbooks/plotjuggler.md) — open Bagel's MCAP outputs directly; one-sentence pre-framed sessions, flattened CSV/Parquet exports
 - [Cloudini](./doc/runbooks/cloudini.md) — Decode cloudini-compressed pointcloud data in pipelines
 

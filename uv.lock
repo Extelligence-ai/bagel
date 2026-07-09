@@ -257,6 +257,9 @@ upload = [
     { name = "azure-storage-blob" },
     { name = "google-cloud-storage" },
 ]
+viz = [
+    { name = "rerun-sdk" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -323,6 +326,7 @@ upload = [
     { name = "azure-storage-blob", specifier = ">=12.24.0,<13.0.0" },
     { name = "google-cloud-storage", specifier = ">=2.18.0,<4.0.0" },
 ]
+viz = [{ name = "rerun-sdk", specifier = ">=0.23.1" }]
 
 [[package]]
 name = "beautifulsoup4"
@@ -3040,6 +3044,25 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e1/0a/929373653770d8a0d7ea76c37de6e41f11eb07559b103b1c02cafb3f7cf8/requests-2.32.4.tar.gz", hash = "sha256:27d0316682c8a29834d3264820024b62a36942083d52caf2f14c0591336d3422", size = 135258, upload-time = "2025-06-09T16:43:07.34Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7c/e4/56027c4a6b4ae70ca9de302488c5ca95ad4a39e190093d6c1a8ace08341b/requests-2.32.4-py3-none-any.whl", hash = "sha256:27babd3cda2a6d50b30443204ee89830707d396671944c998b5975b031ac2b2c", size = 64847, upload-time = "2025-06-09T16:43:05.728Z" },
+]
+
+[[package]]
+name = "rerun-sdk"
+version = "0.23.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "pyarrow" },
+    { name = "typing-extensions" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/6e/a125f4fe2de3269f443b7cb65d465ffd37a836a2dac7e4318e21239d78c8/rerun_sdk-0.23.1-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:fe06d21cfcf4d84a9396f421d4779efabec7e9674d232a2c552c8a91d871c375", size = 66094053, upload-time = "2025-04-25T13:15:48.669Z" },
+    { url = "https://files.pythonhosted.org/packages/55/f6/b6d13322b05dc77bd9a0127e98155c2b7ee987a236fd4d331eed2e547a90/rerun_sdk-0.23.1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:823ae87bfa644e06fb70bada08a83690dd23d9824a013947f80a22c6731bdc0d", size = 62047843, upload-time = "2025-04-25T13:15:54.48Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/7f/6a7422cb727e14a65b55b0089988eeea8d0532c429397a863e6ba395554a/rerun_sdk-0.23.1-cp39-abi3-manylinux_2_31_aarch64.whl", hash = "sha256:dc5129f8744f71249bf45558c853422c51ef39b6b5eea0ea1f602c6049ce732f", size = 68214509, upload-time = "2025-04-25T13:15:59.339Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/86/3aee9eadbfe55188a2c7d739378545b4319772a4d3b165e8d3fc598fa630/rerun_sdk-0.23.1-cp39-abi3-manylinux_2_31_x86_64.whl", hash = "sha256:ee0d0e17df0e08be13b77cc74884c5d8ba8edb39b6f5a60dc2429d39033d90f6", size = 71442196, upload-time = "2025-04-25T13:16:04.405Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/ba/028bd382e2ae21e6643cec25f423285dbc6b328ce56d55727b4101ef9443/rerun_sdk-0.23.1-cp39-abi3-win_amd64.whl", hash = "sha256:d4273db55b56310b053a2de6bf5927a8692cf65f4d234c6e6928fb24ed8a960d", size = 57583198, upload-time = "2025-04-25T13:16:08.905Z" },
 ]
 
 [[package]]

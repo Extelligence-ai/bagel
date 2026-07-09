@@ -13,7 +13,7 @@ from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
-from src.pipeline import base, batch, capabilities, plotjuggler, windows
+from src.pipeline import base, batch, capabilities, plotjuggler, rerun_export, windows
 from src.sink import startup
 
 server = mcp_compat.create_server(
@@ -722,6 +722,75 @@ def export_for_plotjuggler(  # noqa: PLR0913
         factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
     )
     return plotjuggler.export_window(
+        relation,
+        name=name,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        signals=signals,
+    )
+
+
+@server.tool(
+    title="Export an event window for the Rerun viewer",
+    description=(
+        "Export a time window of topic data as a Rerun recording (.rrd): every scalar "
+        "signal becomes a Rerun time series, so `rerun <file>` opens the event in the "
+        "Rerun viewer. Use after preview_pipeline to hand an event to a human for "
+        "visual inspection. Needs the optional rerun-sdk dependency (uv sync --group viz)."
+    ),
+)
+def export_for_rerun(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    start_seconds: float,
+    end_seconds: float,
+    name: str = "event",
+    signals: list[str] | None = None,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export a time window as a Rerun recording.
+
+    Writes an `.rrd` file where every scalar signal in the window is a Rerun time
+    series (entity paths named `topic/field/subfield`, matching the PlotJuggler
+    export's naming).
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics to include in the export.
+        start_seconds (float): Window start.
+        end_seconds (float): Window end.
+        name (str, optional): Recording name, used for the output files. Defaults to
+            "event".
+        signals (list[str] | None, optional): Flattened signal names to include (e.g.
+            "/imu/linear_acceleration/x"). If None, all numeric signals are included.
+            Defaults to None.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: The `rrd` path, included `signals`, and `command` -- run it to
+            open the recording in the Rerun viewer.
+
+    Examples:
+        As an LLM prompt:
+            Show me the second brake event in Rerun.
+
+        As a Python call:
+            >>> export_for_rerun("./flight.mcap", ["/imu"], 118.9, 138.9)
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    relation = dataset.to_duckdb(
+        factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+    )
+    return rerun_export.export_window(
         relation,
         name=name,
         start_seconds=start_seconds,
