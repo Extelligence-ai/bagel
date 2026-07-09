@@ -75,12 +75,16 @@ your install; today it includes:
 | `generate_gif` | Render an image topic into a GIF |
 | `cloudini.decode_pointcloud` | Decode compressed pointclouds mid-pipeline |
 | `upload.s3`, `upload.gcs`, `upload.azure` | Ship artifacts to the cloud, skipping files already there |
+| `notify.slack` | Post to a Slack (or compatible) webhook, with `{asset}`-style message templates |
 | `rsync_files`, `send_email` | Pull files in; send results out |
 
 \* the `ros2.db3` and `ros1.bag` writers need rosbag CLIs, so they show up inside the
 ROS compose services.
 
-Tasks chain: reduce → upload → email is one pipeline.
+Tasks chain — this is one standing pipeline on a live stream:
+
+> Whenever the forklift brakes harder than -10 m/s², cut a ±10s snippet, upload it
+> to S3, and post "🚨 hard brake on {asset} at t={asof_seconds}" to the ops channel.
 
 ## The lifecycle
 
