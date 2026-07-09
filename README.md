@@ -195,6 +195,18 @@ claude
 
 That’s it — you’re chatting with your data.
 
+#### 🔒 Prefer fully offline?
+
+Swap step 2 for a local model — your data *and* your LLM stay on the machine:
+
+```bash
+brew install ollama && ollama serve &                                  # or ollama.com
+ollama pull qwen3:8b
+uvx ollmcp --mcp-server-url http://localhost:8000/sse --model qwen3:8b
+```
+
+Model picks, expectations, and troubleshooting: [Local LLMs guide](./doc/runbooks/local_llm.md).
+
 <details>
   <summary>📚 Using a different LLM?</summary>
 
