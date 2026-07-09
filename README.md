@@ -277,6 +277,7 @@ meow 🐱 4 topics 🐱💤🎯
 
 - [PlotJuggler](./doc/runbooks/plotjuggler.md) — open Bagel's MCAP outputs directly; one-sentence pre-framed sessions, flattened CSV/Parquet exports
 - [Cloudini](./doc/runbooks/cloudini.md) — Decode cloudini-compressed pointcloud data in pipelines
+- [Slack](./doc/runbooks/pipelines.md) — pipelines post to your ops channel when they fire: "🚨 hard brake on {asset}"
 
 ## 🫶 Contributing
 
