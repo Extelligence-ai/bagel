@@ -5,10 +5,10 @@ from typing import Any
 
 import duckdb
 import yaml
-from mcp.server.fastmcp import FastMCP
 from poml import poml
 
 from settings import settings
+from src import mcp_compat
 from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
@@ -16,7 +16,7 @@ from src.di.types.topic_sink import TopicSink, guess_host, guess_port
 from src.pipeline import base, batch, capabilities, plotjuggler, windows
 from src.sink import startup
 
-server = FastMCP(
+server = mcp_compat.create_server(
     name="Bagel MCP Server",
     host=settings.MCP_SERVER_HOST,
     port=settings.MCP_SERVER_PORT,
@@ -735,4 +735,9 @@ if __name__ == "__main__":
         # Standing pipelines: re-establish subscriptions (and their attached pipelines)
         # on boot, so they survive container restarts.
         startup.start(settings.STARTUP_PIPELINES_FILE)
-    server.run(transport="sse")
+    mcp_compat.run_server(
+        server,
+        transport=settings.MCP_TRANSPORT,
+        host=settings.MCP_SERVER_HOST,
+        port=settings.MCP_SERVER_PORT,
+    )
