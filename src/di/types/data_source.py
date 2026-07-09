@@ -25,6 +25,7 @@ class DataSource(Enum):
     PYARROW_CSV = "pyarrow.csv"
     POSTGRES = "postgres"
     INFLUXDB = "influxdb"
+    ROS_LOG = "ros.log"
 
 
 # URL schemes mapped to their data source types.
@@ -73,6 +74,9 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
         return DataSource.BETAFLIGHT_BBL
     elif is_betaflight_bfl_file(path):
         return DataSource.BETAFLIGHT_BFL
+    elif is_ros_log_file(path) or is_ros_log_directory(path):
+        # Checked before JSON/CSV: free-form log lines can fool the CSV sniffer.
+        return DataSource.ROS_LOG
     elif is_json_file(path) or is_json_directory(path):
         return DataSource.PYARROW_JSON
     elif is_csv_file(path) or is_csv_directory(path):
@@ -248,6 +252,28 @@ def is_json_lines_file(path: pathlib.Path) -> bool:
             return True
         except json.JSONDecodeError:
             return False
+
+
+def is_ros_log_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a plain-text log file dumped by ROS."""
+    if not path.is_file() or path.suffix != ".log":
+        return False
+    # Deferred so this types module stays import-light; parse has no dependencies
+    # back into src.di, so there is no cycle.
+    from src.source.ros.parse import looks_like_ros_log
+
+    return looks_like_ros_log(path)
+
+
+def is_ros_log_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing at least one ROS log file.
+
+    Matches ROS log directories such as ~/.ros/log and its per-run subdirectories;
+    non-log files (e.g., the "latest" symlink) are tolerated.
+    """
+    if not path.is_dir():
+        return False
+    return any(is_ros_log_file(file) for file in sorted(path.glob("**/*.log")))
 
 
 def is_json_file(path: pathlib.Path) -> bool:
