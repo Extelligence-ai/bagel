@@ -267,3 +267,15 @@ services:
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
       # - <path-to-local-data>:/home/ubuntu/data
+
+  # Local LLM for a fully offline stack: your data AND your model never leave
+  # the machine. Opt-in via `docker compose --profile local-llm up ollama`.
+  # See doc/runbooks/local_llm.md for the full walkthrough.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    ports:
+      - "11434:11434"
+    volumes:
+      # Models are multi-GB; persist them across container restarts.
+      - ${HOME}/.ollama:/root/.ollama
