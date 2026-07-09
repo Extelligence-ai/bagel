@@ -267,11 +267,11 @@ meow 🐱 4 topics 🐱💤🎯
 - [MQTT](./doc/runbooks/iot_mqtt.md) — live IoT topics, Sparkplug B, edge recording
 - [PostgreSQL / TimescaleDB](./doc/runbooks/iot_postgres.md) — every table is a topic
 - [InfluxDB 3](./doc/runbooks/iot_influxdb.md) — every measurement is a topic
-- [PlotJuggler](./doc/runbooks/plotjuggler.md) — open Bagel's MCAP outputs directly; flattened CSV/Parquet exports
 - [Local LLMs](./doc/runbooks/local_llm.md) — fully offline with Ollama: your data and your model never leave the machine
 
 ## 📦 Integrations
 
+- [PlotJuggler](./doc/runbooks/plotjuggler.md) — open Bagel's MCAP outputs directly; one-sentence pre-framed sessions, flattened CSV/Parquet exports
 - [Cloudini](./doc/runbooks/cloudini.md) — Decode cloudini-compressed pointcloud data in pipelines
 
 ## 🫶 Contributing
