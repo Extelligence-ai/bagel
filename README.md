@@ -53,6 +53,28 @@ Can’t wait to try it out? 👉 Check out the [Quickstart](#️-quickstart).
 | **Drones**   | PX4, ArduPilot, Betaflight     |
 | **IoT**      | MQTT (live, Sparkplug B), PostgreSQL / TimescaleDB, InfluxDB 3 |
 
+## 🆚 Bagel vs. the Tools You Already Use
+
+You already have `ros2 *`, PlotJuggler, and grep. Bagel doesn't replace them — it
+answers the questions they make you work for, then hands off to them:
+
+| You do this today | Ask Bagel instead |
+| --- | --- |
+| `ros2 bag info` for metadata | *"Summarize this bag"* — same prompt works on PX4, ArduPilot, MCAP, MQTT, Postgres |
+| `ros2 topic echo /imu` and eyeball raw values | *"What's the peak z-deceleration in /imu? Running average over 5 s?"* — real SQL underneath: peaks, running averages, percentiles, cross-topic correlations |
+| Scrub PlotJuggler timelines hunting for the event | *"Find every deceleration under −10 m/s² and cut ±30 s snippets"* — then open the result in PlotJuggler with a [pre-framed layout](./doc/runbooks/plotjuggler.md) |
+| `rqt_console`, or grep `~/.ros/log` | *"Read the ERRORs from ~/.ros/log and tell me what went wrong"* — tracebacks included, [no bag needed](./doc/runbooks/ros_text_logs.md) |
+| Write a one-off pandas script per question | Ask the question; Bagel writes and runs the query |
+
+One sentence of plain language, one answer — instead of a pipeline of commands and
+a script you'll delete tomorrow. Here it is reducing a bag around detected events:
+
+<p align="center">
+  <picture>
+    <img src="./doc/assets/nl_reduction.gif" width="80%">
+  </picture>
+</p>
+
 ## 💬 What Can I Prompt?
 
 You can ask Bagel almost anything. For example:
