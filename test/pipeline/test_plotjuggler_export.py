@@ -86,8 +86,24 @@ def test_signals_filter_and_unknown_signal_error() -> None:
     result = _export(signals=["message/accel_x"])
     assert result["curves"] == ["message/accel_x"]
 
-    with pytest.raises(Exception, match="Unknown signals"):
+    with pytest.raises(ValueError, match="Unknown or non-numeric signals"):
         _export(signals=["message/not_a_signal"])
+
+
+def test_non_numeric_signal_rejected_cleanly() -> None:
+    relation = duckdb.sql(
+        f'SELECT 1.0 AS "{TS}", struct_pack(temp := 20.0, mode := \'auto\') AS sensor'
+    )
+    # "sensor/mode" exists after flattening but is a string -- it must fail with a
+    # clean ValueError, not a TypeError from the y-range computation.
+    with pytest.raises(ValueError, match="non-numeric"):
+        plotjuggler.export_window(
+            relation,
+            name="x",
+            start_seconds=0.0,
+            end_seconds=2.0,
+            signals=["sensor/mode"],
+        )
 
 
 def test_curve_cap_applies_without_explicit_signals() -> None:

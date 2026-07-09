@@ -123,10 +123,13 @@ def export_window(  # noqa: PLR0913
 
     available = _numeric_columns(flat)
     if signals is not None:
-        missing = sorted(set(signals) - set(flat.columns))
-        if missing:
+        # Validate against the numeric set: a signal that exists but is not plottable
+        # (strings, timestamps) must fail cleanly here, not in the y-range math below.
+        unusable = sorted(set(signals) - set(available))
+        if unusable:
             raise ValueError(
-                f"Unknown signals: {missing}. Available numeric signals: {available}"
+                f"Unknown or non-numeric signals: {unusable}. "
+                f"Available numeric signals: {available}"
             )
         curves = list(signals)
     else:

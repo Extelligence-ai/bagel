@@ -712,7 +712,8 @@ def export_for_plotjuggler(  # noqa: PLR0913
     """
     ds_type = resolve(path)
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
