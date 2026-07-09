@@ -22,7 +22,7 @@ services:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
-      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      - "${HOME:?HOME must be set}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts"
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-jazzy:
@@ -48,7 +48,7 @@ services:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
-      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      - "${HOME:?HOME must be set}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts"
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-iron:
@@ -74,7 +74,7 @@ services:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
-      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      - "${HOME:?HOME must be set}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts"
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-humble:
@@ -100,7 +100,7 @@ services:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
-      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      - "${HOME:?HOME must be set}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts"
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic:
@@ -124,7 +124,7 @@ services:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
-      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      - "${HOME:?HOME must be set}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts"
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic-cv:
@@ -148,7 +148,7 @@ services:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
-      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      - "${HOME:?HOME must be set}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts"
       # - <path-to-local-data>:/home/ubuntu/data
 
   px4:
@@ -171,7 +171,7 @@ services:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
-      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      - "${HOME:?HOME must be set}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts"
       # - <path-to-local-data>:/home/ubuntu/data
 
   ardupilot:
@@ -194,7 +194,7 @@ services:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
-      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      - "${HOME:?HOME must be set}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts"
       # - <path-to-local-data>:/home/ubuntu/data
 
   betaflight:
@@ -217,7 +217,7 @@ services:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
-      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      - "${HOME:?HOME must be set}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts"
       # - <path-to-local-data>:/home/ubuntu/data
 
   apache-arrow:
@@ -240,7 +240,7 @@ services:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
-      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      - "${HOME:?HOME must be set}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts"
       # - <path-to-local-data>:/home/ubuntu/data
 
   iot:
@@ -265,5 +265,5 @@ services:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
-      - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      - "${HOME:?HOME must be set}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts"
       # - <path-to-local-data>:/home/ubuntu/data

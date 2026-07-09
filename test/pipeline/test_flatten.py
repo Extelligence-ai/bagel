@@ -124,3 +124,16 @@ def test_end_to_end_flattened_parquet(
         f'SELECT MIN("message/accel_x") FROM \'{artifact}\''  # noqa: S608
     ).fetchone()
     assert minimum == -13.0
+
+
+def test_field_names_with_quotes_are_escaped() -> None:
+    # Field names come from data (CSV headers, JSON keys) and may contain quotes.
+    relation = _relation(
+        f"""
+        SELECT 1.0 AS "{TS}",
+               struct_pack("it's" := 20.0::DOUBLE) AS "sensor"
+        """
+    )
+    flat = flatten.flatten(relation)
+    assert flat.columns == [TS, "sensor/it's"]
+    assert flat.fetchone() == (1.0, 20.0)

@@ -44,7 +44,11 @@ def _leaf_selects(column: str, dtype: pa.DataType, path: list[str]) -> list[str]
     if not _is_scalar(dtype):
         logging.debug("Skipping non-scalar field '%s/%s'", column, "/".join(path))
         return []
-    accessor = quote_identifier(column) + "".join(f"['{part}']" for part in path)
+    # Escape quotes: struct field names come from data (CSV headers, JSON keys) and
+    # may contain them.
+    accessor = quote_identifier(column) + "".join(
+        "['{}']".format(part.replace("'", "''")) for part in path
+    )
     alias = quote_identifier("/".join([column, *path]) if path else column)
     return [f"{accessor} AS {alias}"]
 
