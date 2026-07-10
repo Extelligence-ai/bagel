@@ -1,4 +1,4 @@
-# LeRobot: from detected events to training data
+# LeRobot: from detected events to training data (beta)
 
 Data reduction's endgame is training-data curation: *"keep the 30 seconds around
 every interesting event"* is episode selection. Bagel exports those windows as a
@@ -46,6 +46,13 @@ from lerobot.datasets import LeRobotDataset
 dataset = LeRobotDataset(repo_id="you/brake-study", root="~/.bagel/artifacts/lerobot/brake_study")
 sample = dataset[0]  # {'observation.state': tensor([...]), 'action': tensor([...]), ...}
 ```
+
+## Beta status
+
+The exporter's output matches the v3.0 spec and the schemas of a reference v3
+dataset on the Hub field-for-field, but it has not yet been load-tested with the
+`lerobot` package end to end. If you train from a Bagel export, please report
+anything odd — and anything great.
 
 ## Notes
 
