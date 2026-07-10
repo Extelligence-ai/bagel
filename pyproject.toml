@@ -71,6 +71,8 @@ viz = [
 ]
 automotive = [
     "asammdf>=7.4,<8",
+    "cantools>=42.0.3",
+    "python-can>=4.6.1",
 ]
 
 [tool.pytest.ini_options]

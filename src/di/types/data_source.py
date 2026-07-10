@@ -27,6 +27,7 @@ class DataSource(Enum):
     INFLUXDB = "influxdb"
     ROS_LOG = "ros.log"
     MDF = "automotive.mf4"
+    CAN = "automotive.can"
 
 
 # URL schemes mapped to their data source types.
@@ -77,6 +78,8 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
         return DataSource.BETAFLIGHT_BFL
     elif is_mdf_file(path):
         return DataSource.MDF
+    elif is_can_blf_file(path) or is_can_asc_file(path):
+        return DataSource.CAN
     elif is_ros_log_file(path) or is_ros_log_directory(path):
         # Checked before JSON/CSV: free-form log lines can fool the CSV sniffer.
         return DataSource.ROS_LOG
@@ -260,6 +263,22 @@ def is_json_lines_file(path: pathlib.Path) -> bool:
 def is_mdf_file(path: pathlib.Path) -> bool:
     """Check if the given path is an ASAM MDF measurement file (.mf4 and older)."""
     return has_magic_bytes(path, b"MDF     ")
+
+
+def is_can_blf_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Vector BLF CAN capture."""
+    return has_magic_bytes(path, b"LOGG")
+
+
+def is_can_asc_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Vector ASC CAN capture (text, starts with a date line)."""
+    if not path.is_file() or path.suffix.lower() != ".asc":
+        return False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.readline().strip().lower().startswith("date")
+    except OSError:
+        return False
 
 
 def is_ros_log_file(path: pathlib.Path) -> bool:

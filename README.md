@@ -52,7 +52,7 @@ Can’t wait to try it out? 👉 Check out the [Quickstart](#️-quickstart).
 | ------------ | ------------------------------ |
 | **Robotics** | ROS1, ROS2, MCAP (any profile), ROS text logs (`~/.ros/log`) |
 | **Drones**   | PX4, ArduPilot, Betaflight     |
-| **Automotive** | ASAM MDF4 (`.mf4`, CANape/INCA/Vector measurements) |
+| **Automotive** | ASAM MDF4 (`.mf4`), CAN captures (`.blf`/`.asc` + DBC) — *beta* |
 | **IoT**      | MQTT (live, Sparkplug B), PostgreSQL / TimescaleDB, InfluxDB 3 |
 
 ## 🆚 Bagel vs. the Tools You Already Use
@@ -272,7 +272,7 @@ meow 🐱 4 topics 🐱💤🎯
 - [MQTT](./doc/runbooks/iot_mqtt.md) — live IoT topics, Sparkplug B, edge recording
 - [PostgreSQL / TimescaleDB](./doc/runbooks/iot_postgres.md) — every table is a topic
 - [InfluxDB 3](./doc/runbooks/iot_influxdb.md) — every measurement is a topic
-- [Automotive MDF4](./doc/runbooks/automotive_mdf.md) — channel groups are topics, channels are fields, units ride along
+- [Automotive MDF4 & CAN](./doc/runbooks/automotive_mdf.md) *(beta)* — channel groups and DBC messages are topics; units ride along
 - [Local LLMs](./doc/runbooks/local_llm.md) — fully offline with Ollama: your data and your model never leave the machine
 
 ## 📦 Integrations
