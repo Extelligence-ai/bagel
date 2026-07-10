@@ -339,7 +339,9 @@ class TopicBufferReader:
             for line in combined_file:
                 total_bytes += len(line.encode("utf-8"))
 
-            buffer_bytes = self.metadata.get("buffer_size_bytes", total_bytes)
+            # "buffer_size_bytes" is stored as None for unbounded buffers, so a plain
+            # .get(key, default) would return None here rather than the default.
+            buffer_bytes = self.metadata.get("buffer_size_bytes") or total_bytes
             bytes_to_skip = max(0, total_bytes - buffer_bytes)
 
             combined_file.seek(0)
