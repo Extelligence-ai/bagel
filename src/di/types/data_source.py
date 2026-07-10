@@ -22,6 +22,7 @@ class DataSource(Enum):
     BAGEL_SINK = "bagel.sink"
     PYARROW_JSON = "pyarrow.json"
     PYARROW_CSV = "pyarrow.csv"
+    WAFFLE_FORM = "waffle.form"
 
 
 def resolve(path: str) -> DataSource:
@@ -54,6 +55,8 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
         return DataSource.BETAFLIGHT_BBL
     elif is_betaflight_bfl_file(path):
         return DataSource.BETAFLIGHT_BFL
+    elif is_waffleform_file(path):
+        return DataSource.WAFFLE_FORM
     elif is_json_file(path) or is_json_directory(path):
         return DataSource.PYARROW_JSON
     elif is_csv_file(path) or is_csv_directory(path):
@@ -207,6 +210,17 @@ def is_json_lines_file(path: pathlib.Path) -> bool:
             return True
         except json.JSONDecodeError:
             return False
+
+
+def is_waffleform_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a waffle-iron WaffleForm (hardware-as-code) file."""
+    if not path.is_file() or not path.name.endswith(".waffleform.yaml"):
+        return False
+    try:
+        content = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return False
+    return isinstance(content, dict) and "robot" in content
 
 
 def is_json_file(path: pathlib.Path) -> bool:

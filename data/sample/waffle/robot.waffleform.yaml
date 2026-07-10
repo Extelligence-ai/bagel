@@ -1,0 +1,38 @@
+robot:
+  name: warehouse-amr-07
+  platform: clearpath-jackal
+
+  compute:
+    primary:
+      hw: nvidia-jetson-orin
+      jetpack: "6.0"
+      os: ubuntu-22.04
+
+  actuators:
+    arm:
+      model: ur5e
+      firmware: "5.12.0"
+    gripper:
+      model: robotiq-2f85
+      firmware: "4.0.1"
+
+  sensors:
+    lidar:
+      model: rplidar-a2
+      firmware: "1.29"
+      mount: {x: 0, y: 0, z: 0.3}
+    camera:
+      model: realsense-d435i
+      firmware: "5.14.0"
+
+  software:
+    ros: humble
+    packages:
+      nav2: "1.1.12"
+      moveit2: "2.7.4"
+
+  calibration:
+    hand_eye: cal/hand_eye_v3.yaml
+    camera: cal/d435i_intrinsics.yaml
+
+  urdf: robot.urdf.xacro
