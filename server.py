@@ -26,6 +26,7 @@ from src.pipeline import (
     rerun_export,
     windows,
 )
+from src.pipeline.tasks.waffle import snap as waffle_snap
 from src.sink import startup
 
 server = mcp_compat.create_server(
@@ -1008,6 +1009,45 @@ def export_for_lerobot(  # noqa: PLR0913
         name=name,
         robot_type=robot_type,
     )
+
+
+@server.tool(
+    title="Snapshot robot hardware into a WaffleForm (experimental beta)",
+    description=(
+        "Auto-detect the robot's current hardware, firmware, and software using "
+        "waffle-iron and return the resulting hardware state. Requires the waffle "
+        "CLI on PATH (cargo install waffle-iron). The WaffleForm it writes is "
+        "immediately queryable as a data source."
+    ),
+)
+def snap_hardware(directory: str = ".") -> dict[str, Any]:
+    """Snapshot live hardware state via waffle-iron.
+
+    Runs `waffle snap` in the given directory (or `waffle init` on first contact,
+    scanning connected hardware and scaffolding the form), then parses the
+    resulting `robot.waffleform.yaml` and returns its summary. Use
+    `describe_data_source` and `query_messages` on the returned form path for
+    deeper questions.
+
+    Args:
+        directory (str, optional): Directory holding (or receiving) the robot's
+            `robot.waffleform.yaml`. Defaults to the current directory.
+
+    Returns:
+        dict[str, Any]: The `form` path, robot identity, component `categories`
+            with counts, and the snap timestamp.
+
+    Examples:
+        As an LLM prompt:
+            What hardware is this robot actually running right now?
+
+    """
+    form = waffle_snap.run_waffle(directory)
+    ds_type = resolve(str(form))
+    factory = module.provide(
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": str(form)}
+    )
+    return {"form": str(form), **factory.metadata}
 
 
 if __name__ == "__main__":
