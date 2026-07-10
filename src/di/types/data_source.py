@@ -26,6 +26,7 @@ class DataSource(Enum):
     POSTGRES = "postgres"
     INFLUXDB = "influxdb"
     ROS_LOG = "ros.log"
+    MDF = "automotive.mf4"
 
 
 # URL schemes mapped to their data source types.
@@ -52,7 +53,7 @@ def resolve(path: str) -> DataSource:
         return resolve_file_based_data_source(path)
 
 
-def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # noqa: C901, PLR0911
+def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # noqa: C901, PLR0911, PLR0912 -- one branch per supported format
     """Resolve the data source type from the given file or directory path."""
     path = pathlib.Path(path)
     if is_bagel_sink_directory(path):
@@ -74,6 +75,8 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
         return DataSource.BETAFLIGHT_BBL
     elif is_betaflight_bfl_file(path):
         return DataSource.BETAFLIGHT_BFL
+    elif is_mdf_file(path):
+        return DataSource.MDF
     elif is_ros_log_file(path) or is_ros_log_directory(path):
         # Checked before JSON/CSV: free-form log lines can fool the CSV sniffer.
         return DataSource.ROS_LOG
@@ -252,6 +255,11 @@ def is_json_lines_file(path: pathlib.Path) -> bool:
             return True
         except json.JSONDecodeError:
             return False
+
+
+def is_mdf_file(path: pathlib.Path) -> bool:
+    """Check if the given path is an ASAM MDF measurement file (.mf4 and older)."""
+    return has_magic_bytes(path, b"MDF     ")
 
 
 def is_ros_log_file(path: pathlib.Path) -> bool:

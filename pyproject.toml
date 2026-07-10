@@ -69,6 +69,9 @@ upload = [
 viz = [
     "rerun-sdk>=0.23.1",
 ]
+automotive = [
+    "asammdf>=7.4,<8",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
