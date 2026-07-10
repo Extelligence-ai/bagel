@@ -13,7 +13,16 @@ from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
-from src.pipeline import base, batch, capabilities, lichtblick, plotjuggler, rerun_export, windows
+from src.pipeline import (
+    base,
+    batch,
+    capabilities,
+    lerobot,
+    lichtblick,
+    plotjuggler,
+    rerun_export,
+    windows,
+)
 from src.sink import startup
 
 server = mcp_compat.create_server(
@@ -865,6 +874,81 @@ def export_for_lichtblick(  # noqa: PLR0913
         start_seconds=start_seconds,
         end_seconds=end_seconds,
         signals=signals,
+    )
+
+
+@server.tool(
+    title="Export event windows as a LeRobot training dataset",
+    description=(
+        "Export time windows as a LeRobotDataset v3.0 for robot-learning training: "
+        "each window becomes an episode, resampled to a uniform fps, with the given "
+        "signals composing feature vectors like observation.state and action. Use "
+        "after preview_pipeline to turn detected events into a curated dataset."
+    ),
+)
+def export_for_lerobot(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    episodes: list[dict[str, float]],
+    features: dict[str, list[str]],
+    fps: int,
+    task: str,
+    name: str = "dataset",
+    robot_type: str = "unknown",
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export event windows as a LeRobotDataset v3.0.
+
+    Data reduction's endgame is training-data curation: the windows preview_pipeline
+    found become episodes. Signals are resampled onto a uniform fps grid (last
+    observation carried forward) and grouped into feature vectors.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics the features draw from.
+        episodes (list[dict[str, float]]): Episode windows, each with
+            "start_seconds" and "end_seconds" (e.g. preview_pipeline's intervals).
+        features (dict[str, list[str]]): Maps LeRobot feature names (e.g.
+            "observation.state", "action") to lists of flattened signal names
+            (e.g. "/imu/linear_acceleration/x") composing that feature vector.
+        fps (int): Frame rate episodes are resampled to.
+        task (str): Natural-language task description recorded for all episodes.
+        name (str, optional): Dataset name, used for the output directory.
+        robot_type (str, optional): Recorded into meta/info.json.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: The `dataset` directory, episode/frame counts, feature
+            sizes, and loading `instructions`.
+
+    Examples:
+        As an LLM prompt:
+            Turn every hard-brake window into a LeRobot episode with the IMU as
+            observation.state at 10 fps.
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    def relation_for_window(start_seconds: float, end_seconds: float) -> duckdb.DuckDBPyRelation:
+        return dataset.to_duckdb(
+            factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+        )
+
+    return lerobot.export_episodes(
+        relation_for_window,
+        episodes=episodes,
+        features=features,
+        fps=fps,
+        task=task,
+        name=name,
+        robot_type=robot_type,
     )
 
 
