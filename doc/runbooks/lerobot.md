@@ -49,10 +49,11 @@ sample = dataset[0]  # {'observation.state': tensor([...]), 'action': tensor([..
 
 ## Beta status
 
-The exporter's output matches the v3.0 spec and the schemas of a reference v3
-dataset on the Hub field-for-field, but it has not yet been load-tested with the
-`lerobot` package end to end. If you train from a Bagel export, please report
-anything odd — and anything great.
+Exports **load-test clean with the real `lerobot` package** (`LeRobotDataset`
+returns correct tensors, shapes, and episode boundaries), and the on-disk layout
+matches a reference v3 dataset on the Hub field-for-field. It stays beta until
+real policies have been trained from Bagel exports — if you train from one,
+please report anything odd, and anything great.
 
 ## Notes
 
