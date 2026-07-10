@@ -12,8 +12,8 @@ from settings import settings
 SAMPLE = "./data/sample/pyarrow/csv/flight.csv"
 SAMPLE_ARGS = {"timestamp_column": "t", "timestamp_format": "seconds"}
 FEATURES = {
-    "observation.state": ["message/vel"],
-    "action": ["message/accel_x"],
+    "observation.state": ["message/vel", "message/t"],  # shape [2]: a list column
+    "action": ["message/accel_x"],  # shape [1]: a scalar column, per the LeRobot loader
 }
 
 
@@ -57,8 +57,9 @@ def test_v3_directory_layout_and_info(tmp_path: pathlib.Path) -> None:
     assert info["total_episodes"] == 2
     assert info["splits"] == {"train": "0:2"}
     assert info["data_path"] == "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
-    assert info["features"]["observation.state"]["shape"] == [1]
-    assert info["features"]["observation.state"]["names"] == {"axes": ["message/vel"]}
+    assert info["features"]["observation.state"]["shape"] == [2]
+    assert info["features"]["observation.state"]["names"] == {"axes": ["message/vel", "message/t"]}
+    assert info["features"]["action"]["shape"] == [1]
     assert info["features"]["action"]["dtype"] == "float32"
     # 5s window at 2 fps = 11 frames; 10s window = 21 frames.
     assert result["frames"] == info["total_frames"] == 32
@@ -86,6 +87,11 @@ def test_frame_table_matches_hub_schema() -> None:
     # Per-episode: frame_index restarts at 0 and timestamps are relative at 1/fps.
     assert rows[0] == (0, 11, 0, 10, 0.0, 5.0)
     assert rows[1] == (1, 21, 0, 20, 0.0, 10.0)
+
+    # Scalar-vs-list column mapping, matching how LeRobot loaders read shapes.
+    types = dict(zip(table.columns, [str(t) for t in table.types], strict=True))
+    assert types["action"] == "FLOAT"
+    assert types["observation.state"] == "FLOAT[]"
 
     # The global index is contiguous across episodes.
     lo, hi = duckdb.sql(

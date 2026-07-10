@@ -884,8 +884,8 @@ def export_for_lichtblick(  # noqa: PLR0913
         "each window becomes an episode, resampled to a uniform fps, with the given "
         "signals composing feature vectors like observation.state and action. Use "
         "after preview_pipeline to turn detected events into a curated dataset. "
-        "Beta: output matches the v3.0 spec and a Hub reference dataset, but has not "
-        "yet been load-tested with the lerobot package."
+        "Beta: load-tests clean with the lerobot package; awaiting validation by "
+        "real training runs."
     ),
 )
 def export_for_lerobot(  # noqa: PLR0913

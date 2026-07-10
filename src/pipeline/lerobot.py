@@ -125,7 +125,9 @@ def export_episodes(  # noqa: PLR0913, C901 -- one pass per episode plus the met
         for frame_index, row in enumerate(sampled):
             record: dict[str, Any] = {}
             for feature, group in features.items():
-                record[feature] = [float(row[s]) if row[s] is not None else 0.0 for s in group]
+                values = [float(row[s]) if row[s] is not None else 0.0 for s in group]
+                # LeRobot loaders map shape [1] to a scalar column, shape [n] to a list.
+                record[feature] = values[0] if len(group) == 1 else values
             record["timestamp"] = frame_index / fps
             record["frame_index"] = frame_index
             record["episode_index"] = episode_index
@@ -148,7 +150,13 @@ def export_episodes(  # noqa: PLR0913, C901 -- one pass per episode plus the met
     # Frame data: one shard, many episodes -- the v3 file-based layout.
     schema = pa.schema(
         [
-            *[pa.field(feature, pa.list_(pa.float32())) for feature in features],
+            *[
+                pa.field(
+                    feature,
+                    pa.float32() if len(group) == 1 else pa.list_(pa.float32()),
+                )
+                for feature, group in features.items()
+            ],
             pa.field("timestamp", pa.float32()),
             pa.field("frame_index", pa.int64()),
             pa.field("episode_index", pa.int64()),
@@ -161,7 +169,13 @@ def export_episodes(  # noqa: PLR0913, C901 -- one pass per episode plus the met
 
     # Per-feature statistics, global (meta/stats.json) and per-episode (episodes shard).
     def stats_for(table: pa.Table, feature: str) -> dict[str, list[float] | list[int]]:
-        columns = list(zip(*table.column(feature).to_pylist(), strict=True))
+        values = table.column(feature).to_pylist()
+        # Scalar features (shape [1]) become one stats dimension; vectors, one per axis.
+        columns = (
+            [values]
+            if values and not isinstance(values[0], list)
+            else list(zip(*values, strict=True))
+        )
         return {
             "min": [min(c) for c in columns],
             "max": [max(c) for c in columns],
