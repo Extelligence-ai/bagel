@@ -60,7 +60,7 @@ def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[
     """
     ds_type = resolve(path)
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     return poml(
@@ -113,7 +113,7 @@ def describe_topic(
     """
     ds_type = resolve(path)
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -190,7 +190,7 @@ def query_messages(  # noqa: PLR0913
     """
     ds_type = resolve(path)
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -245,7 +245,7 @@ def read_loggings(
     """
     ds_type = resolve(path)
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.LOGGING_DATASET.value}.{ds_type.value}", {})
@@ -518,7 +518,7 @@ def preview_pipeline(  # noqa: PLR0913
     """
     ds_type = resolve(path)
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
