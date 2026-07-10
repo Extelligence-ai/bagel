@@ -13,7 +13,7 @@ from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
-from src.pipeline import base, batch, capabilities, plotjuggler, rerun_export, windows
+from src.pipeline import base, batch, capabilities, lichtblick, plotjuggler, rerun_export, windows
 from src.sink import startup
 
 server = mcp_compat.create_server(
@@ -791,6 +791,75 @@ def export_for_rerun(  # noqa: PLR0913
         factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
     )
     return rerun_export.export_window(
+        relation,
+        name=name,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        signals=signals,
+    )
+
+
+@server.tool(
+    title="Export an event window for Lichtblick / Foxglove",
+    description=(
+        "Export a time window of topic data as a Lichtblick session: an MCAP file "
+        "with JSON-encoded channels plus a layout with the plot series and time/value "
+        "ranges pre-set. Works in Lichtblick (open source) and Foxglove, which share "
+        "the layout format. Use after preview_pipeline to hand an event to a human."
+    ),
+)
+def export_for_lichtblick(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    start_seconds: float,
+    end_seconds: float,
+    name: str = "event",
+    signals: list[str] | None = None,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export a time window as a ready-to-open Lichtblick session.
+
+    Writes an MCAP of the window (JSON-encoded channels, readable by Lichtblick,
+    Foxglove, and Bagel itself) and a layout `.json` with a Plot panel whose series
+    and x/y ranges are pre-set to the event.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics to include in the export.
+        start_seconds (float): Window start (also the plot's framed x range start).
+        end_seconds (float): Window end.
+        name (str, optional): Session name, used for the output files and the plot
+            title. Defaults to "event".
+        signals (list[str] | None, optional): Flattened signal names to plot (e.g.
+            "/imu/linear_acceleration/x"). If None, all numeric signals are plotted,
+            capped at 8. Defaults to None.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: `mcap` and `layout` paths, the plotted `curves` (as Lichtblick
+            message paths), and `instructions` for opening the session.
+
+    Examples:
+        As an LLM prompt:
+            Show me the second brake event in Lichtblick.
+
+        As a Python call:
+            >>> export_for_lichtblick("./flight.mcap", ["/imu"], 118.9, 138.9)
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    relation = dataset.to_duckdb(
+        factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+    )
+    return lichtblick.export_window(
         relation,
         name=name,
         start_seconds=start_seconds,
