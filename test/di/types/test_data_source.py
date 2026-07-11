@@ -143,3 +143,73 @@ def test_should_resolve_betaflight_bfl() -> None:
 
     # THEN
     assert result == data_source.DataSource.BETAFLIGHT_BFL
+
+
+# Edge-case robustness tests — addressing #134 (harden data source detection)
+
+
+def test_has_magic_bytes_should_return_false_for_fifo() -> None:
+    # GIVEN
+    import os
+    import pathlib
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        fifo_path = pathlib.Path(tmpdir) / "test.fifo"
+        os.mkfifo(str(fifo_path))
+
+        # WHEN
+        result = data_source.has_magic_bytes(fifo_path, b"#ROSBAG V2")
+
+        # THEN
+        assert result is False
+
+
+def test_has_magic_bytes_should_return_false_for_symlink_to_nonexistent() -> None:
+    # GIVEN
+    import pathlib
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        symlink_path = pathlib.Path(tmpdir) / "broken.link"
+        symlink_path.symlink_to("/nonexistent/target")
+
+        # WHEN
+        result = data_source.has_magic_bytes(symlink_path, b"#ROSBAG V2")
+
+        # THEN
+        assert result is False
+
+
+def test_has_magic_bytes_should_return_false_for_permission_denied() -> None:
+    # GIVEN
+    import os
+    import pathlib
+
+    with tempfile.NamedTemporaryFile(delete=False) as tmpfile:
+        tmpfile.write(b"#ROSBAG V2")
+        tmpfile.flush()
+        path = pathlib.Path(tmpfile.name)
+        os.chmod(path, 0o000)
+
+        try:
+            # WHEN
+            result = data_source.has_magic_bytes(path, b"#ROSBAG V2")
+
+            # THEN
+            assert result is False
+        finally:
+            os.chmod(path, 0o644)
+            os.unlink(path)
+
+
+def test_resolve_should_raise_for_fifo() -> None:
+    # GIVEN
+    import os
+    import pathlib
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        fifo_path = pathlib.Path(tmpdir) / "test.fifo"
+        os.mkfifo(str(fifo_path))
+
+        # WHEN / THEN
+        with pytest.raises(ValueError, match="Cannot resolve data source type from path:"):
+            data_source.resolve(str(fifo_path))
