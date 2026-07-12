@@ -14,7 +14,8 @@ class DataSource(Enum):
 
     ROS1_BAG = "ros1.bag"
     ROS2_DB3 = "ros2.db3"
-    ROS2_MCAP = "ros2.mcap"
+    MCAP = "mcap"
+    ROS2_MCAP = "ros2.mcap"  # back-compat only; resolve() no longer returns this
     PX4_ULOG = "px4.ulg"
     ARDUPILOT_BIN = "ardupilot.bin"
     BETAFLIGHT_BBL = "betaflight.bbl"
@@ -22,6 +23,16 @@ class DataSource(Enum):
     BAGEL_SINK = "bagel.sink"
     PYARROW_JSON = "pyarrow.json"
     PYARROW_CSV = "pyarrow.csv"
+    POSTGRES = "postgres"
+    INFLUXDB = "influxdb"
+
+
+# URL schemes mapped to their data source types.
+URL_SCHEMES = {
+    "postgres": DataSource.POSTGRES,
+    "postgresql": DataSource.POSTGRES,  # TimescaleDB uses standard postgres URLs
+    "influxdb": DataSource.INFLUXDB,  # InfluxDB 3 (SQL / Arrow Flight)
+}
 
 
 def resolve(path: str) -> DataSource:
@@ -29,7 +40,12 @@ def resolve(path: str) -> DataSource:
     result = urlparse(path)
     if all([result.scheme, result.netloc]):
         # path is a URL
-        raise NotImplementedError("Stream-based data sources are not supported yet.")
+        if result.scheme in URL_SCHEMES:
+            return URL_SCHEMES[result.scheme]
+        raise NotImplementedError(
+            f"URL scheme '{result.scheme}' is not supported. "
+            f"Supported schemes: {', '.join(sorted(URL_SCHEMES))}"
+        )
     else:
         # path is a local file or directory
         return resolve_file_based_data_source(path)
@@ -44,8 +60,11 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
         return DataSource.ROS1_BAG
     elif is_ros2_db3_file(path) or is_ros2_db3_zstd_file(path) or is_ros2_db3_directory(path):
         return DataSource.ROS2_DB3
-    elif is_ros2_mcap_file(path) or is_ros2_mcap_zstd_file(path) or is_ros2_mcap_directory(path):
-        return DataSource.ROS2_MCAP
+    elif is_mcap_file(path) or is_mcap_zstd_file(path) or is_mcap_directory(path):
+        # MCAP is a first-class, middleware-independent format: any bare .mcap file,
+        # zstd-compressed .mcap.zstd, or directory of them (including rosbag2-produced
+        # MCAP bags). Decompression is handled by the generic mcap source.
+        return DataSource.MCAP
     elif is_px4_ulog_file(path):
         return DataSource.PX4_ULOG
     elif is_ardupilot_bin_file(path):
@@ -116,9 +135,31 @@ def is_ros2_db3_directory(path: pathlib.Path) -> bool:
     return True
 
 
+def is_mcap_file(path: pathlib.Path) -> bool:
+    """Check if the given path is an MCAP file."""
+    return has_magic_bytes(path, b"\x89MCAP0\r\n")
+
+
+def is_mcap_zstd_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Zstandard-compressed MCAP file."""
+    return is_zstd_file(path) and path.name.endswith(".mcap.zstd")
+
+
+def is_mcap_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing at least one MCAP file."""
+    if not path.is_dir():
+        return False
+
+    files = [
+        *((file, is_mcap_file) for file in path.glob("*.mcap")),
+        *((file, is_mcap_zstd_file) for file in path.glob("*.mcap.zstd")),
+    ]
+    return bool(files) and all(check(file) for file, check in files)
+
+
 def is_ros2_mcap_file(path: pathlib.Path) -> bool:
     """Check if the given path is a ROS 2 MCAP file."""
-    return has_magic_bytes(path, b"\x89MCAP0\r\n")
+    return is_mcap_file(path)
 
 
 def is_ros2_mcap_zstd_file(path: pathlib.Path) -> bool:

@@ -6,14 +6,12 @@ import pytest
 from src.di.types import data_source
 
 
-def test_should_raise_for_stream() -> None:
+def test_should_raise_for_unsupported_url_scheme() -> None:
     # GIVEN
     path = "http://localhost:9092"
 
     # WHEN / THEN
-    with pytest.raises(
-        NotImplementedError, match="Stream-based data sources are not supported yet."
-    ):
+    with pytest.raises(NotImplementedError, match="URL scheme 'http' is not supported"):
         data_source.resolve(path)
 
 
@@ -69,7 +67,7 @@ def test_should_resolve_ros2_db3_zstd_file() -> None:
     assert result == data_source.DataSource.ROS2_DB3
 
 
-def test_should_resolve_ros2_mcap_directory() -> None:
+def test_should_resolve_mcap_directory_as_first_class_mcap() -> None:
     # GIVEN
     path = "./data/sample/ros2/mcap"
 
@@ -77,10 +75,10 @@ def test_should_resolve_ros2_mcap_directory() -> None:
     result = data_source.resolve(path)
 
     # THEN
-    assert result == data_source.DataSource.ROS2_MCAP
+    assert result == data_source.DataSource.MCAP
 
 
-def test_should_resolve_ros2_mcap_file() -> None:
+def test_should_resolve_mcap_file_as_first_class_mcap() -> None:
     # GIVEN
     path = "./data/sample/ros2/mcap/part_0.mcap"
 
@@ -88,10 +86,10 @@ def test_should_resolve_ros2_mcap_file() -> None:
     result = data_source.resolve(path)
 
     # THEN
-    assert result == data_source.DataSource.ROS2_MCAP
+    assert result == data_source.DataSource.MCAP
 
 
-def test_should_resolve_ros2_mcap_zstd_file() -> None:
+def test_should_resolve_mcap_zstd_file_as_first_class_mcap() -> None:
     # GIVEN
     path = "./data/sample/ros2/mcap_zstd/part_0.mcap.zstd"
 
@@ -99,7 +97,18 @@ def test_should_resolve_ros2_mcap_zstd_file() -> None:
     result = data_source.resolve(path)
 
     # THEN
-    assert result == data_source.DataSource.ROS2_MCAP
+    assert result == data_source.DataSource.MCAP
+
+
+def test_should_resolve_mcap_zstd_directory_as_first_class_mcap() -> None:
+    # GIVEN
+    path = "./data/sample/ros2/mcap_zstd"
+
+    # WHEN
+    result = data_source.resolve(path)
+
+    # THEN
+    assert result == data_source.DataSource.MCAP
 
 
 def test_should_resolve_px4_ulog() -> None:

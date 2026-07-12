@@ -7,7 +7,6 @@ from collections import deque
 import rosbag2_py
 from rclpy.serialization import serialize_message
 
-from src import artifacts
 from src.di import module
 from src.pipeline import base, messages
 
@@ -17,7 +16,7 @@ MILLISECOND = 1_000 * MICROSECOND
 SECOND = 1_000 * MILLISECOND
 
 
-class SnipRosbag(messages.TopicMessageMixin, base.Task):
+class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
     """Create a new ROS2 DB3 bag snippet."""
 
     def __init__(
@@ -72,16 +71,7 @@ class SnipRosbag(messages.TopicMessageMixin, base.Task):
             case _:
                 messages = self.dataset._messages(data_source, topics, None, end_seconds)
 
-        bag_directory = artifacts.pipeline_task_artifact_path(
-            self.pipeline,
-            self.name,
-            self.site,
-            self.asset,
-            self.log_id,
-            asof_seconds,
-            None,
-        )
-        bag_directory.parent.mkdir(parents=True, exist_ok=True)
+        bag_directory = self.artifact_path(asof_seconds)
 
         storage_options = rosbag2_py.StorageOptions(
             uri=str(bag_directory), storage_id=self._output_storage_id

@@ -10,6 +10,7 @@ class TopicSink(Enum):
 
     ROS1_BRIDGE = "ros1.bridge"
     ROS2_BRIDGE = "ros2.bridge"
+    MQTT = "mqtt"
 
 
 def guess_host(type_: TopicSink) -> str:
@@ -17,9 +18,9 @@ def guess_host(type_: TopicSink) -> str:
     match type_:
         case TopicSink.ROS1_BRIDGE:
             return "0.0.0.0"  # noqa: S104
-        case TopicSink.ROS2_BRIDGE if settings.CONTAINER_MODE:
+        case (TopicSink.ROS2_BRIDGE | TopicSink.MQTT) if settings.CONTAINER_MODE:
             return "host.docker.internal"
-        case TopicSink.ROS2_BRIDGE:
+        case TopicSink.ROS2_BRIDGE | TopicSink.MQTT:
             return "localhost"
         case _:
             raise ValueError(
@@ -33,6 +34,8 @@ def guess_port(type_: TopicSink) -> int:
     match type_:
         case TopicSink.ROS2_BRIDGE:
             return 9090
+        case TopicSink.MQTT:
+            return 1883
         case _:
             raise ValueError(
                 f"Cannot guess port for TopicSink type: {type_}. "

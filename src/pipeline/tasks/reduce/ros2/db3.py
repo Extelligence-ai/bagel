@@ -6,7 +6,6 @@ import pathlib
 import rosbag2_py
 from rclpy.serialization import serialize_message
 
-from src import artifacts
 from src.di import module
 from src.pipeline import base, messages
 from src.pipeline.tasks.reduce.base import ReduceMixin
@@ -17,7 +16,7 @@ MILLISECOND = 1_000 * MICROSECOND
 SECOND = 1_000 * MILLISECOND
 
 
-class ReduceRosbag(ReduceMixin, messages.TopicMessageMixin, base.Task):
+class ReduceRosbag(base.ArtifactMixin, ReduceMixin, messages.TopicMessageMixin, base.Task):
     """Reduce a ROS2 DB3 bag to only the windows around events matching a predicate.
 
     Unlike the ``snippet`` task -- which fires once per event and writes one clip per
@@ -91,16 +90,7 @@ class ReduceRosbag(ReduceMixin, messages.TopicMessageMixin, base.Task):
             self._event_topic,
         )
 
-        bag_directory = artifacts.pipeline_task_artifact_path(
-            self.pipeline,
-            self.name,
-            self.site,
-            self.asset,
-            self.log_id,
-            asof_seconds,
-            None,
-        )
-        bag_directory.parent.mkdir(parents=True, exist_ok=True)
+        bag_directory = self.artifact_path(asof_seconds)
 
         storage_options = rosbag2_py.StorageOptions(
             uri=str(bag_directory), storage_id=self._output_storage_id

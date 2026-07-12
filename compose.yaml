@@ -202,3 +202,24 @@ services:
       - "${JUPYTER_PORT}:${JUPYTER_PORT}"
     # volumes:
     #   - <path-to-local-data>:/home/ubuntu/data
+
+  iot:
+    image: ghcr.io/extelligence-ai/bagel/iot:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.iot
+      args:
+        UV_VERSION: 0.8.0
+        DEV_MODE: false
+        MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+        JUPYTER_HOST: ${JUPYTER_HOST}
+        JUPYTER_PORT: ${JUPYTER_PORT}
+    environment:
+      CONTAINER_MODE: true
+    ports:
+      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # volumes:
+    #   - <path-to-local-data>:/home/ubuntu/data
