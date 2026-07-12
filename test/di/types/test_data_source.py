@@ -1,3 +1,4 @@
+import os
 import tempfile
 
 import pytest
@@ -179,9 +180,12 @@ def test_has_magic_bytes_should_return_false_for_symlink_to_nonexistent() -> Non
         assert result is False
 
 
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root bypasses file permission checks, so a 0o000 file is still readable",
+)
 def test_has_magic_bytes_should_return_false_for_permission_denied() -> None:
     # GIVEN
-    import os
     import pathlib
 
     with tempfile.NamedTemporaryFile(delete=False) as tmpfile:
