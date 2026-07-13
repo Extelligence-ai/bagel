@@ -117,6 +117,38 @@ print(points["x"], points["y"], points["z"])
 Each pointcloud is saved as a CSV file with column headers matching the
 pointcloud field names.
 
+## Compressing pointclouds
+
+The reverse of decoding: shrink a bag's pointcloud topics for storage or transfer. The
+`compress_pointcloud` task wraps cloudini's `cloudini_rosbag_converter`, converting every
+`sensor_msgs/PointCloud2` topic in a ROS2 MCAP bag into the much smaller
+`point_cloud_interfaces/CompressedPointCloud2`. Other topics pass through unchanged, and
+Bagel can still read the result (it decodes cloudini on the way in).
+
+### Requirements
+
+The `cloudini_rosbag_converter` binary must be on PATH. Build it from
+[cloudini](https://github.com/facontidavide/cloudini) (see `cloudini_ros`). If the binary
+is missing, or `CLOUDINI_ENABLED=false`, the task logs a message and skips rather than
+failing the pipeline.
+
+### Pipeline usage
+
+```yaml
+tasks:
+  - module: src.pipeline.tasks.cloudini.compress_pointcloud
+    args:
+      cloudini: true # per-task opt-out; set false to skip this pipeline
+```
+
+Under the hood this runs:
+
+```bash
+cloudini_rosbag_converter -f <source.mcap> -o <artifact.mcap> -c
+```
+
+The compressed bag lands in the pipeline's artifact directory.
+
 ## Settings Reference
 
 These settings are configured in `.env` or as environment variables:

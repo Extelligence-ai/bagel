@@ -1,0 +1,89 @@
+"""Compress a ROS2 MCAP bag's pointcloud topics using the cloudini CLI."""
+
+import logging
+import pathlib
+import shlex
+import shutil
+import subprocess
+
+from settings import settings
+from src.di import module
+from src.pipeline import base
+
+CLOUDINI_CONVERTER = "cloudini_rosbag_converter"
+
+
+def _converter_available() -> bool:
+    """Return True if cloudini compression is enabled and the CLI is installed."""
+    if not settings.CLOUDINI_ENABLED:
+        logging.info("Cloudini is disabled globally via CLOUDINI_ENABLED=false.")
+        return False
+    if shutil.which(CLOUDINI_CONVERTER) is None:
+        logging.warning(
+            "'%s' was not found on PATH; skipping pointcloud compression. "
+            "Build it from https://github.com/facontidavide/cloudini (cloudini_ros).",
+            CLOUDINI_CONVERTER,
+        )
+        return False
+    return True
+
+
+class CompressPointCloud(base.ArtifactMixin, base.Task):
+    """Compress a ROS2 MCAP bag's PointCloud2 topics into CompressedPointCloud2.
+
+    Wraps cloudini's ``cloudini_rosbag_converter -f <in> -o <out> -c``, which rewrites
+    every ``sensor_msgs/PointCloud2`` topic in an MCAP bag as the much smaller
+    ``point_cloud_interfaces/CompressedPointCloud2`` encoding; all other topics pass
+    through unchanged. This is the inverse of the ``decode_pointcloud`` task, and the
+    compressed bag can still be read by Bagel, which decodes cloudini on the way in.
+
+    The source must be a ROS2 MCAP bag. The ``cloudini_rosbag_converter`` binary must be
+    on PATH; if it is missing, or cloudini is disabled via ``CLOUDINI_ENABLED``, the task
+    logs and skips rather than failing the pipeline.
+    """
+
+    def __init__(self, cloudini: bool = True) -> None:
+        """Initialize the task.
+
+        Args:
+            cloudini (bool, optional): Per-task opt-out. If False, the task skips (useful
+                to disable compression for a single pipeline without changing the global
+                setting). Defaults to True.
+
+        """
+        self._enabled = cloudini
+
+    def setup(self, path: str, **kwargs) -> None:  # noqa: ANN003
+        """No data-source dependencies; the task operates on the bag file directly."""
+
+    def execute(
+        self, asof_seconds: float, lookback: base.Lookback | None
+    ) -> list[pathlib.Path] | None:
+        """Compress the source bag's pointcloud topics into a new MCAP bag."""
+        if not self._enabled:
+            logging.info("CompressPointCloud opted out for this pipeline (cloudini: false).")
+            return None
+        if not _converter_available():
+            return None
+
+        output_file = self.artifact_path(asof_seconds, ".mcap")
+        command = [CLOUDINI_CONVERTER, "-f", str(self.path), "-o", str(output_file), "-c"]
+
+        result = subprocess.run(  # noqa: S603
+            command,
+            check=True,  # raise CalledProcessError if nonzero exit
+            text=True,
+            capture_output=True,
+        )
+
+        logging.debug(shlex.join(result.args))
+        if result.stdout.strip():
+            logging.debug(result.stdout.strip())
+        logging.info("Wrote %s", output_file)
+
+        return [output_file]
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    module.global_registry[__name__] = CompressPointCloud
