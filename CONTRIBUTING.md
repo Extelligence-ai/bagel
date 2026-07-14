@@ -15,7 +15,7 @@ First, create a GitHub issue as described above. Then, create a new branch using
 
 Please use **kebab-case** for "short-description." Refer to the [kebab-case guide](https://developer.mozilla.org/en-US/docs/Glossary/Kebab_case) if you're unfamiliar with it.
 
-Once your branch is ready, file a Pull Request (PR) against the `stage` branch. In the PR description, please add text like "Closes #10" to automatically link and close the associated issue once the PR is merged.
+Once your branch is ready, file a Pull Request (PR) against the `main` branch. In the PR description, please add text like "Closes #10" to automatically link and close the associated issue once the PR is merged.
 
 ## Developing Bagel
 
