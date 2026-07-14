@@ -222,7 +222,7 @@ wheels = [
 
 [[package]]
 name = "bagel"
-version = "0.1.0"
+version = "2.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "boto3" },
@@ -275,6 +275,7 @@ dev = [
     { name = "matplotlib" },
     { name = "pre-commit" },
     { name = "pytest" },
+    { name = "pytest-timeout" },
     { name = "ruff" },
 ]
 iot = [
@@ -351,6 +352,7 @@ dev = [
     { name = "matplotlib", specifier = ">=3.10.0,<4.0.0" },
     { name = "pre-commit", specifier = ">=4.2.0,<5.0.0" },
     { name = "pytest", specifier = ">=8.4.0,<9.0.0" },
+    { name = "pytest-timeout", specifier = ">=2.3.0,<3.0.0" },
     { name = "ruff", specifier = "==0.12.4" },
 ]
 iot = [
@@ -2956,6 +2958,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/08/ba/45911d754e8eba3d5a841a5ce61a65a685ff1798421ac054f85aa8747dfb/pytest-8.4.1.tar.gz", hash = "sha256:7c67fd69174877359ed9371ec3af8a3d2b04741818c51e5e99cc1742251fa93c", size = 1517714, upload-time = "2025-06-18T05:48:06.109Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/29/16/c8a903f4c4dffe7a12843191437d7cd8e32751d5de349d45d3fe69544e87/pytest-8.4.1-py3-none-any.whl", hash = "sha256:539c70ba6fcead8e78eebbf1115e8b589e7565830d7d006a8723f19ac8a0afb7", size = 365474, upload-time = "2025-06-18T05:48:03.955Z" },
+]
+
+[[package]]
+name = "pytest-timeout"
+version = "2.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ac/82/4c9ecabab13363e72d880f2fb504c5f750433b2b6f16e99f4ec21ada284c/pytest_timeout-2.4.0.tar.gz", hash = "sha256:7e68e90b01f9eff71332b25001f85c75495fc4e3a836701876183c4bcfd0540a", size = 17973, upload-time = "2025-05-05T19:44:34.99Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/b6/3127540ecdf1464a00e5a01ee60a1b09175f6913f0644ac748494d9c4b21/pytest_timeout-2.4.0-py3-none-any.whl", hash = "sha256:c42667e5cdadb151aeb5b26d114aff6bdf5a907f176a007a30b940d3d865b5c2", size = 14382, upload-time = "2025-05-05T19:44:33.502Z" },
 ]
 
 [[package]]
