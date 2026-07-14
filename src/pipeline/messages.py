@@ -42,7 +42,7 @@ class TopicMessageMixin:
         registry_module = f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}"
         dataset_module = f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}"
 
-        self._factory = module.provide(factory_module, {"path": path, **kwargs})
+        self._factory = module.provide(factory_module, {**kwargs, "path": path})
         self._registry = module.provide(registry_module, {**kwargs})
         self._dataset = module.provide(dataset_module, {**kwargs})
 

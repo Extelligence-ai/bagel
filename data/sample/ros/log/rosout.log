@@ -1,0 +1,3 @@
+1662400001.123456789 INFO /rosout [/tmp/rosout.cpp:100(main)] [topics: /rosout] rosout logging started
+1662400015.500000000 WARN /move_base [/tmp/costmap.cpp:88(updateMap)] [topics: /rosout, /cmd_vel] Costmap update loop missed its desired rate of 5.0 Hz
+1662400021.000000000 ERROR /move_base [/tmp/planner.cpp:92(makePlan)] [topics: /rosout] Aborting because a valid plan could not be found

@@ -14,7 +14,8 @@ class DataSource(Enum):
 
     ROS1_BAG = "ros1.bag"
     ROS2_DB3 = "ros2.db3"
-    ROS2_MCAP = "ros2.mcap"
+    MCAP = "mcap"
+    ROS2_MCAP = "ros2.mcap"  # back-compat only; resolve() no longer returns this
     PX4_ULOG = "px4.ulg"
     ARDUPILOT_BIN = "ardupilot.bin"
     BETAFLIGHT_BBL = "betaflight.bbl"
@@ -22,7 +23,20 @@ class DataSource(Enum):
     BAGEL_SINK = "bagel.sink"
     PYARROW_JSON = "pyarrow.json"
     PYARROW_CSV = "pyarrow.csv"
+    POSTGRES = "postgres"
+    INFLUXDB = "influxdb"
+    ROS_LOG = "ros.log"
+    MDF = "automotive.mf4"
+    CAN = "automotive.can"
     WAFFLE_FORM = "waffle.form"
+
+
+# URL schemes mapped to their data source types.
+URL_SCHEMES = {
+    "postgres": DataSource.POSTGRES,
+    "postgresql": DataSource.POSTGRES,  # TimescaleDB uses standard postgres URLs
+    "influxdb": DataSource.INFLUXDB,  # InfluxDB 3 (SQL / Arrow Flight)
+}
 
 
 def resolve(path: str) -> DataSource:
@@ -30,13 +44,18 @@ def resolve(path: str) -> DataSource:
     result = urlparse(path)
     if all([result.scheme, result.netloc]):
         # path is a URL
-        raise NotImplementedError("Stream-based data sources are not supported yet.")
+        if result.scheme in URL_SCHEMES:
+            return URL_SCHEMES[result.scheme]
+        raise NotImplementedError(
+            f"URL scheme '{result.scheme}' is not supported. "
+            f"Supported schemes: {', '.join(sorted(URL_SCHEMES))}"
+        )
     else:
         # path is a local file or directory
         return resolve_file_based_data_source(path)
 
 
-def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # noqa: C901, PLR0911
+def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # noqa: C901, PLR0911, PLR0912 -- one branch per supported format
     """Resolve the data source type from the given file or directory path."""
     path = pathlib.Path(path)
     if is_bagel_sink_directory(path):
@@ -45,8 +64,11 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
         return DataSource.ROS1_BAG
     elif is_ros2_db3_file(path) or is_ros2_db3_zstd_file(path) or is_ros2_db3_directory(path):
         return DataSource.ROS2_DB3
-    elif is_ros2_mcap_file(path) or is_ros2_mcap_zstd_file(path) or is_ros2_mcap_directory(path):
-        return DataSource.ROS2_MCAP
+    elif is_mcap_file(path) or is_mcap_zstd_file(path) or is_mcap_directory(path):
+        # MCAP is a first-class, middleware-independent format: any bare .mcap file,
+        # zstd-compressed .mcap.zstd, or directory of them (including rosbag2-produced
+        # MCAP bags). Decompression is handled by the generic mcap source.
+        return DataSource.MCAP
     elif is_px4_ulog_file(path):
         return DataSource.PX4_ULOG
     elif is_ardupilot_bin_file(path):
@@ -55,6 +77,13 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
         return DataSource.BETAFLIGHT_BBL
     elif is_betaflight_bfl_file(path):
         return DataSource.BETAFLIGHT_BFL
+    elif is_mdf_file(path):
+        return DataSource.MDF
+    elif is_can_blf_file(path) or is_can_asc_file(path):
+        return DataSource.CAN
+    elif is_ros_log_file(path) or is_ros_log_directory(path):
+        # Checked before JSON/CSV: free-form log lines can fool the CSV sniffer.
+        return DataSource.ROS_LOG
     elif is_waffleform_file(path):
         return DataSource.WAFFLE_FORM
     elif is_json_file(path) or is_json_directory(path):
@@ -119,9 +148,31 @@ def is_ros2_db3_directory(path: pathlib.Path) -> bool:
     return True
 
 
+def is_mcap_file(path: pathlib.Path) -> bool:
+    """Check if the given path is an MCAP file."""
+    return has_magic_bytes(path, b"\x89MCAP0\r\n")
+
+
+def is_mcap_zstd_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Zstandard-compressed MCAP file."""
+    return is_zstd_file(path) and path.name.endswith(".mcap.zstd")
+
+
+def is_mcap_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing at least one MCAP file."""
+    if not path.is_dir():
+        return False
+
+    files = [
+        *((file, is_mcap_file) for file in path.glob("*.mcap")),
+        *((file, is_mcap_zstd_file) for file in path.glob("*.mcap.zstd")),
+    ]
+    return bool(files) and all(check(file) for file, check in files)
+
+
 def is_ros2_mcap_file(path: pathlib.Path) -> bool:
     """Check if the given path is a ROS 2 MCAP file."""
-    return has_magic_bytes(path, b"\x89MCAP0\r\n")
+    return is_mcap_file(path)
 
 
 def is_ros2_mcap_zstd_file(path: pathlib.Path) -> bool:
@@ -210,6 +261,49 @@ def is_json_lines_file(path: pathlib.Path) -> bool:
             return True
         except json.JSONDecodeError:
             return False
+
+
+def is_mdf_file(path: pathlib.Path) -> bool:
+    """Check if the given path is an ASAM MDF measurement file (.mf4 and older)."""
+    return has_magic_bytes(path, b"MDF     ")
+
+
+def is_can_blf_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Vector BLF CAN capture."""
+    return has_magic_bytes(path, b"LOGG")
+
+
+def is_can_asc_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Vector ASC CAN capture (text, starts with a date line)."""
+    if not path.is_file() or path.suffix.lower() != ".asc":
+        return False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.readline().strip().lower().startswith("date")
+    except OSError:
+        return False
+
+
+def is_ros_log_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a plain-text log file dumped by ROS."""
+    if not path.is_file() or path.suffix != ".log":
+        return False
+    # Deferred so this types module stays import-light; parse has no dependencies
+    # back into src.di, so there is no cycle.
+    from src.source.ros.parse import looks_like_ros_log
+
+    return looks_like_ros_log(path)
+
+
+def is_ros_log_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing at least one ROS log file.
+
+    Matches ROS log directories such as ~/.ros/log and its per-run subdirectories;
+    non-log files (e.g., the "latest" symlink) are tolerated.
+    """
+    if not path.is_dir():
+        return False
+    return any(is_ros_log_file(file) for file in sorted(path.glob("**/*.log")))
 
 
 def is_waffleform_file(path: pathlib.Path) -> bool:

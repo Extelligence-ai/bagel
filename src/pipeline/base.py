@@ -320,6 +320,43 @@ class Task(Operator):
         """
 
 
+class ArtifactMixin:
+    """Mixin for tasks that create artifacts, providing the canonical artifact path.
+
+    Guarantees a consistent naming convention across tasks: every artifact lands under
+    ``pipeline=<name>/task=<name>/datestr=<date>/site=<site>/asset=<asset>/log_id=<id>/``
+    in the artifact directory. Expects to be mixed into an `Operator` subclass (it uses
+    the operator's `pipeline`, `name`, `site`, `asset`, and `log_id` attributes).
+    """
+
+    def artifact_path(self, asof_seconds: float, extension: str | None = None) -> pathlib.Path:
+        """Return the canonical artifact path for this task at the given timestamp.
+
+        The parent directory is created if it does not exist, so the caller can write
+        to the returned path directly.
+
+        Args:
+            asof_seconds (float): The timestamp (in seconds) the artifact corresponds to.
+            extension (str | None, optional): The file extension (e.g. ".csv"). If None,
+                the path has no extension -- used for directory artifacts such as bags.
+
+        Returns:
+            pathlib.Path: The artifact path, with its parent directory created.
+
+        """
+        path = artifacts.pipeline_task_artifact_path(
+            self.pipeline,
+            self.name,
+            self.site,
+            self.asset,
+            self.log_id,
+            asof_seconds,
+            extension,
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+
 class Pipeline:
     """A data processing pipeline consisting of gates and tasks.
 

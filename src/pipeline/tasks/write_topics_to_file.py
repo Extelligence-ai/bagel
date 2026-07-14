@@ -4,9 +4,8 @@ import logging
 import pathlib
 from enum import Enum
 
-from src import artifacts
 from src.di import module
-from src.pipeline import base, messages
+from src.pipeline import base, flatten, messages
 
 
 class OutputFormat(Enum):
@@ -16,7 +15,7 @@ class OutputFormat(Enum):
     PARQUET = "parquet"
 
 
-class WriteTopicsToFile(messages.TopicMessageMixin, base.Task):
+class WriteTopicsToFile(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
     """Write messages from specified topics to a file in various formats."""
 
     def __init__(
@@ -24,6 +23,7 @@ class WriteTopicsToFile(messages.TopicMessageMixin, base.Task):
         topics: list[str] | None,
         output_format: str,
         ffill: bool = False,
+        flatten: bool = False,
     ) -> None:
         """Initialize the task.
 
@@ -32,6 +32,10 @@ class WriteTopicsToFile(messages.TopicMessageMixin, base.Task):
                 topics will be written.
             output_format (str): The format of the output files (e.g., "csv", "parquet").
             ffill (bool): Whether to apply forward-fill to the topic messages.
+            flatten (bool): If True, expand each topic's struct into one scalar column per
+                signal, named `topic/field/subfield` -- the shape plotting tools expect
+                (e.g. PlotJuggler's CSV/Parquet loaders). Non-scalar fields (lists, maps)
+                are skipped. Defaults to False (structs preserved).
 
         Raises:
             ValueError: If the topics list is empty when specified.
@@ -42,6 +46,7 @@ class WriteTopicsToFile(messages.TopicMessageMixin, base.Task):
         self._topics = topics
         self._output_format = OutputFormat(output_format)
         self._ffill = ffill
+        self._flatten = flatten
 
     def execute(self, asof_seconds: float, lookback: base.Lookback | None) -> list[pathlib.Path]:
         """Execute the task at the given time."""
@@ -49,17 +54,10 @@ class WriteTopicsToFile(messages.TopicMessageMixin, base.Task):
         relation = self.to_duckdb(
             topics=topics, asof_seconds=asof_seconds, lookback=lookback, ffill=self._ffill
         )
+        if self._flatten:
+            relation = flatten.flatten(relation)
 
-        output_file = artifacts.pipeline_task_artifact_path(
-            self.pipeline,
-            self.name,
-            self.site,
-            self.asset,
-            self.log_id,
-            asof_seconds,
-            f".{self._output_format.value}",
-        )
-        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file = self.artifact_path(asof_seconds, f".{self._output_format.value}")
 
         match self._output_format:
             case OutputFormat.CSV:

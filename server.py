@@ -5,18 +5,28 @@ from typing import Any
 
 import duckdb
 import yaml
-from mcp.server.fastmcp import FastMCP
 from poml import poml
 
 from settings import settings
+from src import mcp_compat
 from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
-from src.pipeline import base, batch, capabilities, windows
+from src.pipeline import (
+    base,
+    batch,
+    capabilities,
+    lerobot,
+    lichtblick,
+    plotjuggler,
+    rerun_export,
+    windows,
+)
 from src.pipeline.tasks.waffle import snap as waffle_snap
+from src.sink import startup
 
-server = FastMCP(
+server = mcp_compat.create_server(
     name="Bagel MCP Server",
     host=settings.MCP_SERVER_HOST,
     port=settings.MCP_SERVER_PORT,
@@ -60,7 +70,7 @@ def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[
     """
     ds_type = resolve(path)
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     return poml(
@@ -113,7 +123,7 @@ def describe_topic(
     """
     ds_type = resolve(path)
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -190,7 +200,7 @@ def query_messages(  # noqa: PLR0913
     """
     ds_type = resolve(path)
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -245,7 +255,7 @@ def read_loggings(
     """
     ds_type = resolve(path)
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.LOGGING_DATASET.value}.{ds_type.value}", {})
@@ -311,7 +321,9 @@ def list_live_topics(
     description=(
         "Use this tool to connect to a live data stream and subscribe to one or more topics. "
         "Messages are written to a local sink directory, which can be used later as input "
-        "for other tools (via the `path` argument in SourceFactory)."
+        "for other tools (via the `path` argument in SourceFactory). Optionally attach a "
+        "pipeline config to create a STANDING pipeline that runs on incoming messages -- "
+        "e.g. an on_event cadence that captures and uploads a window around every anomaly."
     ),
 )
 def subscribe_live_topics(  # noqa: PLR0913
@@ -321,6 +333,7 @@ def subscribe_live_topics(  # noqa: PLR0913
     port: int | None = None,
     overwrite: bool = False,
     args: dict[str, Any] | None = None,
+    pipeline: dict[str, Any] | None = None,
 ) -> str:
     """Subscribe to real-time messages from a live data stream.
 
@@ -329,7 +342,7 @@ def subscribe_live_topics(  # noqa: PLR0913
     sink directory for subsequent analysis or playback.
 
     Args:
-        type_ (str): The type of `TopicSink` to use (e.g., ROS1, ROS2, PX4). For the full
+        type_ (str): The type of `TopicSink` to use (e.g., ROS1, ROS2, MQTT). For the full
             list of supported types, see `TopicSink` in `src/di/types/topic_sink.py`.
         topics (list[str] | None, optional): The topics to subscribe to. If None, subscribes
             to all available topics.
@@ -341,6 +354,12 @@ def subscribe_live_topics(  # noqa: PLR0913
             i.e., clear out the disk buffer of the selected topics. Defaults to False.
         args (dict[str, Any] | None, optional): Additional constructor arguments for
             creating the `TopicSink`.
+        pipeline (dict[str, Any] | None, optional): A pipeline configuration (the same
+            structure `run_pipeline` accepts) to run as a STANDING pipeline on incoming
+            messages for the life of the subscription. Its `cadence.topic` must be among
+            the subscribed topics; its `path` defaults to the sink directory so tasks read
+            the live buffer. Use an `on_event` cadence (with `debounce`/`forward`) for
+            edge recording. Defaults to None.
 
     Returns:
         str: Filesystem path to the sink directory where subscribed messages are stored.
@@ -349,10 +368,11 @@ def subscribe_live_topics(  # noqa: PLR0913
 
     Examples:
         As an LLM prompt:
-            Subscribe to the `/odom` and `/scan` topics from a ROS2 bridge.
+            Subscribe to `freezer/1/status` from the MQTT broker, and every time temp rises
+            above -15 for 2 minutes, snapshot the last 30 seconds to a CSV.
 
         As a Python call:
-            >>> subscribe_live_topics("ros2.bridge", topics=["/odom", "/scan"])
+            >>> subscribe_live_topics("mqtt", topics=["freezer/1/status"], pipeline={...})
 
     """
     ts_type = TopicSink(type_)
@@ -364,9 +384,7 @@ def subscribe_live_topics(  # noqa: PLR0913
             **(args or {}),
         },
     )
-    topics = topics or sink.available_topics
-    for topic in topics:
-        sink.subscribe(topic, overwrite=overwrite)
+    startup.subscribe_with_pipeline(sink, topics, pipeline, overwrite=overwrite)
     return str(sink.directory)
 
 
@@ -510,7 +528,7 @@ def preview_pipeline(  # noqa: PLR0913
     """
     ds_type = resolve(path)
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **(args or {})}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -690,5 +708,300 @@ def snap_hardware(directory: str = ".") -> dict[str, Any]:
     return {"form": str(form), **factory.metadata}
 
 
+@server.tool(
+    title="Export an event window for PlotJuggler",
+    description=(
+        "Export a time window of topic data as a PlotJuggler session: a flattened CSV "
+        "(one scalar column per signal) plus a layout file with the curves pre-added "
+        "and the window pre-framed. Opening the returned command shows the event "
+        "already plotted and zoomed. Use after preview_pipeline to hand an event to a "
+        "human for visual inspection."
+    ),
+)
+def export_for_plotjuggler(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    start_seconds: float,
+    end_seconds: float,
+    name: str = "event",
+    signals: list[str] | None = None,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export a time window as a ready-to-open PlotJuggler session.
+
+    Writes a flattened CSV of the window (columns named `topic/field/subfield`, the
+    naming PlotJuggler users expect) and a layout `.xml` that references the CSV,
+    pre-adds the signal curves, and frames the time range -- so PlotJuggler opens the
+    event already plotted and zoomed.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics to include in the export.
+        start_seconds (float): Window start (also the plot's framed x range start).
+        end_seconds (float): Window end.
+        name (str, optional): Session name, used for the output files and the tab
+            title. Defaults to "event".
+        signals (list[str] | None, optional): Flattened signal names to plot (e.g.
+            "/imu/linear_acceleration/x"). If None, all numeric signals are plotted,
+            capped at 8. Defaults to None.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: `csv` and `layout` paths, the plotted `curves`, and `command`
+            -- run it (or double-click the layout) to open the session in PlotJuggler.
+
+    Examples:
+        As an LLM prompt:
+            Show me the second brake event in PlotJuggler.
+
+        As a Python call:
+            >>> export_for_plotjuggler("./flight.mcap", ["/imu"], 118.9, 138.9)
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    relation = dataset.to_duckdb(
+        factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+    )
+    return plotjuggler.export_window(
+        relation,
+        name=name,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        signals=signals,
+    )
+
+
+@server.tool(
+    title="Export an event window for the Rerun viewer",
+    description=(
+        "Export a time window of topic data as a Rerun recording (.rrd): every scalar "
+        "signal becomes a Rerun time series, so `rerun <file>` opens the event in the "
+        "Rerun viewer. Use after preview_pipeline to hand an event to a human for "
+        "visual inspection. Needs the optional rerun-sdk dependency (uv sync --group viz)."
+    ),
+)
+def export_for_rerun(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    start_seconds: float,
+    end_seconds: float,
+    name: str = "event",
+    signals: list[str] | None = None,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export a time window as a Rerun recording.
+
+    Writes an `.rrd` file where every scalar signal in the window is a Rerun time
+    series (entity paths named `topic/field/subfield`, matching the PlotJuggler
+    export's naming).
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics to include in the export.
+        start_seconds (float): Window start.
+        end_seconds (float): Window end.
+        name (str, optional): Recording name, used for the output files. Defaults to
+            "event".
+        signals (list[str] | None, optional): Flattened signal names to include (e.g.
+            "/imu/linear_acceleration/x"). If None, all numeric signals are included.
+            Defaults to None.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: The `rrd` path, included `signals`, and `command` -- run it to
+            open the recording in the Rerun viewer.
+
+    Examples:
+        As an LLM prompt:
+            Show me the second brake event in Rerun.
+
+        As a Python call:
+            >>> export_for_rerun("./flight.mcap", ["/imu"], 118.9, 138.9)
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    relation = dataset.to_duckdb(
+        factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+    )
+    return rerun_export.export_window(
+        relation,
+        name=name,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        signals=signals,
+    )
+
+
+@server.tool(
+    title="Export an event window for Lichtblick / Foxglove",
+    description=(
+        "Export a time window of topic data as a Lichtblick session: an MCAP file "
+        "with JSON-encoded channels plus a layout with the plot series and time/value "
+        "ranges pre-set. Works in Lichtblick (open source) and Foxglove, which share "
+        "the layout format. Use after preview_pipeline to hand an event to a human."
+    ),
+)
+def export_for_lichtblick(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    start_seconds: float,
+    end_seconds: float,
+    name: str = "event",
+    signals: list[str] | None = None,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export a time window as a ready-to-open Lichtblick session.
+
+    Writes an MCAP of the window (JSON-encoded channels, readable by Lichtblick,
+    Foxglove, and Bagel itself) and a layout `.json` with a Plot panel whose series
+    and x/y ranges are pre-set to the event.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics to include in the export.
+        start_seconds (float): Window start (also the plot's framed x range start).
+        end_seconds (float): Window end.
+        name (str, optional): Session name, used for the output files and the plot
+            title. Defaults to "event".
+        signals (list[str] | None, optional): Flattened signal names to plot (e.g.
+            "/imu/linear_acceleration/x"). If None, all numeric signals are plotted,
+            capped at 8. Defaults to None.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: `mcap` and `layout` paths, the plotted `curves` (as Lichtblick
+            message paths), and `instructions` for opening the session.
+
+    Examples:
+        As an LLM prompt:
+            Show me the second brake event in Lichtblick.
+
+        As a Python call:
+            >>> export_for_lichtblick("./flight.mcap", ["/imu"], 118.9, 138.9)
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    relation = dataset.to_duckdb(
+        factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+    )
+    return lichtblick.export_window(
+        relation,
+        name=name,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        signals=signals,
+    )
+
+
+@server.tool(
+    title="Export event windows as a LeRobot training dataset (beta)",
+    description=(
+        "Export time windows as a LeRobotDataset v3.0 for robot-learning training: "
+        "each window becomes an episode, resampled to a uniform fps, with the given "
+        "signals composing feature vectors like observation.state and action. Use "
+        "after preview_pipeline to turn detected events into a curated dataset. "
+        "Beta: load-tests clean with the lerobot package; awaiting validation by "
+        "real training runs."
+    ),
+)
+def export_for_lerobot(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    episodes: list[dict[str, float]],
+    features: dict[str, list[str]],
+    fps: int,
+    task: str,
+    name: str = "dataset",
+    robot_type: str = "unknown",
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export event windows as a LeRobotDataset v3.0.
+
+    Data reduction's endgame is training-data curation: the windows preview_pipeline
+    found become episodes. Signals are resampled onto a uniform fps grid (last
+    observation carried forward) and grouped into feature vectors.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics the features draw from.
+        episodes (list[dict[str, float]]): Episode windows, each with
+            "start_seconds" and "end_seconds" (e.g. preview_pipeline's intervals).
+        features (dict[str, list[str]]): Maps LeRobot feature names (e.g.
+            "observation.state", "action") to lists of flattened signal names
+            (e.g. "/imu/linear_acceleration/x") composing that feature vector.
+        fps (int): Frame rate episodes are resampled to.
+        task (str): Natural-language task description recorded for all episodes.
+        name (str, optional): Dataset name, used for the output directory.
+        robot_type (str, optional): Recorded into meta/info.json.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: The `dataset` directory, episode/frame counts, feature
+            sizes, and loading `instructions`.
+
+    Examples:
+        As an LLM prompt:
+            Turn every hard-brake window into a LeRobot episode with the IMU as
+            observation.state at 10 fps.
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    def relation_for_window(start_seconds: float, end_seconds: float) -> duckdb.DuckDBPyRelation:
+        return dataset.to_duckdb(
+            factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+        )
+
+    return lerobot.export_episodes(
+        relation_for_window,
+        episodes=episodes,
+        features=features,
+        fps=fps,
+        task=task,
+        name=name,
+        robot_type=robot_type,
+    )
+
+
 if __name__ == "__main__":
-    server.run(transport="sse")
+    if settings.STARTUP_PIPELINES_FILE and pathlib.Path(settings.STARTUP_PIPELINES_FILE).exists():
+        # Standing pipelines: re-establish subscriptions (and their attached pipelines)
+        # on boot, so they survive container restarts.
+        startup.start(settings.STARTUP_PIPELINES_FILE)
+    mcp_compat.run_server(
+        server,
+        transport=settings.MCP_TRANSPORT,
+        host=settings.MCP_SERVER_HOST,
+        port=settings.MCP_SERVER_PORT,
+    )

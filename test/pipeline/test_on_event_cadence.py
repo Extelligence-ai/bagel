@@ -25,7 +25,7 @@ _ROWS = [
 
 def _relation() -> duckdb.DuckDBPyRelation:
     values = ",".join(f"({t}, {a})" for t, a in _ROWS)
-    return duckdb.sql(f"SELECT * FROM (VALUES {values}) AS t({TS}, accel_x)")  # noqa: S608
+    return duckdb.sql(f"SELECT * FROM (VALUES {values}) AS t({TS}, accel_x)")
 
 
 def _events(predicate: str, debounce: Lookback | None = None) -> list[float]:
