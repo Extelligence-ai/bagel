@@ -117,3 +117,25 @@ class SentenceTransformerEmbedder:
         """Embed text into an L2-normalized vector using the local model."""
         vector = self._model.encode([text], normalize_embeddings=True)[0]
         return [float(value) for value in vector]
+
+
+def make_embedder(
+    kind: str = "hashing", *, dim: int = 256, model_name: str = "all-MiniLM-L6-v2"
+) -> Embedder:
+    """Build an embedder by name, so pipeline configs can choose one with a primitive arg.
+
+    Args:
+        kind (str): "hashing" (default, dependency-free) or "sentence-transformer" (local
+            semantic model, needs the optional dependency).
+        dim (int): Vector dimensionality for the hashing embedder (ignored by the model).
+        model_name (str): The sentence-transformers model id.
+
+    Raises:
+        ValueError: If `kind` is not recognized.
+
+    """
+    if kind == "hashing":
+        return HashingEmbedder(dim=dim)
+    if kind in ("sentence-transformer", "sentence_transformer", "st"):
+        return SentenceTransformerEmbedder(model_name=model_name)
+    raise ValueError(f"unknown embedder kind: {kind!r} (use 'hashing' or 'sentence-transformer')")

@@ -109,3 +109,13 @@ class EventIndex:
     def count(self) -> int:
         """Return the number of indexed events."""
         return self._connection.execute("SELECT count(*) FROM events").fetchone()[0]
+
+    def records(self) -> list[dict[str, Any]]:
+        """Return every indexed event with its `event_id`, `metadata`, and `embedding`."""
+        rows = self._connection.execute(
+            "SELECT event_id, metadata, embedding FROM events"
+        ).fetchall()
+        return [
+            {"event_id": row[0], "metadata": json.loads(row[1]), "embedding": list(row[2])}
+            for row in rows
+        ]

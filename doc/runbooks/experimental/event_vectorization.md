@@ -71,9 +71,11 @@ Note: "edge" here means a companion computer or a Jetson-class board, not a micr
 ## Roadmap
 
 - **Phase 0, plumbing (done):** `Embedder` protocol, DuckDB `EventIndex`, `SemanticEventStore`.
-- **Phase 1, text search (in progress):** `describe_event`, `add_event`, a local
-  `SentenceTransformerEmbedder`, and (next) an `embed_event` pipeline task so every reduce run
-  indexes its events, a `search_events` MCP tool, and a predicate-based eval.
+- **Phase 1, text search (in progress):** done so far: `describe_event`, `add_event`, a local
+  `SentenceTransformerEmbedder`, the `EmbedEventTask` flywheel (every reduce firing indexes an
+  event into a local DuckDB file), and `precision_at_k_by_predicate` (a retrieval-quality
+  number that uses predicates as weak labels). Next: a `search_events` MCP tool so it is
+  usable from chat.
 - **Phase 2, richer descriptions:** optional LLM-generated window summaries.
 - **Phase 3, signal matching:** a `WaveformEmbedder` (z-normalized, resampled window) into
   the same index for shape similarity, classical and training-free (MASS / matrix profile
