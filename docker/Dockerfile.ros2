@@ -80,6 +80,11 @@ COPY --chown=${USERNAME}:${USERNAME} src/topic/pyarrow ./src/topic/pyarrow
 COPY --chown=${USERNAME}:${USERNAME} src/message/base.py ./src/message/base.py
 COPY --chown=${USERNAME}:${USERNAME} src/message/bagel ./src/message/bagel
 COPY --chown=${USERNAME}:${USERNAME} src/message/pyarrow ./src/message/pyarrow
+# MCAP as a first-class format (no ROS required)
+COPY --chown=${USERNAME}:${USERNAME} src/source/mcap.py ./src/source/mcap.py
+COPY --chown=${USERNAME}:${USERNAME} src/topic/mcap.py ./src/topic/mcap.py
+COPY --chown=${USERNAME}:${USERNAME} src/message/mcap.py ./src/message/mcap.py
+COPY --chown=${USERNAME}:${USERNAME} src/logging/mcap.py ./src/logging/mcap.py
 COPY --chown=${USERNAME}:${USERNAME} src/logging/base.py ./src/logging/base.py
 COPY --chown=${USERNAME}:${USERNAME} src/pipeline ./src/pipeline
 COPY --chown=${USERNAME}:${USERNAME} src/di ./src/di

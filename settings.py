@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # Directory for caching intermediate artifacts
     CACHE_DIRECTORY: str = str(pathlib.Path.home() / ".cache" / "bagel")
 
+    # YAML manifest of live subscriptions (and their standing pipelines) to
+    # establish when the server starts, so they survive container restarts.
+    # If unset or missing, no startup subscriptions are made.
+    STARTUP_PIPELINES_FILE: str | None = None
+
     # Minimum number of records per batch in arrow files
     MIN_ARROW_RECORD_BATCH_SIZE_COUNT: int = 500
 
@@ -71,6 +76,10 @@ class Settings(BaseSettings):
 
     # Port of the MCP server
     MCP_SERVER_PORT: int
+
+    # MCP transport: "sse" (current default, matches the README quickstart) or
+    # "streamable-http" (the newer transport; both are supported by MCP SDK v1 and v2)
+    MCP_TRANSPORT: str = "sse"
 
 
 settings = Settings()

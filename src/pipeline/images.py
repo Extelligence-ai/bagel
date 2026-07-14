@@ -55,7 +55,7 @@ class TopicImageMixin:
         if dataset_module is None:
             raise ValueError(f"{ds_type} not supported")
 
-        self._factory = module.provide(factory_module, {"path": path, **kwargs})
+        self._factory = module.provide(factory_module, {**kwargs, "path": path})
         self._registry = module.provide(registry_module, {**kwargs})
         self._dataset = module.provide(dataset_module, {**kwargs})
 

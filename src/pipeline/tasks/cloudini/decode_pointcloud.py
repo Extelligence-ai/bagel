@@ -112,7 +112,7 @@ class DecodePointCloudTask(base.Task):
 
         ds_type = resolve(path)
         self._factory = module.provide(
-            f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": path, **kwargs}
+            f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**kwargs, "path": path}
         )
         self._registry = module.provide(
             f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", {**kwargs}

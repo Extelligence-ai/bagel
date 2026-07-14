@@ -1,0 +1,4 @@
+1662400000.0405089 [INFO] [launch]: All log files can be found below /home/ubuntu/.ros/log/2022-09-05-12-00-00
+1662400000.1405089 [INFO] [launch]: Default logging verbosity is set to INFO
+1662400001.0000000 [INFO] [talker-1]: process started with pid [12345]
+1662400025.2000000 [ERROR] [talker-1]: process has died [pid 12345, exit code -6]

@@ -4,6 +4,7 @@ import abc
 from typing import Final
 
 import pyarrow as pa
+from pydantic import BaseModel
 
 DESCRIPTION_KEY: Final[str] = "description"
 UNITS_KEY: Final[str] = "units"
@@ -12,6 +13,17 @@ DEFAULT_KEY: Final[str] = "default"
 
 class TopicNotFoundError(Exception):
     """Raised when a topic does not exist in the timeseries data source."""
+
+
+class UnsupportedEncodingError(Exception):
+    """Raised when the message definition's encoding is not supported."""
+
+
+class MessageDefinition(BaseModel):
+    """Contain message definition and its encoding."""
+
+    encoding: str
+    definition: bytes
 
 
 class TopicRegistry(abc.ABC):

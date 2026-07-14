@@ -3,11 +3,15 @@ name: test
 on:
   pull_request:
     branches:
-      - stage
+      - main
     types:
       - opened
       - synchronize
       - reopened
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   docker:

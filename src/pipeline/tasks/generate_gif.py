@@ -5,12 +5,11 @@ import pathlib
 
 from PIL import Image, ImageDraw, ImageFont
 
-from src import artifacts
 from src.di import module
 from src.pipeline import base, images
 
 
-class GenerateGif(images.TopicImageMixin, base.Task):
+class GenerateGif(base.ArtifactMixin, images.TopicImageMixin, base.Task):
     """Generate a GIF file from images in a topic."""
 
     def __init__(self, topic: str) -> None:
@@ -72,16 +71,7 @@ class GenerateGif(images.TopicImageMixin, base.Task):
             first_image = first_image or annotated
 
         if frames and first_image:
-            gif_file = artifacts.pipeline_task_artifact_path(
-                self.pipeline,
-                self.name,
-                self.site,
-                self.asset,
-                self.log_id,
-                asof_seconds,
-                ".gif",
-            )
-            gif_file.parent.mkdir(parents=True, exist_ok=True)
+            gif_file = self.artifact_path(asof_seconds, ".gif")
             first_image.save(
                 gif_file,
                 save_all=True,

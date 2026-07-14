@@ -1,0 +1,8 @@
+[INFO] [1662400000.100000000] [talker]: Publisher initialized on /chatter
+[INFO] [1662400005.200000000] [talker]: Publishing: 'Hello World: 1'
+[WARN] [1662400010.500000000] [talker]: Publish rate degraded to 4.2 Hz
+[ERROR] [1662400020.250000000] [talker]: Failed to publish: buffer full
+Traceback (most recent call last):
+  File "talker.py", line 42, in publish
+RuntimeError: buffer full
+[INFO] [1662400030.000000000] [talker]: Recovered, resuming publishing
