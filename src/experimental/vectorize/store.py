@@ -9,6 +9,7 @@ Not part of a release. APIs will change.
 
 from typing import Any
 
+from src.experimental.vectorize.describe import describe_event
 from src.experimental.vectorize.embedder import Embedder
 from src.experimental.vectorize.index import Event, EventIndex
 
@@ -46,6 +47,36 @@ class SemanticEventStore:
                 metadata=metadata or {},
             )
         )
+
+    def add_event(  # noqa: PLR0913
+        self,
+        event_id: str,
+        predicate: str,
+        *,
+        event_topic: str | None = None,
+        asset: str | None = None,
+        site: str | None = None,
+        stats: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Describe a reduced event, embed the description, and index it.
+
+        Builds a deterministic description from the predicate and context, then stores it.
+        The predicate is kept in metadata so retrieval can be evaluated by predicate later.
+
+        Returns:
+            The generated description (useful for inspection and eval).
+
+        """
+        description = describe_event(
+            predicate, event_topic=event_topic, asset=asset, site=site, stats=stats
+        )
+        full_metadata = {"predicate": predicate, **(metadata or {})}
+        for key, value in (("event_topic", event_topic), ("asset", asset), ("site", site)):
+            if value is not None:
+                full_metadata.setdefault(key, value)
+        self.add(event_id, description, metadata=full_metadata)
+        return description
 
     def search(self, query: str, k: int = 5) -> list[dict[str, Any]]:
         """Embed a natural-language query and return the top-k most similar events."""

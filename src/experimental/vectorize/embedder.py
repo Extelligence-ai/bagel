@@ -70,3 +70,50 @@ class HashingEmbedder:
         if norm == 0.0:
             return vector
         return [value / norm for value in vector]
+
+
+class SentenceTransformerEmbedder:
+    """A local sentence-embedding model. Edge-first: runs on CPU, nothing leaves the box.
+
+    Wraps `sentence-transformers`, an optional dependency, so the default small model
+    (all-MiniLM-L6-v2, 384 dims) runs on a robotics companion computer without a GPU or an
+    API key. Unlike `HashingEmbedder`, it captures meaning, so "hard brake" and "sudden
+    deceleration" land close even with no shared words.
+
+    Install the dependency to use it:
+
+        pip install sentence-transformers
+
+    """
+
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+        """Load the model.
+
+        Args:
+            model_name (str): A sentence-transformers model id. The default is small and
+                CPU-friendly for edge deployment.
+
+        Raises:
+            ImportError: If `sentence-transformers` is not installed.
+
+        """
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as error:
+            raise ImportError(
+                "SentenceTransformerEmbedder requires the 'sentence-transformers' package. "
+                "Install it with: pip install sentence-transformers"
+            ) from error
+
+        self._model = SentenceTransformer(model_name)
+        self._dim = int(self._model.get_sentence_embedding_dimension())
+
+    @property
+    def dim(self) -> int:
+        """The model's output dimensionality."""
+        return self._dim
+
+    def embed(self, text: str) -> list[float]:
+        """Embed text into an L2-normalized vector using the local model."""
+        vector = self._model.encode([text], normalize_embeddings=True)[0]
+        return [float(value) for value in vector]

@@ -27,30 +27,59 @@ A minimal, dependency-free loop so the idea can be exercised end to end:
 - `EventIndex`: stores event embeddings in DuckDB and searches them with the native
   `array_cosine_similarity`, so the vectors sit next to the SQL you already run. A shared
   MotherDuck connection turns this into a fleet-wide index.
-- `SemanticEventStore`: the facade. Add an event by its description, search by a text query.
+- `describe_event`: turns a reduced event into a deterministic text description from its
+  predicate, location, and stats. No LLM call.
+- `SemanticEventStore`: the facade. `add_event` describes, embeds, and indexes an event;
+  `search` finds the closest ones for a text query.
 
 ```python
-from src.experimental.vectorize.embedder import HashingEmbedder
+from src.experimental.vectorize.embedder import HashingEmbedder  # or SentenceTransformerEmbedder
 from src.experimental.vectorize.store import SemanticEventStore
 
 store = SemanticEventStore(HashingEmbedder(dim=256))
-store.add("evt-1", "hard deceleration, forklift, loading dock", {"asset": "forklift_3"})
-store.add("evt-2", "gentle turn in the warehouse aisle", {"asset": "forklift_3"})
+store.add_event("evt-1", "hard deceleration", event_topic="/imu", asset="forklift_3",
+                stats={"peak_accel_x": -12.4, "duration_s": 2.1})
+store.add_event("evt-2", "gentle turn", event_topic="/imu", asset="forklift_3")
 
 for hit in store.search("hard braking forklift", k=3):
     print(hit["score"], hit["event_id"], hit["metadata"])
 ```
 
-## Where it goes next
+For real semantic search on the edge, swap in the local model (nothing leaves the box):
 
-- **Real text embeddings**: drop a sentence encoder or an embedding API in behind the
-  `Embedder` protocol. Bridges modalities and heterogeneous fleets, because language is the
-  common space.
-- **Signal and vision embeddings (the moat)**: embed the proprioceptive window (a time-series
-  encoder) or camera keyframes (a vision encoder) for true "events that look like this."
-  Each reduced event already ships with the trigger predicate and the topic schema, which
-  are free weak labels and physical grounding.
-- **VSS / HNSW**: swap brute-force cosine for DuckDB's vector index once the corpus is large.
+```python
+from src.experimental.vectorize.embedder import SentenceTransformerEmbedder  # pip install sentence-transformers
+store = SemanticEventStore(SentenceTransformerEmbedder())  # all-MiniLM-L6-v2, CPU
+```
+
+## Edge first
+
+The whole loop is designed to run on the robot's companion computer, not in the cloud:
+
+- Reduction already made the data sparse, so you embed the handful of events, not the
+  firehose. A small sentence model (all-MiniLM-L6-v2) does that on CPU in milliseconds.
+- The index is a local DuckDB file. Searching one robot's own history happens on the device,
+  and no data leaves the box.
+
+Only the **fleet** layer needs the cloud: to search across many robots you sync the tiny
+event vectors and metadata (not the raw data) to a shared index (point `EventIndex` at
+MotherDuck instead of a local file). Same code, two deployments, and it is the natural
+free-edge / paid-cloud boundary.
+
+Note: "edge" here means a companion computer or a Jetson-class board, not a microcontroller.
+
+## Roadmap
+
+- **Phase 0, plumbing (done):** `Embedder` protocol, DuckDB `EventIndex`, `SemanticEventStore`.
+- **Phase 1, text search (in progress):** `describe_event`, `add_event`, a local
+  `SentenceTransformerEmbedder`, and (next) an `embed_event` pipeline task so every reduce run
+  indexes its events, a `search_events` MCP tool, and a predicate-based eval.
+- **Phase 2, richer descriptions:** optional LLM-generated window summaries.
+- **Phase 3, signal matching:** a `WaveformEmbedder` (z-normalized, resampled window) into
+  the same index for shape similarity, classical and training-free (MASS / matrix profile
+  family); optional DTW for time-warp robustness.
+- **Phase 4, fusion and surfaces:** combine text and signal, then RAG, novelty, and
+  training-set curation. Swap brute-force cosine for DuckDB VSS/HNSW when the corpus is large.
 
 ## Honest limits
 
