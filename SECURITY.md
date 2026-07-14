@@ -12,7 +12,7 @@ We aim to acknowledge reports within **3 business days**. Please include a worki
 proof of concept and the exact code paths involved; reports without a reproducible
 PoC are hard to act on.
 
-Bagel tracks a single rolling branch (`stage`); fixes land there and in the next
+Bagel tracks a single rolling branch (`main`); fixes land there and in the next
 published Docker images.
 
 ## Threat model (what counts)
