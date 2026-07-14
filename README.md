@@ -6,14 +6,14 @@
 </p>
 
 <h1 align="center">
-  <a href="https://github.com/Extelligence-ai/bagel/blob/stage/LICENSE">
+  <a href="https://github.com/Extelligence-ai/bagel/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square">
   </a>
   <a>
     <img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square">
   </a>
   <a href="https://github.com/Extelligence-ai/bagel/actions/workflows/publish.yaml">
-    <img src="https://img.shields.io/github/actions/workflow/status/Extelligence-ai/bagel/publish.yaml?branch=stage&label=publish&style=flat-square">
+    <img src="https://img.shields.io/github/actions/workflow/status/Extelligence-ai/bagel/publish.yaml?branch=main&label=publish&style=flat-square">
   </a>
   <a href="https://discord.gg/QJDwuDGJsH">
     <img src="https://img.shields.io/discord/1392632504908906506?label=Discord&style=flat-square">
