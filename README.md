@@ -284,6 +284,16 @@ meow 🐱 4 topics 🐱💤🎯
 - [Slack](./doc/runbooks/pipelines.md) — pipelines post to your ops channel when they fire: "🚨 hard brake on {asset}"
 - [LeRobot](./doc/runbooks/lerobot.md) *(beta)* — detected events become training episodes: a LeRobotDataset v3.0
 
+## 🧪 Experimental
+
+Active research, developed on branches and not part of any release. APIs will change.
+
+- **Event vectorization** *(experimental)*: embed reduced event windows and search them by
+  similarity ("find events like this one"). Reduction is what makes this possible: the raw
+  sensor firehose is too large to vectorize, but the small reduced set is not. Text-description
+  embeddings with DuckDB vector search today, signal and vision encoders next. See the
+  [runbook](./doc/runbooks/experimental/event_vectorization.md).
+
 ## 🫶 Contributing
 
 We’d love your help! The easiest way to support the project is by giving it a ⭐ on GitHub.
