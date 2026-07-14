@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - stage
+      - main
 
 jobs:
   docker:
