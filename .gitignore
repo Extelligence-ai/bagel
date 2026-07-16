@@ -269,3 +269,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Never commit: local infra state (may contain secrets) and local planning docs
+terraform/
+ROADMAP.md
+doc/tutorials/data/
