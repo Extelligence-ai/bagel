@@ -23,7 +23,7 @@ cadence:                 # WHEN the pipeline fires
   when: once_at_end
 gates: []                # WHETHER to proceed once fired (optional)
 tasks:                   # WHAT to do
-  - module: src.pipeline.tasks.reduce.ros2.db3
+  - module: bagel.pipeline.tasks.reduce.ros2.db3
     args:
       event_topic: /imu
       predicate: "\"/imu\"['linear_acceleration']['x'] < -10"

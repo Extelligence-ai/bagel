@@ -221,9 +221,9 @@ wheels = [
 ]
 
 [[package]]
-name = "bagel"
-version = "0.1.0"
-source = { virtual = "." }
+name = "bagel-mcp"
+version = "2.0.0"
+source = { editable = "." }
 dependencies = [
     { name = "boto3" },
     { name = "duckdb" },
@@ -246,7 +246,7 @@ dependencies = [
     { name = "zstandard" },
 ]
 
-[package.dev-dependencies]
+[package.optional-dependencies]
 ardupilot = [
     { name = "pymavlink" },
 ]
@@ -267,15 +267,6 @@ cv = [
     { name = "pillow" },
     { name = "torch" },
     { name = "transformers" },
-]
-dev = [
-    { name = "ipykernel" },
-    { name = "ipython" },
-    { name = "jupyterlab" },
-    { name = "matplotlib" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "ruff" },
 ]
 iot = [
     { name = "influxdb3-python" },
@@ -303,12 +294,29 @@ viz = [
     { name = "rerun-sdk" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "ipykernel" },
+    { name = "ipython" },
+    { name = "jupyterlab" },
+    { name = "matplotlib" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
+    { name = "asammdf", marker = "extra == 'automotive'", specifier = ">=7.4,<8" },
+    { name = "azure-storage-blob", marker = "extra == 'upload'", specifier = ">=12.24.0,<13.0.0" },
     { name = "boto3", specifier = ">=1.40.0,<2.0.0" },
+    { name = "cantools", marker = "extra == 'automotive'", specifier = ">=42.0.3" },
     { name = "duckdb", specifier = ">=1.3.0,<2.0.0" },
     { name = "filelock", specifier = ">=3.19.0,<4.0.0" },
+    { name = "gitpython", marker = "extra == 'px4'", specifier = ">=3.1.0,<4.0.0" },
+    { name = "google-cloud-storage", marker = "extra == 'upload'", specifier = ">=2.18.0,<4.0.0" },
     { name = "humanize", specifier = ">=4.14.0,<5.0.0" },
+    { name = "influxdb3-python", marker = "extra == 'iot'", specifier = ">=0.10.0" },
     { name = "jinja2", specifier = ">=3.1.0,<4.0.0" },
     { name = "lark", specifier = ">=1.2.0,<2.0.0" },
     { name = "mcap", specifier = ">=1.3.0,<2.0.0" },
@@ -316,34 +324,36 @@ requires-dist = [
     { name = "mcap-ros1-support", specifier = ">=0.7.0,<1.0.0" },
     { name = "mcap-ros2-support", specifier = ">=0.5.0,<1.0.0" },
     { name = "mcp", specifier = ">=1.11.0,<2.0.0" },
+    { name = "numpy", marker = "extra == 'cloudini'", specifier = ">=1.24.0,<3.0.0" },
+    { name = "numpy", marker = "extra == 'ros1'", specifier = "<2.0.0" },
+    { name = "opencv-python", marker = "extra == 'cv'", specifier = ">=4.0.0,<5.0.0" },
+    { name = "orangebox", marker = "extra == 'betaflight'", specifier = ">=0.4.0,<1.0.0" },
+    { name = "paho-mqtt", marker = "extra == 'iot'", specifier = ">=2.1.0,<3.0.0" },
     { name = "pandas", specifier = ">=2.2.0,<3.0.0" },
+    { name = "pillow", marker = "extra == 'cv'", specifier = ">=11.3.0,<12.0.0" },
     { name = "poml", specifier = ">=0.0.7,<1.0.0" },
     { name = "protobuf", specifier = ">=6.31.0,<7.0.0" },
     { name = "pyarrow", specifier = ">=18.0.0,<19.0.0" },
+    { name = "pycryptodomex", marker = "extra == 'ros1'", specifier = ">=3.23.0,<4.0.0" },
     { name = "pydantic", specifier = ">=2.11.0,<3.0.0" },
     { name = "pydantic-settings", specifier = ">=2.9.0,<3.0.0" },
+    { name = "pymavlink", marker = "extra == 'ardupilot'", specifier = ">=2.4.0,<3.0.0" },
+    { name = "python-can", marker = "extra == 'automotive'", specifier = ">=4.6.1" },
+    { name = "python-gnupg", marker = "extra == 'ros1'", specifier = ">=0.5.0,<1.0.0" },
+    { name = "pyulog", marker = "extra == 'px4'", specifier = ">=1.2.0,<2.0.0" },
     { name = "pyyaml", specifier = ">=6.0.0,<7.0.0" },
+    { name = "rerun-sdk", marker = "extra == 'viz'", specifier = ">=0.23.1" },
+    { name = "roslibpy", marker = "extra == 'ros1'", specifier = ">=1.8.1,<2.0.0" },
+    { name = "roslibpy", marker = "extra == 'ros2'", specifier = ">=1.8.1,<2.0.0" },
+    { name = "rospkg", marker = "extra == 'ros1'", specifier = ">=1.6.0,<2.0.0" },
+    { name = "torch", marker = "extra == 'cv'", specifier = ">=2.8.0,<3.0.0" },
+    { name = "transformers", marker = "extra == 'cv'", specifier = ">=4.57.0,<5.0.0" },
+    { name = "wasmtime", marker = "extra == 'cloudini'", specifier = ">=26.0.0" },
     { name = "zstandard", specifier = ">=0.23.0,<1.0.0" },
 ]
+provides-extras = ["cv", "ros1", "ros2", "px4", "ardupilot", "betaflight", "cloudini", "iot", "upload", "viz", "automotive"]
 
 [package.metadata.requires-dev]
-ardupilot = [{ name = "pymavlink", specifier = ">=2.4.0,<3.0.0" }]
-automotive = [
-    { name = "asammdf", specifier = ">=7.4,<8" },
-    { name = "cantools", specifier = ">=42.0.3" },
-    { name = "python-can", specifier = ">=4.6.1" },
-]
-betaflight = [{ name = "orangebox", specifier = ">=0.4.0,<1.0.0" }]
-cloudini = [
-    { name = "numpy", specifier = ">=1.24.0,<3.0.0" },
-    { name = "wasmtime", specifier = ">=26.0.0" },
-]
-cv = [
-    { name = "opencv-python", specifier = ">=4.0.0,<5.0.0" },
-    { name = "pillow", specifier = ">=11.3.0,<12.0.0" },
-    { name = "torch", specifier = ">=2.8.0,<3.0.0" },
-    { name = "transformers", specifier = ">=4.57.0,<5.0.0" },
-]
 dev = [
     { name = "ipykernel", specifier = ">=6.29.0,<7.0.0" },
     { name = "ipython", specifier = ">=8.0.0,<9.0.0" },
@@ -353,27 +363,6 @@ dev = [
     { name = "pytest", specifier = ">=8.4.0,<9.0.0" },
     { name = "ruff", specifier = "==0.12.4" },
 ]
-iot = [
-    { name = "influxdb3-python", specifier = ">=0.10.0" },
-    { name = "paho-mqtt", specifier = ">=2.1.0,<3.0.0" },
-]
-px4 = [
-    { name = "gitpython", specifier = ">=3.1.0,<4.0.0" },
-    { name = "pyulog", specifier = ">=1.2.0,<2.0.0" },
-]
-ros1 = [
-    { name = "numpy", specifier = "<2.0.0" },
-    { name = "pycryptodomex", specifier = ">=3.23.0,<4.0.0" },
-    { name = "python-gnupg", specifier = ">=0.5.0,<1.0.0" },
-    { name = "roslibpy", specifier = ">=1.8.1,<2.0.0" },
-    { name = "rospkg", specifier = ">=1.6.0,<2.0.0" },
-]
-ros2 = [{ name = "roslibpy", specifier = ">=1.8.1,<2.0.0" }]
-upload = [
-    { name = "azure-storage-blob", specifier = ">=12.24.0,<13.0.0" },
-    { name = "google-cloud-storage", specifier = ">=2.18.0,<4.0.0" },
-]
-viz = [{ name = "rerun-sdk", specifier = ">=0.23.1" }]
 
 [[package]]
 name = "beautifulsoup4"

@@ -5,9 +5,9 @@ import pathlib
 import duckdb
 import pytest
 
-import server
-from settings import settings
-from src.pipeline import flatten
+from bagel import server
+from bagel.pipeline import flatten
+from bagel.settings import settings
 
 TS = settings.TIMESTAMP_SECONDS_COLUMN_NAME
 
@@ -73,7 +73,7 @@ def test_end_to_end_flattened_csv_is_plot_ready(
             "cadence": {"topic": "message", "when": "once_at_end"},
             "tasks": [
                 {
-                    "module": "src.pipeline.tasks.write_topics_to_file",
+                    "module": "bagel.pipeline.tasks.write_topics_to_file",
                     "setup": {"timestamp_column": "t", "timestamp_format": "seconds"},
                     "args": {
                         "topics": ["message"],
@@ -106,7 +106,7 @@ def test_end_to_end_flattened_parquet(
             "cadence": {"topic": "message", "when": "once_at_end"},
             "tasks": [
                 {
-                    "module": "src.pipeline.tasks.write_topics_to_file",
+                    "module": "bagel.pipeline.tasks.write_topics_to_file",
                     "setup": {"timestamp_column": "t", "timestamp_format": "seconds"},
                     "args": {
                         "topics": ["message"],

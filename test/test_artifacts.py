@@ -2,8 +2,8 @@ import pathlib
 
 import pytest
 
-from settings import settings
-from src import artifacts
+from bagel import artifacts
+from bagel.settings import settings
 
 
 def test_should_return_arrow_file() -> None:

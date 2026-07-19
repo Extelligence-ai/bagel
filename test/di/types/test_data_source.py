@@ -3,7 +3,7 @@ import tempfile
 
 import pytest
 
-from src.di.types import data_source
+from bagel.di.types import data_source
 
 
 def test_should_raise_for_unsupported_url_scheme() -> None:

@@ -2,9 +2,9 @@ import os
 
 import pytest
 
-from src.logging.ros2.db3 import LoggingDataset
-from src.source.ros2.db3 import SourceFactory
-from src.topic.ros2.db3 import TopicRegistry
+from bagel.logging.ros2.db3 import LoggingDataset
+from bagel.source.ros2.db3 import SourceFactory
+from bagel.topic.ros2.db3 import TopicRegistry
 
 ROS_DISTRO = os.getenv("ROS_DISTRO")
 

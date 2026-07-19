@@ -13,11 +13,11 @@ from google.protobuf.wrappers_pb2 import DoubleValue
 from mcap.reader import make_reader
 from mcap_protobuf.writer import Writer as ProtobufWriter
 
-import server
-from settings import settings
-from src.di import module
-from src.di.types import data_source
-from src.pipeline import base
+from bagel import server
+from bagel.di import module
+from bagel.di.types import data_source
+from bagel.pipeline import base
+from bagel.settings import settings
 
 EPOCH = 1_700_000_000.0
 SECOND_NS = 1_000_000_000
@@ -67,7 +67,7 @@ def test_bare_mcap_file_resolves_to_first_class_mcap(protobuf_mcap: pathlib.Path
 
 
 def test_source_factory_reads_metadata_without_ros(protobuf_mcap: pathlib.Path) -> None:
-    factory = module.provide("src.source.mcap", {"path": str(protobuf_mcap)})
+    factory = module.provide("bagel.source.mcap", {"path": str(protobuf_mcap)})
     metadata = factory.metadata
     assert metadata["total_message_count"] == int(DURATION_SECONDS * RATE_HZ)
     assert metadata["duration_seconds"] == pytest.approx(DURATION_SECONDS - 1 / RATE_HZ)
@@ -80,8 +80,8 @@ def test_source_factory_reads_metadata_without_ros(protobuf_mcap: pathlib.Path) 
 def test_topic_registry_builds_struct_from_protobuf_schema(
     protobuf_mcap: pathlib.Path,
 ) -> None:
-    factory = module.provide("src.source.mcap", {"path": str(protobuf_mcap)})
-    registry = module.provide("src.topic.mcap", {})
+    factory = module.provide("bagel.source.mcap", {"path": str(protobuf_mcap)})
+    registry = module.provide("bagel.topic.mcap", {})
     bag = factory.build()
 
     assert registry.available_topics(bag) == ["/accel"]
@@ -124,7 +124,7 @@ def test_preview_and_reduce_generic_mcap_without_ros(protobuf_mcap: pathlib.Path
         "cadence": {"topic": "/accel", "when": "once_at_end"},
         "tasks": [
             {
-                "module": "src.pipeline.tasks.reduce.mcap",
+                "module": "bagel.pipeline.tasks.reduce.mcap",
                 "args": {
                     "event_topic": "/accel",
                     "predicate": predicate,
@@ -153,8 +153,8 @@ def test_preview_and_reduce_generic_mcap_without_ros(protobuf_mcap: pathlib.Path
 def test_ros2_profile_sample_reads_through_generic_path() -> None:
     assert data_source.resolve(ROS2_SAMPLE) == data_source.DataSource.MCAP
 
-    factory = module.provide("src.source.mcap", {"path": ROS2_SAMPLE})
-    registry = module.provide("src.topic.mcap", {})
+    factory = module.provide("bagel.source.mcap", {"path": ROS2_SAMPLE})
+    registry = module.provide("bagel.topic.mcap", {})
     bag = factory.build()
 
     topics = registry.available_topics(bag)
@@ -178,12 +178,12 @@ def test_ros2_profile_sample_reads_through_generic_path() -> None:
 
 
 def test_reduce_task_back_compat_alias_registers_same_class() -> None:
-    from src.pipeline.tasks.reduce import mcap as new_module
-    from src.pipeline.tasks.reduce.ros2 import mcap as old_module
+    from bagel.pipeline.tasks.reduce import mcap as new_module
+    from bagel.pipeline.tasks.reduce.ros2 import mcap as old_module
 
     old_module.register()
     new_module.register()
     assert (
-        module.global_registry["src.pipeline.tasks.reduce.ros2.mcap"]
-        is module.global_registry["src.pipeline.tasks.reduce.mcap"]
+        module.global_registry["bagel.pipeline.tasks.reduce.ros2.mcap"]
+        is module.global_registry["bagel.pipeline.tasks.reduce.mcap"]
     )

@@ -8,8 +8,8 @@ from typing import ClassVar
 
 import pytest
 
-import server as bagel_server
-from src.pipeline.tasks.notify.slack import NotifySlack
+from bagel import server as bagel_server
+from bagel.pipeline.tasks.notify.slack import NotifySlack
 
 SAMPLE = "./data/sample/pyarrow/csv/flight.csv"
 
@@ -88,7 +88,7 @@ def test_rejects_non_http_webhook_url() -> None:
 
 def test_listed_in_pipeline_capabilities() -> None:
     modules = {c["module"] for c in bagel_server.list_pipeline_capabilities()}
-    assert "src.pipeline.tasks.notify.slack" in modules
+    assert "bagel.pipeline.tasks.notify.slack" in modules
 
 
 def test_end_to_end_through_run_pipeline(webhook: tuple[str, list[dict]]) -> None:
@@ -102,7 +102,7 @@ def test_end_to_end_through_run_pipeline(webhook: tuple[str, list[dict]]) -> Non
         "cadence": {"topic": "message", "when": "once_at_end"},
         "tasks": [
             {
-                "module": "src.pipeline.tasks.notify.slack",
+                "module": "bagel.pipeline.tasks.notify.slack",
                 "setup": {"timestamp_column": "t", "timestamp_format": "seconds"},
                 "args": {
                     "webhook_url": url + "/hook",

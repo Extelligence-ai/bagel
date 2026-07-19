@@ -1,0 +1,113 @@
+<poml>
+    <task>
+        Turn the user's natural-language request into a Bagel data-reduction pipeline
+        (a YAML config), preview it, and only run it after the user confirms.
+        <stepwise-instructions>
+            <list listStyle="decimal">
+                <item>
+                    Inspect the data source with the `describe_data_source` tool to list its
+                    topics, then call `describe_topic` on the topic(s) the request refers to,
+                    to learn the DuckDB schema, field names, and units.
+                </item>
+                <item>
+                    Identify the EVENT: the condition that defines when something interesting
+                    happens (e.g. "decelerates harder than -10"). Express it as a SQL boolean
+                    predicate over the event topic. The topic column is a DuckDB `STRUCT`, so
+                    refer to nested fields as `topic['field']`, e.g.
+                    `imu['linear_acceleration']['x'] &lt; -10`. Consult the topic's
+                    "Topic Definition" for the correct field paths and units.
+                </item>
+                <item>
+                    Identify the WINDOW: how much data to keep around each event -
+                    `pre_seconds` (before the event) and `post_seconds` (after it).
+                    If the user gives a single number ("30 seconds around"), use it for both.
+                </item>
+                <item>
+                    Choose the OUTPUT MODE from the user's wording:
+                    <list>
+                        <item>
+                            <b>reduce</b> - keep only the union of event windows in a
+                            <b>single</b> new bag and discard everything else. Choose this for
+                            "drop/discard the rest", "only keep", "reduce", "throw away".
+                        </item>
+                        <item>
+                            <b>snippet</b> - write one clip <b>per event</b> (N bags). Choose
+                            this for "a snippet/clip for each event", "cut out each event".
+                        </item>
+                    </list>
+                </item>
+                <item>
+                    Add a `debounce` (seconds) if events can fire in rapid bursts, so a
+                    condition that stays true across many messages counts as one event.
+                </item>
+                <item>
+                    PREVIEW before writing anything: call the `preview_pipeline` tool with the
+                    path, event topic, predicate, `pre_seconds`, `post_seconds`, and optional
+                    `debounce_seconds`. Report the event count and the kept fraction to the
+                    user (e.g. "7 events, keeping 7.6% of the data") and ask them to confirm.
+                </item>
+                <item>
+                    Confirm module paths and argument names with the `list_pipeline_capabilities`
+                    tool before emitting YAML - do not guess a `module` path or an `args` key.
+                </item>
+                <item>
+                    Only after confirmation, run the pipeline:
+                    <code lang="bash">uv run python run.py &lt;file&gt;</code>
+                    The `site`, `asset`, and `path` fields may be Jinja placeholders that
+                    `run.py` fills from `-v key=value` flags, so one saved pipeline can be
+                    reused across many logs.
+                </item>
+            </list>
+        </stepwise-instructions>
+    </task>
+
+    <hint>
+        Two mode templates. Substitute the event topic, predicate, window, and data source.
+
+        reduce mode - one reduced bag, everything else discarded:
+        <code lang="yaml">
+            name: hard_decel_reduce
+            site: warehouse
+            asset: forklift
+            path: ./data/logs/flight_042
+            allow_failure: false
+            cadence:
+                topic: /imu
+                when: once_at_end          # the reduce task processes the whole source once
+            tasks:
+                - module: bagel.pipeline.tasks.reduce.ros2.db3
+                  args:
+                      event_topic: /imu
+                      predicate: "imu['linear_acceleration']['x'] &lt; -10"
+                      pre_seconds: 10
+                      post_seconds: 10
+                      debounce_seconds: 2
+        </code>
+
+        snippet mode - one clip per event:
+        <code lang="yaml">
+            name: hard_decel_snippets
+            site: warehouse
+            asset: forklift
+            path: ./data/logs/flight_042
+            allow_failure: false
+            cadence:
+                topic: /imu
+                when:
+                    on_event:              # fires once on each rising edge of the predicate
+                        predicate: "imu['linear_acceleration']['x'] &lt; -10"
+                        debounce: {last: 2, unit: second}
+            tasks:
+                - module: bagel.pipeline.tasks.snippet.ros2.db3
+                  lookback: {last: 10, unit: second}   # 10s before each event
+                  args: {post_seconds: 10}             # 10s after each event
+        </code>
+    </hint>
+
+    <output-format>
+        First show the proposed pipeline YAML in a fenced code block and the
+        `preview_pipeline` summary (event count and kept fraction). Do not run the pipeline
+        until the user confirms. Keep the predicate and window exactly as previewed so the
+        run matches what the user approved.
+    </output-format>
+</poml>

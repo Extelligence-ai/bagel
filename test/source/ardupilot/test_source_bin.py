@@ -1,6 +1,6 @@
 import pytest
 
-from src.source.ardupilot import bin as ardubin
+from bagel.source.ardupilot import bin as ardubin
 
 
 def test_source_factory() -> None:

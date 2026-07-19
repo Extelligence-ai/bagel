@@ -12,8 +12,8 @@ import os
 
 import pytest
 
-from src.di.types import data_source
-from src.source import postgres
+from bagel.di.types import data_source
+from bagel.source import postgres
 
 PG_URL = os.environ.get("BAGEL_POSTGRES_TEST_URL")
 
@@ -85,10 +85,11 @@ def test_timestamp_column_missing_raises_actionable_error(
 @requires_db
 def test_end_to_end_over_live_database() -> None:
     import server
-    from src.di import module
 
-    factory = module.provide("src.source.postgres", {"path": PG_URL})
-    registry = module.provide("src.topic.postgres", {})
+    from bagel.di import module
+
+    factory = module.provide("bagel.source.postgres", {"path": PG_URL})
+    registry = module.provide("bagel.topic.postgres", {})
     database = factory.build()
 
     topics = registry.available_topics(database)

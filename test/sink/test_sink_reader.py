@@ -7,13 +7,13 @@ import pyarrow as pa
 import pytest
 import yaml
 
-from src.di import module
-from src.di.types.base_module import BaseModule
-from src.di.types.data_source import DataSource, resolve
-from src.sink import base as sink_base
-from src.sink.buffer import TopicBufferWriter
-from src.sink.reader import TopicSinkReader
-from src.source import errors
+from bagel.di import module
+from bagel.di.types.base_module import BaseModule
+from bagel.di.types.data_source import DataSource, resolve
+from bagel.sink import base as sink_base
+from bagel.sink.buffer import TopicBufferWriter
+from bagel.sink.reader import TopicSinkReader
+from bagel.source import errors
 
 STRUCT = pa.struct([pa.field("x", pa.float64()), pa.field("note", pa.string())])
 
@@ -78,7 +78,7 @@ def test_sink_directory_resolves_and_full_adapter_chain_reads(sink_dir: pathlib.
 
 
 def test_source_factory_rejects_non_sink_directories(tmp_path: pathlib.Path) -> None:
-    from src.source.bagel.sink import SourceFactory
+    from bagel.source.bagel.sink import SourceFactory
 
     with pytest.raises(FileNotFoundError):
         SourceFactory(str(tmp_path / "missing"))

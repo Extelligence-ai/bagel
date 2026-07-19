@@ -73,7 +73,7 @@ no rosidl typesupport:
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.reduce.mcap
+  - module: bagel.pipeline.tasks.reduce.mcap
     args:
       event_topic: /imu
       predicate: "\"/imu\"['linear_acceleration']['x'] < -10"
@@ -94,7 +94,7 @@ cadence:
       predicate: "\"/imu\"['linear_acceleration']['x'] < -10"
       debounce: {last: 2, unit: second}
 tasks:
-  - module: src.pipeline.tasks.snippet.mcap
+  - module: bagel.pipeline.tasks.snippet.mcap
     lookback: {last: 10, unit: second}
     args: {post_seconds: 10}
 ```
@@ -114,7 +114,7 @@ cadence:
       debounce: {last: 2, unit: second}
       forward: {last: 10, unit: second}   # buffer 10s past each event before firing
 tasks:
-  - module: src.pipeline.tasks.snippet.ros2.db3
+  - module: bagel.pipeline.tasks.snippet.ros2.db3
     lookback: {last: 10, unit: second}
     args: {post_seconds: 10}
 ```
@@ -148,9 +148,9 @@ SHA-256 already matches the remote object are skipped, so re-runs are cheap:
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.reduce.mcap
+  - module: bagel.pipeline.tasks.reduce.mcap
     args: { event_topic: /imu, predicate: "...", pre_seconds: 10, post_seconds: 10 }
-  - module: src.pipeline.tasks.upload.s3
+  - module: bagel.pipeline.tasks.upload.s3
     args:
       bucket: drone-fleet-reduced
       source: ~/.bagel/artifacts        # file, directory, or glob
@@ -183,7 +183,7 @@ config = {
     "allow_failure": False,
     "cadence": {"topic": "message", "when": "once_at_end"},
     "tasks": [{
-        "module": "src.pipeline.tasks.write_topics_to_file",
+        "module": "bagel.pipeline.tasks.write_topics_to_file",
         "setup": {"timestamp_column": "t", "timestamp_format": "seconds"},
         "args": {"topics": ["message"], "output_format": "csv"},
     }],

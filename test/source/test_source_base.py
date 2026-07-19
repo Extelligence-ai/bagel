@@ -1,7 +1,7 @@
 import pathlib
 from typing import Any
 
-from src.source import base
+from bagel.source import base
 
 
 class MockBoundedSourceFactory(base.BoundedSourceFactory):

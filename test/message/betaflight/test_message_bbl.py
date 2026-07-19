@@ -1,6 +1,6 @@
-from src.message.betaflight.bbl import MessageDataset
-from src.source.betaflight.bbl import SourceFactory
-from src.topic.betaflight.bbl import TopicRegistry
+from bagel.message.betaflight.bbl import MessageDataset
+from bagel.source.betaflight.bbl import SourceFactory
+from bagel.topic.betaflight.bbl import TopicRegistry
 
 
 def test_message_dataset() -> None:

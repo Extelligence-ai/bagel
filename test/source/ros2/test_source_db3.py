@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from src.source.ros2 import db3
+from bagel.source.ros2 import db3
 
 ROS_DISTRO = os.getenv("ROS_DISTRO")
 

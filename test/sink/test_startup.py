@@ -10,8 +10,8 @@ pytest.importorskip("paho")
 import yaml
 from conftest import FakePahoClient
 
-from settings import settings
-from src.sink import mqtt, startup
+from bagel.settings import settings
+from bagel.sink import mqtt, startup
 
 PIPELINE = {
     "name": "freezer_excursion",
@@ -24,7 +24,7 @@ PIPELINE = {
     },
     "tasks": [
         {
-            "module": "src.pipeline.tasks.write_topics_to_file",
+            "module": "bagel.pipeline.tasks.write_topics_to_file",
             "args": {"topics": ["freezer/1/status"], "output_format": "csv"},
             "lookback": {"last": 60, "unit": "second"},
         }
@@ -69,7 +69,7 @@ def test_pipeline_topic_must_be_subscribed(make_sink) -> None:  # noqa: ANN001
 def test_manifest_startup_end_to_end(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from src.sink import base as sink_base
+    from bagel.sink import base as sink_base
 
     sink_base._global_sink_singletons.clear()
     fake = FakePahoClient()

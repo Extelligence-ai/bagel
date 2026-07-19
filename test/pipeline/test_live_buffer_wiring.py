@@ -10,8 +10,8 @@ from unittest.mock import MagicMock
 
 import pyarrow as pa
 
-from src.pipeline.base import Cadence, Frequency, Lookback, OnEvent, Unit
-from src.sink.buffer import TopicBufferWriter
+from bagel.pipeline.base import Cadence, Frequency, Lookback, OnEvent, Unit
+from bagel.sink.buffer import TopicBufferWriter
 
 STRUCT = pa.struct([("ax", pa.float64()), ("t", pa.float64())])
 

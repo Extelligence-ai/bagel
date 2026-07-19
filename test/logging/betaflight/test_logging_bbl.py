@@ -1,8 +1,8 @@
 import pytest
 
-from src.logging.betaflight.bbl import LoggingDataset, LoggingMessagesNotSupportedError
-from src.source.betaflight.bbl import SourceFactory
-from src.topic.betaflight.bbl import TopicRegistry
+from bagel.logging.betaflight.bbl import LoggingDataset, LoggingMessagesNotSupportedError
+from bagel.source.betaflight.bbl import SourceFactory
+from bagel.topic.betaflight.bbl import TopicRegistry
 
 
 def test_should_raise() -> None:

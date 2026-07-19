@@ -25,7 +25,7 @@ signal**, named the way PlotJuggler users expect (`/imu/linear_acceleration/x`):
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.write_topics_to_file
+  - module: bagel.pipeline.tasks.write_topics_to_file
     args: {topics: ["/imu"], output_format: csv, flatten: true}
     lookback: {last: 10, unit: second}
 ```

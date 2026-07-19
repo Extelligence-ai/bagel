@@ -1,6 +1,6 @@
 import pytest
 
-from src.source.ros1 import bag
+from bagel.source.ros1 import bag
 
 
 def test_source_factory() -> None:

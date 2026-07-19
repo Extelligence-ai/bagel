@@ -1,6 +1,6 @@
-from src.logging.px4.ulg import LoggingDataset
-from src.source.px4.ulg import SourceFactory
-from src.topic.px4.ulg import TopicRegistry
+from bagel.logging.px4.ulg import LoggingDataset
+from bagel.source.px4.ulg import SourceFactory
+from bagel.topic.px4.ulg import TopicRegistry
 
 
 def test_logging_dataset() -> None:

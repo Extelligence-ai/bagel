@@ -1,6 +1,6 @@
-from src.message.px4.ulg import MessageDataset
-from src.source.px4.ulg import SourceFactory
-from src.topic.px4.ulg import TopicRegistry
+from bagel.message.px4.ulg import MessageDataset
+from bagel.source.px4.ulg import SourceFactory
+from bagel.topic.px4.ulg import TopicRegistry
 
 
 def test_message_dataset() -> None:

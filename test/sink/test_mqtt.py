@@ -11,9 +11,9 @@ pytest.importorskip("paho")
 
 from conftest import _PORT_COUNTER, FakePahoClient, MakeSink
 
-from settings import settings
-from src.pipeline.base import Cadence, OnEvent
-from src.sink import mqtt
+from bagel.pipeline.base import Cadence, OnEvent
+from bagel.settings import settings
+from bagel.sink import mqtt
 
 # -- pure helpers ------------------------------------------------------------------
 
@@ -133,7 +133,7 @@ def test_close_unsubscribes_and_disconnects(make_sink: MakeSink) -> None:
 
 
 def test_guess_defaults() -> None:
-    from src.di.types import topic_sink
+    from bagel.di.types import topic_sink
 
     assert topic_sink.guess_port(topic_sink.TopicSink.MQTT) == 1883
     assert topic_sink.guess_host(topic_sink.TopicSink.MQTT) in (
@@ -245,7 +245,7 @@ def test_wildcard_plus_matches_single_level_only(make_sink: MakeSink) -> None:
 
 
 def test_wildcard_without_matches_raises(make_sink: MakeSink) -> None:
-    from src.sink import base as sink_base
+    from bagel.sink import base as sink_base
 
     sink = make_sink(retained={"plant/pump": [b'{"v": 1}']})
     with pytest.raises(sink_base.TopicNotFoundError):

@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.pipeline import windows
+from bagel.pipeline import windows
 
 
 def test_rising_edges_fires_once_per_sustained_event() -> None:

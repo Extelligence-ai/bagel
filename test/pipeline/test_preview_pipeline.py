@@ -6,7 +6,7 @@ source factory -> DuckDB relation -> predicate evaluation -> window merge -> sum
 telemetry with two sustained hard-braking events (accel_x < -10).
 """
 
-import server
+from bagel import server
 
 SAMPLE = "./data/sample/pyarrow/csv/flight.csv"
 # The CSV row is a DuckDB STRUCT named after the topic ("message"), so fields are

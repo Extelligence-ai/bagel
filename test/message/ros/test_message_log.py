@@ -1,13 +1,13 @@
 import duckdb
 import pytest
 
-from src.di import module
-from src.di.types.base_module import BaseModule
-from src.di.types.data_source import DataSource, resolve
-from src.message.ros.log import MessageDataset
-from src.source.ros.log import SourceFactory
-from src.topic import base
-from src.topic.ros.log import TopicRegistry
+from bagel.di import module
+from bagel.di.types.base_module import BaseModule
+from bagel.di.types.data_source import DataSource, resolve
+from bagel.message.ros.log import MessageDataset
+from bagel.source.ros.log import SourceFactory
+from bagel.topic import base
+from bagel.topic.ros.log import TopicRegistry
 
 
 def test_resolves_ros_log_paths() -> None:

@@ -10,8 +10,8 @@ import pathlib
 
 import pytest
 
-import server
-from settings import settings
+from bagel import server
+from bagel.settings import settings
 
 SAMPLE = "./data/sample/pyarrow/csv/flight.csv"
 SAMPLE_ARGS = {"timestamp_column": "t", "timestamp_format": "seconds"}
@@ -55,7 +55,7 @@ def test_exported_mcap_is_readable_by_bagel_itself() -> None:
     result = _export()
 
     # Dogfood: resolve + query the export through Bagel's own MCAP jsonschema reader.
-    from src.di.types.data_source import DataSource, resolve
+    from bagel.di.types.data_source import DataSource, resolve
 
     assert resolve(result["mcap"]) is DataSource.MCAP
     rows = server.query_messages(

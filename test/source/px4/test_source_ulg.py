@@ -1,6 +1,6 @@
 import pytest
 
-from src.source.px4 import ulg
+from bagel.source.px4 import ulg
 
 
 def test_source_factory() -> None:

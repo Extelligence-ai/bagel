@@ -3,8 +3,8 @@
 import duckdb
 import pytest
 
-from settings import settings
-from src.pipeline.base import Cadence, Frequency, Lookback, OnceAtEnd, OnEvent, Pipeline, Unit
+from bagel.pipeline.base import Cadence, Frequency, Lookback, OnceAtEnd, OnEvent, Pipeline, Unit
+from bagel.settings import settings
 
 TS = settings.TIMESTAMP_SECONDS_COLUMN_NAME
 

@@ -1,6 +1,6 @@
-from src.message.ardupilot.bin import MessageDataset
-from src.source.ardupilot.bin import SourceFactory
-from src.topic.ardupilot.bin import TopicRegistry
+from bagel.message.ardupilot.bin import MessageDataset
+from bagel.source.ardupilot.bin import SourceFactory
+from bagel.topic.ardupilot.bin import TopicRegistry
 
 
 def test_message_dataset() -> None:

@@ -65,7 +65,7 @@ cadence:
       debounce: {last: 120, unit: second}
       forward: {last: 30, unit: second}   # capture 30s after the excursion begins
 tasks:
-  - module: src.pipeline.tasks.write_topics_to_file
+  - module: bagel.pipeline.tasks.write_topics_to_file
     lookback: {last: 30, unit: second}
     args: {topics: ["freezer/1/status"], output_format: csv}
 ```
@@ -99,7 +99,7 @@ subscriptions:
         topic: freezer/1/status
         when: {on_event: {predicate: "\"freezer/1/status\"['temp'] > -15"}}
       tasks:
-        - module: src.pipeline.tasks.write_topics_to_file
+        - module: bagel.pipeline.tasks.write_topics_to_file
           args: {topics: ["freezer/1/status"], output_format: csv}
           lookback: {last: 60, unit: second}
 ```

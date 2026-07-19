@@ -9,10 +9,10 @@ import pathlib
 
 import pytest
 
-import server
-from settings import settings
-from src.di import module
-from src.source import mcap as mcap_source
+from bagel import server
+from bagel.di import module
+from bagel.settings import settings
+from bagel.source import mcap as mcap_source
 
 SAMPLE_DIR = "./data/sample/ros2/mcap_zstd"
 SAMPLE_FILE = "./data/sample/ros2/mcap_zstd/part_0.mcap.zstd"
@@ -24,8 +24,8 @@ def _isolated_cache(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_zstd_bag_reads_through_generic_path() -> None:
-    factory = module.provide("src.source.mcap", {"path": SAMPLE_DIR})
-    registry = module.provide("src.topic.mcap", {})
+    factory = module.provide("bagel.source.mcap", {"path": SAMPLE_DIR})
+    registry = module.provide("bagel.topic.mcap", {})
     bag = factory.build()
 
     topics = registry.available_topics(bag)
@@ -43,8 +43,8 @@ def test_zstd_bag_reads_through_generic_path() -> None:
 
 
 def test_bare_zstd_file_reads_too() -> None:
-    factory = module.provide("src.source.mcap", {"path": SAMPLE_FILE})
-    registry = module.provide("src.topic.mcap", {})
+    factory = module.provide("bagel.source.mcap", {"path": SAMPLE_FILE})
+    registry = module.provide("bagel.topic.mcap", {})
     assert "/rosout" in registry.available_topics(factory.build())
 
 

@@ -15,8 +15,8 @@ import pytest
 
 pytest.importorskip("influxdb_client_3")
 
-from src.di.types import data_source
-from src.source import influxdb
+from bagel.di.types import data_source
+from bagel.source import influxdb
 
 INFLUX_URL = os.environ.get("BAGEL_INFLUXDB_TEST_URL")
 
@@ -67,10 +67,11 @@ def test_parse_url_requires_influxdb_scheme() -> None:
 @requires_db
 def test_end_to_end_over_live_influxdb() -> None:
     import server
-    from src.di import module
 
-    factory = module.provide("src.source.influxdb", {"path": INFLUX_URL})
-    registry = module.provide("src.topic.influxdb", {})
+    from bagel.di import module
+
+    factory = module.provide("bagel.source.influxdb", {"path": INFLUX_URL})
+    registry = module.provide("bagel.topic.influxdb", {})
     database = factory.build()
 
     topics = registry.available_topics(database)

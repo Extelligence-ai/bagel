@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 import botocore.exceptions
 import pytest
 
-from src.pipeline import base
-from src.pipeline.tasks.upload.base import glob_root
-from src.pipeline.tasks.upload.s3 import UploadFilesToS3
+from bagel.pipeline import base
+from bagel.pipeline.tasks.upload.base import glob_root
+from bagel.pipeline.tasks.upload.s3 import UploadFilesToS3
 
 NO_SUCH_KEY = botocore.exceptions.ClientError(
     {"Error": {"Code": "NoSuchKey"}}, "GetObjectAttributes"
@@ -32,7 +32,7 @@ def _uploaded_keys(client: MagicMock) -> list[str]:
 
 
 def _run(task: UploadFilesToS3, client: MagicMock, asof: float = 1e12) -> None:
-    with patch("src.pipeline.tasks.upload.s3.boto3.client", return_value=client):
+    with patch("bagel.pipeline.tasks.upload.s3.boto3.client", return_value=client):
         task.execute(asof_seconds=asof, lookback=None)
 
 
@@ -76,7 +76,7 @@ def test_glob_source_relativizes_to_pattern_root(tmp_path: pathlib.Path) -> None
 
 
 def test_skip_existing_with_matching_checksum(tmp_path: pathlib.Path) -> None:
-    from src.artifacts import checksum_sha256
+    from bagel.artifacts import checksum_sha256
 
     source = tmp_path / "same.bin"
     source.write_bytes(b"identical")
@@ -120,7 +120,7 @@ def test_filter_modified_at_uploads_only_files_in_window(tmp_path: pathlib.Path)
 
     task = UploadFilesToS3(bucket="bkt", source=str(tmp_path), filter_modified_at=True)
     client = _client()
-    with patch("src.pipeline.tasks.upload.s3.boto3.client", return_value=client):
+    with patch("bagel.pipeline.tasks.upload.s3.boto3.client", return_value=client):
         task.execute(
             asof_seconds=1000.0, lookback=base.Lookback(last=60, unit=base.Unit.SECOND)
         )
@@ -131,7 +131,7 @@ def test_filter_modified_at_uploads_only_files_in_window(tmp_path: pathlib.Path)
 def test_frame_lookback_rejected_with_filter(tmp_path: pathlib.Path) -> None:
     task = UploadFilesToS3(bucket="bkt", source=str(tmp_path), filter_modified_at=True)
     with (
-        patch("src.pipeline.tasks.upload.s3.boto3.client", return_value=_client()),
+        patch("bagel.pipeline.tasks.upload.s3.boto3.client", return_value=_client()),
         pytest.raises(ValueError, match="FRAME"),
     ):
         task.execute(asof_seconds=1.0, lookback=base.Lookback(last=5, unit=base.Unit.FRAME))
@@ -145,11 +145,11 @@ def test_empty_bucket_or_source_rejected() -> None:
 
 
 def test_registry_discovers_upload_task() -> None:
-    from src.pipeline import capabilities
+    from bagel.pipeline import capabilities
 
     entries = capabilities.list_capabilities()
     upload = next(
-        (e for e in entries if e["module"] == "src.pipeline.tasks.upload.s3"), None
+        (e for e in entries if e["module"] == "bagel.pipeline.tasks.upload.s3"), None
     )
     assert upload is not None
     assert upload["kind"] == "task"

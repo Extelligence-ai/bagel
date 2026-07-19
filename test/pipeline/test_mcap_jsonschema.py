@@ -12,10 +12,10 @@ import pyarrow as pa
 import pytest
 from mcap.writer import Writer
 
-import server
-from settings import settings
-from src.di.types import data_source
-from src.topic.mcap import jsonschema_to_struct
+from bagel import server
+from bagel.di.types import data_source
+from bagel.settings import settings
+from bagel.topic.mcap import jsonschema_to_struct
 
 EPOCH = 1_700_000_000.0
 SECOND_NS = 1_000_000_000
@@ -115,10 +115,10 @@ def test_jsonschema_mapper_edge_cases() -> None:
 def test_end_to_end_jsonschema_mcap(jsonschema_mcap: pathlib.Path) -> None:
     assert data_source.resolve(str(jsonschema_mcap)) == data_source.DataSource.MCAP
 
-    from src.di import module
+    from bagel.di import module
 
-    factory = module.provide("src.source.mcap", {"path": str(jsonschema_mcap)})
-    registry = module.provide("src.topic.mcap", {})
+    factory = module.provide("bagel.source.mcap", {"path": str(jsonschema_mcap)})
+    registry = module.provide("bagel.topic.mcap", {})
     bag = factory.build()
 
     assert registry.available_topics(bag) == ["/readings"]

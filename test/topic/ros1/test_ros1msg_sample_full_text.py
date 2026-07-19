@@ -1,6 +1,6 @@
 import textwrap
 
-from src.topic.ros1 import definition, parse
+from bagel.topic.ros1 import definition, parse
 
 
 def test_should_parse_sample_full_text() -> None:

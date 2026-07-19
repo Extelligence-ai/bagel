@@ -3,7 +3,7 @@
 import pyarrow as pa
 import pytest
 
-from src.pipeline import live
+from bagel.pipeline import live
 
 
 def _events(

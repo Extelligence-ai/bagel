@@ -1,6 +1,6 @@
 import pytest
 
-from src.source.betaflight import bbl
+from bagel.source.betaflight import bbl
 
 
 def test_source_factory() -> None:

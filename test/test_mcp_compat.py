@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src import mcp_compat
+from bagel import mcp_compat
 
 
 def test_create_server_exposes_the_decorator_api() -> None:

@@ -6,7 +6,7 @@ everywhere): if `args` contained its own "path", the old order let it silently
 override the path the caller actually asked for.
 """
 
-import server
+from bagel import server
 
 SAMPLE = "./data/sample/pyarrow/csv/flight.csv"
 POISONED = {

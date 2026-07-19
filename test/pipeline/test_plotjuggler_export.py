@@ -6,9 +6,9 @@ import xml.etree.ElementTree as ET
 import duckdb
 import pytest
 
-import server
-from settings import settings
-from src.pipeline import plotjuggler
+from bagel import server
+from bagel.pipeline import plotjuggler
+from bagel.settings import settings
 
 TS = settings.TIMESTAMP_SECONDS_COLUMN_NAME
 SAMPLE = "./data/sample/pyarrow/csv/flight.csv"

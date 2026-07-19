@@ -10,8 +10,8 @@ pytest.importorskip("azure.storage.blob")
 
 from azure.core.exceptions import ResourceNotFoundError
 
-from src.pipeline.tasks.upload.azure import UploadFilesToAzure, md5_digest
-from src.pipeline.tasks.upload.gcs import UploadFilesToGcs, md5_base64
+from bagel.pipeline.tasks.upload.azure import UploadFilesToAzure, md5_digest
+from bagel.pipeline.tasks.upload.gcs import UploadFilesToGcs, md5_base64
 
 # -- GCS -----------------------------------------------------------------------------
 
@@ -38,7 +38,7 @@ def test_gcs_uploads_directory_under_prefix(tmp_path: pathlib.Path) -> None:
 
     client = _gcs_client()
     task = UploadFilesToGcs(bucket="bkt", source=str(tmp_path), prefix="fleet/run1")
-    with patch("src.pipeline.tasks.upload.gcs.storage.Client", return_value=client):
+    with patch("bagel.pipeline.tasks.upload.gcs.storage.Client", return_value=client):
         task.execute(asof_seconds=1e12, lookback=None)
 
     assert _gcs_uploaded_keys(client) == ["fleet/run1/a.csv", "fleet/run1/sub/b.csv"]
@@ -50,7 +50,7 @@ def test_gcs_skips_matching_md5(tmp_path: pathlib.Path) -> None:
 
     client = _gcs_client(remote_md5=md5_base64(source))
     task = UploadFilesToGcs(bucket="bkt", source=str(source))
-    with patch("src.pipeline.tasks.upload.gcs.storage.Client", return_value=client):
+    with patch("bagel.pipeline.tasks.upload.gcs.storage.Client", return_value=client):
         task.execute(asof_seconds=1e12, lookback=None)
 
     client.bucket.return_value.blob.assert_not_called()
@@ -62,7 +62,7 @@ def test_gcs_uploads_when_md5_differs(tmp_path: pathlib.Path) -> None:
 
     client = _gcs_client(remote_md5="c29tZXRoaW5nIGVsc2U=")
     task = UploadFilesToGcs(bucket="bkt", source=str(source))
-    with patch("src.pipeline.tasks.upload.gcs.storage.Client", return_value=client):
+    with patch("bagel.pipeline.tasks.upload.gcs.storage.Client", return_value=client):
         task.execute(asof_seconds=1e12, lookback=None)
 
     assert _gcs_uploaded_keys(client) == ["changed.bin"]
@@ -96,7 +96,7 @@ def test_azure_uploads_with_content_md5(tmp_path: pathlib.Path) -> None:
     client = _azure_client()
     task = UploadFilesToAzure(container="ctr", source=str(source), connection_string="cs")
     with patch(
-        "src.pipeline.tasks.upload.azure.ContainerClient.from_connection_string",
+        "bagel.pipeline.tasks.upload.azure.ContainerClient.from_connection_string",
         return_value=client,
     ):
         task.execute(asof_seconds=1e12, lookback=None)
@@ -114,7 +114,7 @@ def test_azure_skips_matching_md5(tmp_path: pathlib.Path) -> None:
     client = _azure_client(remote_md5=md5_digest(source))
     task = UploadFilesToAzure(container="ctr", source=str(source), connection_string="cs")
     with patch(
-        "src.pipeline.tasks.upload.azure.ContainerClient.from_connection_string",
+        "bagel.pipeline.tasks.upload.azure.ContainerClient.from_connection_string",
         return_value=client,
     ):
         task.execute(asof_seconds=1e12, lookback=None)
@@ -129,17 +129,17 @@ def test_azure_requires_connection_string(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_registry_discovers_all_upload_tasks() -> None:
-    from src.pipeline import capabilities
+    from bagel.pipeline import capabilities
 
     modules = {
         entry["module"]: entry
         for entry in capabilities.list_capabilities()
-        if entry["module"].startswith("src.pipeline.tasks.upload.")
-        and entry["module"] != "src.pipeline.tasks.upload.base"
+        if entry["module"].startswith("bagel.pipeline.tasks.upload.")
+        and entry["module"] != "bagel.pipeline.tasks.upload.base"
     }
     assert set(modules) == {
-        "src.pipeline.tasks.upload.s3",
-        "src.pipeline.tasks.upload.gcs",
-        "src.pipeline.tasks.upload.azure",
+        "bagel.pipeline.tasks.upload.s3",
+        "bagel.pipeline.tasks.upload.gcs",
+        "bagel.pipeline.tasks.upload.azure",
     }
     assert all(entry["kind"] == "task" for entry in modules.values())

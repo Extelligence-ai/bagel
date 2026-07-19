@@ -8,10 +8,10 @@ import pytest
 can = pytest.importorskip("can", reason="python-can is optional (uv sync --group automotive)")
 cantools = pytest.importorskip("cantools")
 
-from src.di import module  # noqa: E402
-from src.di.types.base_module import BaseModule  # noqa: E402
-from src.di.types.data_source import DataSource, resolve  # noqa: E402
-from src.topic import base as topic_base  # noqa: E402
+from bagel.di import module  # noqa: E402
+from bagel.di.types.base_module import BaseModule  # noqa: E402
+from bagel.di.types.data_source import DataSource, resolve  # noqa: E402
+from bagel.topic import base as topic_base  # noqa: E402
 
 DBC = """
 VERSION ""
@@ -119,7 +119,7 @@ def test_time_window(capture: tuple[pathlib.Path, pathlib.Path]) -> None:
 
 
 def test_missing_dbc_fails_cleanly(capture: tuple[pathlib.Path, pathlib.Path]) -> None:
-    from src.source.automotive.can import SourceFactory
+    from bagel.source.automotive.can import SourceFactory
 
     with pytest.raises(FileNotFoundError, match="DBC"):
         SourceFactory(str(capture[0]), dbc="./no/such.dbc")

@@ -9,8 +9,8 @@ import pathlib
 import pytest
 import yaml
 
-import server
-from settings import settings
+from bagel import server
+from bagel.settings import settings
 
 SAMPLE = "./data/sample/pyarrow/csv/flight.csv"
 
@@ -25,7 +25,7 @@ def _config() -> dict:
         "cadence": {"topic": "message", "when": "once_at_end"},
         "tasks": [
             {
-                "module": "src.pipeline.tasks.write_topics_to_file",
+                "module": "bagel.pipeline.tasks.write_topics_to_file",
                 "setup": {"timestamp_column": "t", "timestamp_format": "seconds"},
                 "args": {"topics": ["message"], "output_format": "csv"},
             }

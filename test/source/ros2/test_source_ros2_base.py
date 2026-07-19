@@ -4,8 +4,8 @@ import tempfile
 
 import pytest
 
-from src.source import errors
-from src.source.ros2 import mcap
+from bagel.source import errors
+from bagel.source.ros2 import mcap
 
 
 def test_source_factory() -> None:

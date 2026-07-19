@@ -1,5 +1,5 @@
-from src.source.ardupilot.bin import SourceFactory
-from src.topic.ardupilot.bin import TopicRegistry
+from bagel.source.ardupilot.bin import SourceFactory
+from bagel.topic.ardupilot.bin import TopicRegistry
 
 
 def test_topic_registry() -> None:

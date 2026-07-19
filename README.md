@@ -230,11 +230,11 @@ Can’t find your LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/
 
 Bagel learns new capabilities through [POML](https://microsoft.github.io/poml/latest/)
 files—a structured set of instructions that describe a “trick,”
-such as [computing latency statistics](./src/agent/diagnose/latency.poml).
+such as [computing latency statistics](./bagel/agent/diagnose/latency.poml).
 
 #### ✍️ Create a .poml file
 
-For example, let’s define `./src/agent/examples/woof.poml`.
+For example, let’s define `./bagel/agent/examples/woof.poml`.
 
 ```poml
 <poml>
@@ -253,7 +253,7 @@ For example, let’s define `./src/agent/examples/woof.poml`.
 
 Prompt Bagel:
 
-> Run the POML capability "./src/agent/examples/woof.poml" on the ROS2 bag "./data/sample/ros2/mcap".
+> Run the POML capability "./bagel/agent/examples/woof.poml" on the ROS2 bag "./data/sample/ros2/mcap".
 
 Result:
 

@@ -1,6 +1,6 @@
 """Tests for pipeline capability introspection."""
 
-from src.pipeline import capabilities
+from bagel.pipeline import capabilities
 
 
 def _by_module(entries: list[dict], module: str) -> dict | None:
@@ -10,7 +10,7 @@ def _by_module(entries: list[dict], module: str) -> dict | None:
 def test_discovers_the_sql_gate() -> None:
     # gates.sql has no heavy dependencies, so it is always available.
     entries = capabilities.list_capabilities()
-    sql_gate = _by_module(entries, "src.pipeline.gates.sql")
+    sql_gate = _by_module(entries, "bagel.pipeline.gates.sql")
     assert sql_gate is not None
     assert sql_gate["available"] is True
     assert sql_gate["kind"] == "gate"

@@ -4,8 +4,8 @@ import textwrap
 import lark
 import pytest
 
-from src.topic.ros2 import definition
-from src.topic.ros2.ros2msg import parse
+from bagel.topic.ros2 import definition
+from bagel.topic.ros2.ros2msg import parse
 
 
 def test_should_parse_correct_bool_fields_and_constants() -> None:

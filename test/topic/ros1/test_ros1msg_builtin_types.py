@@ -4,7 +4,7 @@ import textwrap
 import lark
 import pytest
 
-from src.topic.ros1 import definition, parse
+from bagel.topic.ros1 import definition, parse
 
 
 def test_should_parse_correct_bool_fields_and_constants() -> None:

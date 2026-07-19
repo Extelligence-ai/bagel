@@ -6,8 +6,8 @@ import pathlib
 import duckdb
 import pytest
 
-import server
-from settings import settings
+from bagel import server
+from bagel.settings import settings
 
 SAMPLE = "./data/sample/pyarrow/csv/flight.csv"
 SAMPLE_ARGS = {"timestamp_column": "t", "timestamp_format": "seconds"}

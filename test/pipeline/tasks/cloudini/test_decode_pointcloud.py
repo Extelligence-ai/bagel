@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.tasks.cloudini.decode_pointcloud import (
+from bagel.pipeline.tasks.cloudini.decode_pointcloud import (
     DecodePointCloudTask,
     _cloudini_available,
 )
@@ -31,20 +31,20 @@ def test_yaml_opt_out_skips_execution(tmp_path: pathlib.Path) -> None:
     assert not any(tmp_path.iterdir())
 
 
-@patch("src.pipeline.tasks.cloudini.decode_pointcloud._HAS_CLOUDINI", False)
+@patch("bagel.pipeline.tasks.cloudini.decode_pointcloud._HAS_CLOUDINI", False)
 def test_missing_package_reports_unavailable() -> None:
     assert not _cloudini_available()
 
 
-@patch("src.pipeline.tasks.cloudini.decode_pointcloud._HAS_CLOUDINI", True)
-@patch("src.pipeline.tasks.cloudini.decode_pointcloud.settings")
+@patch("bagel.pipeline.tasks.cloudini.decode_pointcloud._HAS_CLOUDINI", True)
+@patch("bagel.pipeline.tasks.cloudini.decode_pointcloud.settings")
 def test_global_flag_disabled(mock_settings: MagicMock) -> None:
     mock_settings.CLOUDINI_ENABLED = False
     assert not _cloudini_available()
 
 
-@patch("src.pipeline.tasks.cloudini.decode_pointcloud._HAS_CLOUDINI", True)
-@patch("src.pipeline.tasks.cloudini.decode_pointcloud.settings")
+@patch("bagel.pipeline.tasks.cloudini.decode_pointcloud._HAS_CLOUDINI", True)
+@patch("bagel.pipeline.tasks.cloudini.decode_pointcloud.settings")
 def test_global_flag_enabled(mock_settings: MagicMock) -> None:
     mock_settings.CLOUDINI_ENABLED = True
     assert _cloudini_available()
@@ -76,8 +76,8 @@ def test_extract_raw_data_from_list() -> None:
     assert task._extract_raw_data(msg) == bytes([1, 2, 3])
 
 
-@patch("src.pipeline.tasks.cloudini.decode_pointcloud._cloudini_available", return_value=True)
-@patch("src.pipeline.tasks.cloudini.decode_pointcloud._create_decoder")
+@patch("bagel.pipeline.tasks.cloudini.decode_pointcloud._cloudini_available", return_value=True)
+@patch("bagel.pipeline.tasks.cloudini.decode_pointcloud._create_decoder")
 def test_execute_decodes_and_writes_npz(
     mock_create_decoder: MagicMock, mock_available: MagicMock, tmp_path: pathlib.Path
 ) -> None:
@@ -114,8 +114,8 @@ def test_execute_decodes_and_writes_npz(
     assert len(npz_files) == 1
 
 
-@patch("src.pipeline.tasks.cloudini.decode_pointcloud._cloudini_available", return_value=True)
-@patch("src.pipeline.tasks.cloudini.decode_pointcloud._create_decoder")
+@patch("bagel.pipeline.tasks.cloudini.decode_pointcloud._cloudini_available", return_value=True)
+@patch("bagel.pipeline.tasks.cloudini.decode_pointcloud._create_decoder")
 def test_execute_decodes_and_writes_csv(
     mock_create_decoder: MagicMock, mock_available: MagicMock, tmp_path: pathlib.Path
 ) -> None:
@@ -152,8 +152,8 @@ def test_execute_decodes_and_writes_csv(
 
 
 def test_register() -> None:
-    from src.di.module import global_registry
-    from src.pipeline.tasks.cloudini.decode_pointcloud import register
+    from bagel.di.module import global_registry
+    from bagel.pipeline.tasks.cloudini.decode_pointcloud import register
 
     register()
-    assert "src.pipeline.tasks.cloudini.decode_pointcloud" in global_registry
+    assert "bagel.pipeline.tasks.cloudini.decode_pointcloud" in global_registry

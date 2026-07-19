@@ -7,9 +7,9 @@ import pytest
 
 pytest.importorskip("paho")
 
-from settings import settings
-from src.sink.sparkplug import decode
-from src.sink.sparkplug import sparkplug_b_minimal_pb2 as pb
+from bagel.settings import settings
+from bagel.sink.sparkplug import decode
+from bagel.sink.sparkplug import sparkplug_b_minimal_pb2 as pb
 
 # The fake-broker `make_sink` fixture comes from test/sink/conftest.py.
 

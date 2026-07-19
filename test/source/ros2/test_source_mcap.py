@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from src.source.ros2 import mcap
+from bagel.source.ros2 import mcap
 
 ROS_DISTRO = os.getenv("ROS_DISTRO")
 

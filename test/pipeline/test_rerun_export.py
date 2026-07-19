@@ -4,8 +4,8 @@ import pathlib
 
 import pytest
 
-import server
-from settings import settings
+from bagel import server
+from bagel.settings import settings
 
 rr = pytest.importorskip("rerun", reason="rerun-sdk is optional (uv sync --group viz)")
 

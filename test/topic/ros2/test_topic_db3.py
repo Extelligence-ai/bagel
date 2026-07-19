@@ -1,7 +1,7 @@
 import pyarrow as pa
 
-from src.source.ros2.db3 import SourceFactory
-from src.topic.ros2.db3 import TopicRegistry
+from bagel.source.ros2.db3 import SourceFactory
+from bagel.topic.ros2.db3 import TopicRegistry
 
 
 def test_topic_registry() -> None:

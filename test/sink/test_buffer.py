@@ -7,8 +7,8 @@ import threading
 import pyarrow as pa
 import pytest
 
-from src.pipeline.base import Cadence, Frequency, Lookback, OnEvent, Unit
-from src.sink.buffer import TopicBufferReader, TopicBufferWriter, _artifact_paths
+from bagel.pipeline.base import Cadence, Frequency, Lookback, OnEvent, Unit
+from bagel.sink.buffer import TopicBufferReader, TopicBufferWriter, _artifact_paths
 
 TOPIC = "/imu"
 STRUCT = pa.struct([pa.field("x", pa.float64()), pa.field("note", pa.string())])

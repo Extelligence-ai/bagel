@@ -7,9 +7,9 @@ from google.protobuf.wrappers_pb2 import DoubleValue
 from mcap.reader import make_reader
 from mcap_protobuf.writer import Writer as ProtobufWriter
 
-from settings import settings
-from src.pipeline import base
-from src.pipeline.tasks.snippet.mcap import SnipMcap
+from bagel.pipeline import base
+from bagel.pipeline.tasks.snippet.mcap import SnipMcap
+from bagel.settings import settings
 
 EPOCH = 1_700_000_000.0
 SECOND_NS = 1_000_000_000
@@ -76,7 +76,7 @@ def test_on_event_cadence_writes_one_clip_per_event(protobuf_mcap: pathlib.Path)
         },
         "tasks": [
             {
-                "module": "src.pipeline.tasks.snippet.mcap",
+                "module": "bagel.pipeline.tasks.snippet.mcap",
                 "lookback": {"last": 1, "unit": "second"},
                 "args": {"post_seconds": POST_SECONDS},
             }
