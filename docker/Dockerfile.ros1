@@ -119,35 +119,8 @@ EXPOSE ${JUPYTER_PORT}
 COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
 COPY --chown=${USERNAME}:${USERNAME} run.py ./run.py
 COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
-COPY --chown=${USERNAME}:${USERNAME} src/artifacts.py ./src/artifacts.py
-COPY --chown=${USERNAME}:${USERNAME} src/sink/base.py ./src/sink/base.py
-COPY --chown=${USERNAME}:${USERNAME} src/sink/buffer.py ./src/sink/buffer.py
-COPY --chown=${USERNAME}:${USERNAME} src/sink/reader.py ./src/sink/reader.py
-COPY --chown=${USERNAME}:${USERNAME} src/source/base.py ./src/source/base.py
-COPY --chown=${USERNAME}:${USERNAME} src/source/errors.py ./src/source/errors.py
-COPY --chown=${USERNAME}:${USERNAME} src/source/bagel ./src/source/bagel
-COPY --chown=${USERNAME}:${USERNAME} src/source/pyarrow ./src/source/pyarrow
-COPY --chown=${USERNAME}:${USERNAME} src/topic/base.py ./src/topic/base.py
-COPY --chown=${USERNAME}:${USERNAME} src/topic/bagel ./src/topic/bagel
-COPY --chown=${USERNAME}:${USERNAME} src/topic/pyarrow ./src/topic/pyarrow
-COPY --chown=${USERNAME}:${USERNAME} src/message/base.py ./src/message/base.py
-COPY --chown=${USERNAME}:${USERNAME} src/message/bagel ./src/message/bagel
-COPY --chown=${USERNAME}:${USERNAME} src/message/pyarrow ./src/message/pyarrow
+COPY --chown=${USERNAME}:${USERNAME} src ./src
 # MCAP as a first-class format (no ROS required)
-COPY --chown=${USERNAME}:${USERNAME} src/source/mcap.py ./src/source/mcap.py
-COPY --chown=${USERNAME}:${USERNAME} src/topic/mcap.py ./src/topic/mcap.py
-COPY --chown=${USERNAME}:${USERNAME} src/topic/ros2/definition.py ./src/topic/ros2/definition.py
-COPY --chown=${USERNAME}:${USERNAME} src/topic/ros2/protobuf ./src/topic/ros2/protobuf
-COPY --chown=${USERNAME}:${USERNAME} src/topic/ros2/ros2msg ./src/topic/ros2/ros2msg
-COPY --chown=${USERNAME}:${USERNAME} src/message/mcap.py ./src/message/mcap.py
-COPY --chown=${USERNAME}:${USERNAME} src/message/ros2/convert.py ./src/message/ros2/convert.py
-COPY --chown=${USERNAME}:${USERNAME} src/logging/mcap.py ./src/logging/mcap.py
-COPY --chown=${USERNAME}:${USERNAME} src/logging/base.py ./src/logging/base.py
-COPY --chown=${USERNAME}:${USERNAME} src/image/base.py ./src/image/base.py
-COPY --chown=${USERNAME}:${USERNAME} src/image/bagel ./src/image/bagel
-COPY --chown=${USERNAME}:${USERNAME} src/pipeline ./src/pipeline
-COPY --chown=${USERNAME}:${USERNAME} src/di ./src/di
-COPY --chown=${USERNAME}:${USERNAME} src/agent ./src/agent
 
 # Copy common test code
 COPY --chown=${USERNAME}:${USERNAME} test/test_artifacts.py ./test/test_artifacts.py
@@ -157,16 +130,14 @@ COPY --chown=${USERNAME}:${USERNAME} test/source/test_source_base.py ./test/sour
 # Copy configuration file
 COPY --chown=${USERNAME}:${USERNAME} .env ./.env
 
+# Fail the build if the server cannot even import -- catches missing-module
+# regressions (issue #151) at build time instead of at the user's terminal.
+RUN uv run python -c "import server"
+
 # Copy sample data
 COPY --chown=${USERNAME}:${USERNAME} data/sample/ ./data/sample/
 
 # Copy ROS1 specific source code
-COPY --chown=${USERNAME}:${USERNAME} src/sink/ros1 ./src/sink/ros1
-COPY --chown=${USERNAME}:${USERNAME} src/source/ros1 ./src/source/ros1
-COPY --chown=${USERNAME}:${USERNAME} src/topic/ros1 ./src/topic/ros1
-COPY --chown=${USERNAME}:${USERNAME} src/message/ros1 ./src/message/ros1
-COPY --chown=${USERNAME}:${USERNAME} src/logging/ros1 ./src/logging/ros1
-COPY --chown=${USERNAME}:${USERNAME} src/image/ros1 ./src/image/ros1
 
 # Copy ROS1 specific test code
 COPY --chown=${USERNAME}:${USERNAME} test/source/ros1 ./test/source/ros1

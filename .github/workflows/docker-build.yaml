@@ -1,0 +1,48 @@
+name: docker-build
+
+# Build every container on PRs that could affect them. Each Dockerfile ends with
+# an `import server` smoke check, so "the image builds" means "the server boots" —
+# a missing-module regression (issue #151) fails here, in review, not in a
+# user's terminal. publish.yaml then rebuilds and pushes on merge to main.
+
+on:
+  pull_request:
+    paths:
+      - "docker/**"
+      - "src/**"
+      - "server.py"
+      - "run.py"
+      - "settings.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".env"
+      - "compose.yaml"
+      - "data/sample/**"
+      - ".github/workflows/docker-build.yaml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - ros2-kilted
+          - ros2-jazzy
+          - ros2-iron
+          - ros2-humble
+          - ros1-noetic
+          - ros1-noetic-cv
+          - px4
+          - ardupilot
+          - betaflight
+          - iot
+          - apache-arrow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
+      - name: Build ${{ matrix.service }}
+        run: docker compose build ${{ matrix.service }}
