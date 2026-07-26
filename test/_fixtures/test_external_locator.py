@@ -1,8 +1,5 @@
 """Tests for the external-fixture locator."""
 
-import os
-import pathlib
-
 import pytest
 
 from test._fixtures import external

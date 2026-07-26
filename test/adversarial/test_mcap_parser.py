@@ -7,6 +7,7 @@ import zstandard
 from mcap.exceptions import McapError
 
 from src.source import mcap
+
 from . import make_corpus
 
 
@@ -58,10 +59,6 @@ def test_malformed_mcap_raises_controlled_errors(corpus: list[pathlib.Path]) -> 
         # propagates out of this try/except and fails the test. That would be
         # a genuine robustness finding to record, not something to silently
         # widen the except clause to swallow.
-
-    print("\nMCAP parser behavior on the malformed corpus:")
-    for name, outcome in behavior.items():
-        print(f"  {name}: {outcome}")
 
     # Every corpus file produced a controlled outcome (clean parse or a typed
     # exception from the mcap/zstandard libraries) -- documented above.

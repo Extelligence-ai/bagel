@@ -1,6 +1,9 @@
 """Property-based tests for window utilities."""
 
-from hypothesis import given, strategies as st
+from itertools import pairwise
+
+from hypothesis import given
+from hypothesis import strategies as st
 
 from src.pipeline import windows
 
@@ -20,7 +23,7 @@ _iv = st.tuples(_ts, _ts).map(lambda t: (min(t), max(t)))
 @given(st.lists(_iv))
 def test_merge_intervals_are_disjoint_and_sorted(intervals: list) -> None:
     merged = windows.merge_intervals(intervals)
-    for (a_start, a_end), (b_start, b_end) in zip(merged, merged[1:]):
+    for (_, a_end), (b_start, _) in pairwise(merged):
         assert a_end <= b_start  # disjoint, ordered
 
 
