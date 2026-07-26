@@ -116,3 +116,11 @@ exclude = ["**/*.ipynb", "src/pipeline/tasks/cloudini/vendor/**"]
 
 [tool.ruff.lint.per-file-ignores]
 "./test/**/*.py" = ["S101", "S608", "D", "PLR2004"]  # S608: tests build SQL over their own tmp paths
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/__pycache__/*", "*_pb2.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
