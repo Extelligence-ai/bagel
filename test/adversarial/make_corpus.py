@@ -15,7 +15,7 @@ def write_corpus(dest: pathlib.Path) -> list[pathlib.Path]:
         "truncated_header.mcap": MCAP_MAGIC + b"\x01\x05",
         "truncated_midchunk.mcap": MCAP_MAGIC + b"\x06" + b"\xff" * 200,
         "no_end_magic.mcap": MCAP_MAGIC + b"\x00" * 512,
-        "zstd_bomb.mcap": MCAP_MAGIC + b"\x28\xb5\x2f\xfd" + b"\x00" * 128,
+        "zstd_bomb.mcap.zstd": MCAP_MAGIC + b"\x28\xb5\x2f\xfd" + b"\x00" * 128,
     }
     paths = []
     for name, data in cases.items():
