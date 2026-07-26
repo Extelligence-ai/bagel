@@ -64,6 +64,10 @@ COPY --chown=${USERNAME}:${USERNAME} src ./src
 COPY --chown=${USERNAME}:${USERNAME} test/test_artifacts.py ./test/test_artifacts.py
 COPY --chown=${USERNAME}:${USERNAME} test/di ./test/di
 COPY --chown=${USERNAME}:${USERNAME} test/source/test_source_base.py ./test/source/test_source_base.py
+COPY --chown=${USERNAME}:${USERNAME} test/__init__.py ./test/__init__.py
+COPY --chown=${USERNAME}:${USERNAME} test/_fixtures ./test/_fixtures
+COPY --chown=${USERNAME}:${USERNAME} test/adversarial ./test/adversarial
+COPY --chown=${USERNAME}:${USERNAME} test/e2e ./test/e2e
 
 # Copy configuration file
 COPY --chown=${USERNAME}:${USERNAME} .env ./.env

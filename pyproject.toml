@@ -124,3 +124,6 @@ omit = ["*/__pycache__/*", "*_pb2.py"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+
+[tool.coverage.paths]
+source = ["src", "/home/ubuntu/runtime/src"]
