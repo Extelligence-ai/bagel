@@ -5,7 +5,6 @@ import pathlib
 import pytest
 
 import server
-from src.logging.base import NoLoggingTopicsFoundError
 from test._fixtures import external
 
 
@@ -26,11 +25,11 @@ def test_gps_loss_recovery_surfaces_logs() -> None:
     rec = root / "px4-gps-loss-recovery.mcap"
     if not rec.exists():
         pytest.skip("gps-loss recording missing")
-    # KNOWN FINDING: this px4-sourced recording has no rcl_interfaces/msg/Log
-    # topics, and read_loggings raises NoLoggingTopicsFoundError instead of
-    # returning an empty list as its own docstring implies ("Not all sources
-    # provide logs"). Characterized here rather than hidden; see
-    # docs/superpowers/reports/2026-07-26-base-scorecard.md, "Task 7 — E2E
-    # findings".
-    with pytest.raises(NoLoggingTopicsFoundError):
-        server.read_loggings(str(rec))
+    # This px4-sourced recording has no rcl_interfaces/msg/Log topics.
+    # read_loggings must return an empty list rather than raising
+    # NoLoggingTopicsFoundError, matching its own docstring ("Not all
+    # sources provide logs"). See docs/superpowers/reports/
+    # 2026-07-26-base-scorecard.md, "Task 7 — E2E findings".
+    logs = server.read_loggings(str(rec))
+    assert isinstance(logs, list)
+    assert logs == []

@@ -7,9 +7,6 @@ import server
 # Paths that should raise errors
 BAD_PATHS_SHOULD_RAISE = ["/does/not/exist.mcap", "relative/nope.bag", "\x00null"]
 
-# Empty string returns successfully (characterization finding: treats "" as "." current dir)
-PATHS_RETURN_SUCCESS = [""]
-
 
 @pytest.mark.parametrize("path", BAD_PATHS_SHOULD_RAISE)
 def test_describe_data_source_bad_path(path: str) -> None:
@@ -18,11 +15,10 @@ def test_describe_data_source_bad_path(path: str) -> None:
         server.describe_data_source(path)
 
 
-@pytest.mark.parametrize("path", PATHS_RETURN_SUCCESS)
-def test_describe_data_source_empty_path_returns_success(path: str) -> None:
-    """Empty string path returns successfully (treats as current dir fallback)."""
-    result = server.describe_data_source(path)
-    assert isinstance(result, list)
+def test_describe_data_source_empty_path_raises() -> None:
+    """Empty string path must raise, not silently resolve to the current dir."""
+    with pytest.raises(ValueError):
+        server.describe_data_source("")
 
 
 def test_query_messages_bad_sql() -> None:
