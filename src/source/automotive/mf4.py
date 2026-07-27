@@ -28,7 +28,24 @@ class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
 
         """
         super().__init__(path)
-        self._mdf = MDF(path)
+        try:
+            self._mdf = MDF(path)
+        except Exception as exc:
+            # validate_path() already confirmed the MDF_MAGIC header, so a
+            # file that still fails to parse here has a corrupt or truncated
+            # body. asammdf's block-unpacking code does not raise a single,
+            # library-specific exception for this: depending on exactly
+            # where the corruption falls, it has been observed to raise
+            # struct.error, UnicodeDecodeError, AttributeError, ValueError,
+            # or UnboundLocalError directly from deep inside its parser.
+            # There is no common base among these narrower than Exception,
+            # so translate any parse failure here into a single clean,
+            # typed error instead of letting an asammdf-internal traceback
+            # escape.
+            raise errors.InvalidPathError(
+                f"{self.path} could not be parsed as an ASAM MDF file: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
     @property
     def metadata(self) -> dict[str, Any]:
