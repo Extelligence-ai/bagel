@@ -22,6 +22,7 @@ from influxdb_client_3 import InfluxDBClient3
 from pydantic import BaseModel
 
 from src.di import module
+from src.source.redact import redact_url, scrub_secrets
 
 DEFAULT_PORT = 8181  # InfluxDB 3 Core
 
@@ -39,13 +40,13 @@ def parse_url(url: str) -> dict[str, str]:
     """
     parsed = urlparse(url)
     if parsed.scheme != "influxdb":
-        raise ValueError(f"Expected an influxdb:// URL, got: {url}")
+        raise ValueError(f"Expected an influxdb:// URL, got: {redact_url(url)}")
     if not parsed.hostname:
-        raise ValueError(f"Missing host in InfluxDB URL: {url}")
+        raise ValueError(f"Missing host in InfluxDB URL: {redact_url(url)}")
     database = parsed.path.lstrip("/")
     if not database:
         raise ValueError(
-            f"Missing database in InfluxDB URL: {url} "
+            f"Missing database in InfluxDB URL: {redact_url(url)} "
             "(expected influxdb://token@host:port/database)"
         )
     port = parsed.port or DEFAULT_PORT
@@ -113,7 +114,13 @@ class SourceFactory:
         try:
             self._database.tables()
         except Exception as error:
-            raise ConnectionError(f"Cannot connect to '{parts['host']}': {error}") from error
+            # `parts["host"]` never carries the token, but scrub the resolved token
+            # (from the URL or the explicit `token` arg) out of the combined message
+            # anyway, in case the underlying client's own error message echoes it.
+            message = scrub_secrets(
+                f"Cannot connect to '{parts['host']}': {error}", self._database.token
+            )
+            raise ConnectionError(message) from error
 
     @property
     def path(self) -> str:
