@@ -245,7 +245,7 @@ def is_standard_json_file(path: pathlib.Path) -> bool:
     try:
         json.loads(path.read_text())
         return True
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return False
 
 
@@ -254,12 +254,12 @@ def is_json_lines_file(path: pathlib.Path) -> bool:
     if not path.is_file():
         return False
 
-    with open(path, encoding="utf-8") as f:
-        try:
+    try:
+        with open(path, encoding="utf-8") as f:
             json.loads(f.readline().strip())  # only check the first line
             return True
-        except json.JSONDecodeError:
-            return False
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return False
 
 
 def is_mdf_file(path: pathlib.Path) -> bool:
