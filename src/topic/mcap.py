@@ -36,8 +36,23 @@ def _channels_with_schemas(data_source: McapBag) -> dict[str, base.MessageDefini
     return topics
 
 
-def _jsonschema_type(schema: dict) -> pa.DataType:  # noqa: PLR0911 -- one return per JSON type
-    """Map a JSON-Schema type definition to a PyArrow type (utf8 for unknowns)."""
+_MAX_JSONSCHEMA_DEPTH = 100
+
+
+def _jsonschema_type(schema: dict, _depth: int = 0) -> pa.DataType:  # noqa: PLR0911 -- one return per JSON type
+    """Map a JSON-Schema type definition to a PyArrow type (utf8 for unknowns).
+
+    Raises:
+        UnsupportedEncodingError: If the schema is nested deeper than
+            ``_MAX_JSONSCHEMA_DEPTH`` -- a schema nested that deep is pathological,
+            not a legitimate document, and left unguarded would risk a
+            ``RecursionError``.
+
+    """
+    if _depth > _MAX_JSONSCHEMA_DEPTH:
+        raise base.UnsupportedEncodingError(
+            f"jsonschema document nested deeper than {_MAX_JSONSCHEMA_DEPTH} levels"
+        )
     json_type = schema.get("type")
     if isinstance(json_type, list):  # e.g. ["number", "null"] -> nullable number
         json_type = next((t for t in json_type if t != "null"), "string")
@@ -45,10 +60,16 @@ def _jsonschema_type(schema: dict) -> pa.DataType:  # noqa: PLR0911 -- one retur
     match json_type:
         case "object":
             properties = schema.get("properties", {})
-            if not properties:
-                return pa.string()  # schemaless object: keep as JSON text
+            if not isinstance(properties, dict) or not properties:
+                return pa.string()  # schemaless (or malformed) object: keep as JSON text
             return pa.struct(
-                [pa.field(name, _jsonschema_type(sub)) for name, sub in properties.items()]
+                [
+                    pa.field(
+                        name,
+                        _jsonschema_type(sub if isinstance(sub, dict) else {}, _depth + 1),
+                    )
+                    for name, sub in properties.items()
+                ]
             )
         case "number":
             return pa.float64()
@@ -57,7 +78,8 @@ def _jsonschema_type(schema: dict) -> pa.DataType:  # noqa: PLR0911 -- one retur
         case "boolean":
             return pa.bool_()
         case "array":
-            return pa.list_(_jsonschema_type(schema.get("items", {})))
+            items = schema.get("items", {})
+            return pa.list_(_jsonschema_type(items if isinstance(items, dict) else {}, _depth + 1))
         case _:
             return pa.string()
 
@@ -66,13 +88,18 @@ def jsonschema_to_struct(definition: bytes) -> pa.StructType:
     """Convert a JSON-Schema document (top-level object) to a PyArrow StructType.
 
     Raises:
-        UnsupportedEncodingError: If the document is not valid JSON or not an object schema.
+        UnsupportedEncodingError: If the document is not valid (UTF-8) JSON, not
+            an object schema, or nested pathologically deep.
 
     """
     try:
         document = json.loads(definition)
-    except json.JSONDecodeError as error:
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise base.UnsupportedEncodingError(f"invalid jsonschema document: {error}") from error
+    except RecursionError as error:
+        raise base.UnsupportedEncodingError(
+            "jsonschema document is nested too deeply to parse"
+        ) from error
     struct = _jsonschema_type(document if isinstance(document, dict) else {})
     if not isinstance(struct, pa.StructType):
         raise base.UnsupportedEncodingError("jsonschema document is not an object schema")
