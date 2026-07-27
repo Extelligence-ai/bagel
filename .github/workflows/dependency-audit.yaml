@@ -1,0 +1,36 @@
+# Non-blocking dependency-vulnerability cadence (issue #134).
+#
+# The current lockfile carries known advisories almost entirely in transitive
+# dependencies pulled in by the jupyter/torch/dev stack (setuptools, starlette,
+# tornado, urllib3, virtualenv, soupsieve, etc.). A hard-fail gate would be red
+# from day one and would likely get disabled rather than fixed. This workflow
+# is intentionally informational: it runs pip-audit on a cadence (every PR to
+# main, plus a weekly schedule) so advisories stay visible, without blocking
+# merges. Once the transitive-advisory baseline has been triaged, the audit
+# step below can be tightened to a blocking gate.
+
+name: dependency-audit
+
+on:
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.0"
+      - name: Install dependencies
+        run: uv sync
+      - name: Run pip-audit (non-blocking)
+        continue-on-error: true
+        run: |
+          uv run --with pip-audit pip-audit --format markdown >> "$GITHUB_STEP_SUMMARY" || true
+          uv run --with pip-audit pip-audit
