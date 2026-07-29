@@ -48,7 +48,10 @@ class NotifySlack(base.Task):
 
         """
         if not webhook_url.startswith(("https://", "http://")):
-            raise ValueError(f"webhook_url must be http(s), got: {webhook_url}")
+            # The webhook URL *is* the secret (Slack/Mattermost/Rocket.Chat webhook
+            # URLs embed a bearer token in the path) -- never echo it back, even to
+            # say it was rejected.
+            raise ValueError("webhook_url must be http(s) (value withheld).")
         self._webhook_url = webhook_url
         self._message = message
         self._include_context = include_context

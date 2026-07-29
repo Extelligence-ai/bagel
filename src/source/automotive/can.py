@@ -9,6 +9,7 @@ raw bus capture becomes queryable like any other source. Requires the optional
 import functools
 import logging
 import pathlib
+import struct
 from typing import Any
 
 import can
@@ -31,7 +32,19 @@ class CanLog:
             dbc (str): Path to the DBC database describing the bus.
 
         """
-        self.database = cantools.database.load_file(dbc)
+        try:
+            self.database = cantools.database.load_file(dbc)
+        except (cantools.errors.Error, ValueError) as exc:
+            # Empirically, a malformed/garbage/empty DBC raises
+            # cantools.database.errors.UnsupportedDatabaseFormatError (a
+            # cantools.errors.Error subclass), while a DBC path with an
+            # extension cantools can't map to a format raises a plain
+            # ValueError from cantools' own format-dispatch code. Translate
+            # either into a single clean, typed error instead of letting a
+            # cantools-internal exception escape.
+            raise errors.InvalidPathError(
+                f"{dbc} could not be parsed as a DBC database: {type(exc).__name__}: {exc}"
+            ) from exc
         self._path = path
         self._records: list[tuple[float, str, dict[str, Any]]] | None = None
 
@@ -42,18 +55,57 @@ class CanLog:
             known = {message.frame_id: message.name for message in self.database.messages}
             records = []
             unknown = 0
-            with can.LogReader(self._path) as reader:
-                for frame in reader:
-                    name = known.get(frame.arbitration_id)
-                    if name is None:
-                        unknown += 1
-                        continue
-                    decoded = self.database.decode_message(
-                        frame.arbitration_id, frame.data, decode_choices=False
-                    )
-                    records.append((float(frame.timestamp), name, dict(decoded)))
+            undecodable = 0
+            try:
+                # This region wraps library parse calls over untrusted input
+                # (the capture file itself), so failures here are translated
+                # into a clean, typed error rather than leaking a can/cantools
+                # traceback. It's scoped to STRUCTURAL capture failures only:
+                # the file can't be opened, or frame iteration itself breaks
+                # down (corrupt/truncated container). A single frame that
+                # fails to decode is handled by the inner skip-and-count
+                # below and never reaches this except clause.
+                with can.LogReader(self._path) as reader:
+                    for frame in reader:
+                        name = known.get(frame.arbitration_id)
+                        if name is None:
+                            unknown += 1
+                            continue
+                        try:
+                            decoded = self.database.decode_message(
+                                frame.arbitration_id, frame.data, decode_choices=False
+                            )
+                            records.append((float(frame.timestamp), name, dict(decoded)))
+                        except (cantools.database.errors.DecodeError, ValueError) as exc:
+                            # A single frame with a data length mismatch (or
+                            # other per-frame decode problem) shouldn't nuke
+                            # an otherwise-good capture: skip and count it,
+                            # mirroring the `unknown` handling above.
+                            undecodable += 1
+                            logging.debug(
+                                "Skipping undecodable frame (arbitration_id=%s): %s: %s",
+                                frame.arbitration_id,
+                                type(exc).__name__,
+                                exc,
+                            )
+                            continue
+            except (struct.error, ValueError, cantools.errors.Error) as exc:
+                # Empirically observed across malformed/truncated .blf and
+                # .asc captures: struct.error and ValueError escape
+                # can.LogReader(...) construction (corrupt/inconsistent BLF
+                # headers, unrecognized capture extensions) or frame
+                # iteration (non-hex ASC frame data). These share no common
+                # base narrower than Exception, so translate either of them
+                # into a single clean, typed error instead of letting a
+                # can/cantools-internal exception escape.
+                raise errors.InvalidPathError(
+                    f"{self._path} could not be read as a CAN capture: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
             if unknown:
                 logging.info("Skipped %d frames with IDs not in the DBC", unknown)
+            if undecodable:
+                logging.info("Skipped %d frames that failed to decode", undecodable)
             records.sort(key=lambda record: record[0])
             self._records = records
         return self._records

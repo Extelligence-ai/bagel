@@ -7,10 +7,11 @@ from enum import Enum
 from typing import Any
 
 import pandas as pd
+import pyarrow as pa
 from pyarrow import dataset as ds
 from pydantic import BaseModel, ConfigDict
 
-from src.source import base
+from src.source import base, errors
 
 
 class TimestampUnit(Enum):
@@ -117,14 +118,32 @@ class SourceFactory(base.FileBasedSourceFactory):
         return lambda msg: cast_to_timestamp(_get_value(msg, self._timestamp_access_path))
 
     def _build(self, file_format: str) -> PyArrowDataset:
-        return PyArrowDataset(
-            dataset=ds.dataset(
+        # ds.dataset() is lazy about reading row *data*, but for CSV/JSON it must
+        # still infer a schema immediately, which requires reading (part of) the
+        # file. When exclude_invalid_files=True (the default) PyArrow silently
+        # drops any file that fails this check; but that check is an explicit,
+        # user-settable constructor argument (see csv.SourceFactory /
+        # json.SourceFactory docstrings), and with it disabled a malformed file
+        # raises PyArrow's internal parse error -- pyarrow.lib.ArrowInvalid (or a
+        # sibling ArrowException such as ArrowTypeError) -- directly out of this
+        # call. Translate that into a single clean, typed error instead of
+        # letting a raw PyArrow-internal traceback escape.
+        try:
+            dataset = ds.dataset(
                 str(self.path),
                 format=file_format,
                 partitioning=self._partitioning,
                 partition_base_dir=self._partition_base_dir,
                 exclude_invalid_files=self._exclude_invalid_files,
                 ignore_prefixes=self._ignore_prefixes,
-            ),
+            )
+        except pa.ArrowException as exc:
+            raise errors.InvalidPathError(
+                f"{self.path} could not be parsed as a {file_format} dataset: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+        return PyArrowDataset(
+            dataset=dataset,
             extract_timestamp_seconds=self._extract_timestamp_fn(),
         )

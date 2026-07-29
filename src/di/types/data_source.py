@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 
 import yaml
 
+from src.source.redact import redact_url
+
 
 class DataSource(Enum):
     """Supported data source types."""
@@ -90,7 +92,10 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
     elif is_csv_file(path) or is_csv_directory(path):
         return DataSource.PYARROW_CSV
     else:
-        raise ValueError(f"Cannot resolve data source type from path: {path}")
+        # `path` may be a malformed/typo'd URL (e.g. a DSN missing the "//" after the
+        # scheme) that fell through from `resolve()`'s URL branch into this
+        # file-based path, so it can still carry credentials -- redact defensively.
+        raise ValueError(f"Cannot resolve data source type from path: {redact_url(str(path))}")
 
 
 def has_magic_bytes(path: pathlib.Path, magic: bytes) -> bool:
@@ -245,7 +250,7 @@ def is_standard_json_file(path: pathlib.Path) -> bool:
     try:
         json.loads(path.read_text())
         return True
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return False
 
 
@@ -254,12 +259,12 @@ def is_json_lines_file(path: pathlib.Path) -> bool:
     if not path.is_file():
         return False
 
-    with open(path, encoding="utf-8") as f:
-        try:
+    try:
+        with open(path, encoding="utf-8") as f:
             json.loads(f.readline().strip())  # only check the first line
             return True
-        except json.JSONDecodeError:
-            return False
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return False
 
 
 def is_mdf_file(path: pathlib.Path) -> bool:

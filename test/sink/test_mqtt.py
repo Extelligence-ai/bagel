@@ -1,6 +1,7 @@
 """Tests for the MQTT topic sink, using a fake paho client (no broker needed)."""
 
 import json
+import logging
 import pathlib
 from unittest.mock import MagicMock
 
@@ -271,3 +272,34 @@ def test_wildcard_with_pipeline_requires_single_match(make_sink: MakeSink) -> No
     sink.subscribe("freezer/1/+", pipeline=pipeline, extract_timestamp=lambda m: m["t"])
     sink._fake.deliver("freezer/1/status", json.dumps({"temp": -12.0, "t": 1.0}).encode())
     assert [call.args[0] for call in pipeline.run_at.call_args_list] == [1.0]
+
+
+# -- secrets leakage (issue #134) --------------------------------------------------
+
+
+def test_broker_credentials_never_appear_in_logs_or_metadata(
+    make_sink: MakeSink, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Username/password must never reach a log line or the sink's metadata dict.
+
+    Drives the full init -> discovery -> wildcard-subscribe -> unseen-topic-timeout
+    path (the only places this sink logs anything) with real-looking credentials, and
+    asserts neither value appears in any log record or in `sink.metadata`.
+    """
+    caplog.set_level(logging.DEBUG)
+    sink = make_sink(
+        retained={"freezer/1/status": [b'{"temp": -18.5}']},
+        username="mqtt_admin",
+        password="hunter2",  # noqa: S106 -- fixture value, not a real credential
+        schema_timeout_seconds=0.05,
+    )
+
+    sink.subscribe("freezer/#")  # logs "Wildcard '...' expanded to N topic(s)"
+    sink._struct("garage/unseen")  # unseen topic times out -> logs a warning
+
+    for record in caplog.records:
+        text = record.getMessage()
+        assert "hunter2" not in text
+        assert "mqtt_admin" not in text
+    assert "hunter2" not in str(sink.metadata)
+    assert "mqtt_admin" not in str(sink.metadata)

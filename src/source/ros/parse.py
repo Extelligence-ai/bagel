@@ -90,9 +90,16 @@ def parse_line(line: str, fallback_node: str) -> LogRecord | None:
         else:
             # rospy writes local wall-clock time with no timezone; interpret it
             # in the machine's local timezone, mirroring how it was written.
-            timestamp_seconds = datetime.datetime.strptime(
-                groups["datetime"], "%Y-%m-%d %H:%M:%S,%f"
-            ).timestamp()
+            # A regex match doesn't guarantee a valid calendar date/time (e.g.
+            # month 13, hour 25) or a timestamp representable on this
+            # platform (e.g. year 1 underflowing once the local UTC offset is
+            # applied), so treat those as "no match" rather than crashing.
+            try:
+                timestamp_seconds = datetime.datetime.strptime(
+                    groups["datetime"], "%Y-%m-%d %H:%M:%S,%f"
+                ).timestamp()
+            except (ValueError, OverflowError, OSError):
+                continue
         level = groups["level"].upper()
         return LogRecord(
             timestamp_seconds=timestamp_seconds,
