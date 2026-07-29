@@ -30,12 +30,14 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "hypothesis >=6.100.0,<7.0.0",
     "ipykernel >=6.29.0,<7.0.0",
     "ipython >=8.0.0,<9.0.0",
     "jupyterlab >=4.4.0,<5.0.0",
     "matplotlib >=3.10.0,<4.0.0",
     "pre-commit >=4.2.0,<5.0.0",
     "pytest >=8.4.0,<9.0.0",
+    "pytest-cov >=5.0.0,<7.0.0",
     "ruff ==0.12.4",
 ]
 cv = [
@@ -77,6 +79,10 @@ automotive = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+    "adversarial: malformed/fuzzed inputs and property-based tests",
+    "e2e: end-to-end flows driving the real server against fixtures",
+]
 
 [tool.ruff]
 line-length = 100
@@ -110,3 +116,14 @@ exclude = ["**/*.ipynb", "src/pipeline/tasks/cloudini/vendor/**"]
 
 [tool.ruff.lint.per-file-ignores]
 "./test/**/*.py" = ["S101", "S608", "D", "PLR2004"]  # S608: tests build SQL over their own tmp paths
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/__pycache__/*", "*_pb2.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[tool.coverage.paths]
+source = ["src", "/home/ubuntu/runtime/src"]

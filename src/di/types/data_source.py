@@ -40,6 +40,8 @@ URL_SCHEMES = {
 
 def resolve(path: str) -> DataSource:
     """Resolve the data source type from the given path or URL."""
+    if not path or not path.strip():
+        raise ValueError("path must be a non-empty data source path or URL")
     result = urlparse(path)
     if all([result.scheme, result.netloc]):
         # path is a URL

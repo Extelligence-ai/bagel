@@ -13,6 +13,7 @@ from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
+from src.logging.base import NoLoggingTopicsFoundError
 from src.pipeline import (
     base,
     batch,
@@ -258,7 +259,10 @@ def read_loggings(
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.LOGGING_DATASET.value}.{ds_type.value}", {})
-    relation = dataset.to_duckdb(factory, registry, start_seconds, end_seconds)
+    try:
+        relation = dataset.to_duckdb(factory, registry, start_seconds, end_seconds)
+    except NoLoggingTopicsFoundError:
+        return []
     return relation.to_df().to_dict(orient="records")
 
 
