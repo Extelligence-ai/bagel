@@ -2,8 +2,10 @@
 and window-queried without exhausting memory. Skips unless the external
 fixture is present; never a CI gate.
 
-Point BAGEL_LARGE_FIXTURE at any real large capture (.blf/.asc with a .dbc
-beside it, .mf4, or a ros .log directory) to run it.
+Point BAGEL_LARGE_FIXTURE at any real large capture:
+  - CAN: .blf or .asc file with a sibling .dbc file (same basename, .dbc extension)
+  - MDF: .mf4 file
+  - ROS: .log file or .log directory
 """
 
 import os
@@ -25,8 +27,22 @@ def test_describe_and_windowed_query_on_large_file() -> None:
     path = pathlib.Path(LARGE_FIXTURE)
     assert path.exists()
     ds_type = resolve(str(path))
+
+    # Construct args dict based on data source type
+    args = {"path": str(path)}
+
+    # CAN sources (.blf/.asc) require a sibling .dbc file
+    if path.suffix.lower() in {".blf", ".asc"}:
+        dbc_path = path.with_suffix(".dbc")
+        if not dbc_path.exists():
+            pytest.skip(
+                f"CAN fixture requires a sibling .dbc file next to the capture "
+                f"(expected: {dbc_path})"
+            )
+        args["dbc"] = str(dbc_path)
+
     factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": str(path)}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", args
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
