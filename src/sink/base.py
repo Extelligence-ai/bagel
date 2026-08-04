@@ -30,6 +30,10 @@ class TopicAlreadySubscribedError(Exception):
     """Raised when topic is already subscribed."""
 
 
+class BufferCapacityExceededError(Exception):
+    """Raised when a subscription would exceed SINK_TOTAL_BUFFER_BYTES."""
+
+
 class TopicSink(abc.ABC):
     """Abstract base class for topic sinks.
 
@@ -198,6 +202,8 @@ class TopicSink(abc.ABC):
 
         Raises:
             TopicNotFoundError: If any requested topic is unavailable.
+            BufferCapacityExceededError: If SINK_TOTAL_BUFFER_BYTES is set and this
+                subscription would exceed it.
 
         """
         if topic not in self.available_topics:
@@ -205,6 +211,30 @@ class TopicSink(abc.ABC):
 
         if topic in self._buffers and not overwrite:
             raise TopicAlreadySubscribedError(topic)
+
+        total_limit = settings.SINK_TOTAL_BUFFER_BYTES
+        if total_limit:
+            if buffer_size_bytes is None:
+                raise BufferCapacityExceededError(
+                    f"Cannot subscribe to {topic} with an unbounded buffer while "
+                    f"SINK_TOTAL_BUFFER_BYTES={total_limit}: an unbounded topic cannot be "
+                    "accounted. Pass an explicit buffer_size_bytes or set "
+                    "SINK_TOTAL_BUFFER_BYTES=0."
+                )
+            existing_total = sum(
+                writer.buffer_size_bytes or 0
+                for existing_topic, writer in self._buffers.items()
+                if existing_topic != topic  # overwrite replaces its own budget
+            )
+            if existing_total + buffer_size_bytes > total_limit:
+                raise BufferCapacityExceededError(
+                    f"Subscribing to {topic} with buffer_size_bytes={buffer_size_bytes} "
+                    f"would bring this sink's total to {existing_total + buffer_size_bytes} "
+                    f"bytes, exceeding SINK_TOTAL_BUFFER_BYTES={total_limit}. Lower "
+                    "buffer_size_bytes (default JSONL_BUFFER_SIZE_PER_TOPIC_BYTES) or "
+                    "raise SINK_TOTAL_BUFFER_BYTES; on-disk usage can transiently reach "
+                    "2x nominal during overflow rotation."
+                )
 
         self._buffers[topic] = TopicBufferWriter(
             self.directory,

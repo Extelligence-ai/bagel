@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     # are never touched by eviction.
     CACHE_MAX_BYTES: int = 20 * GB
 
+    # Max total nominal buffer bytes across all subscribed topics of one live
+    # sink. 0 = unbounded (the historical behavior). When set, subscribe()
+    # refuses new topics that would exceed it with BufferCapacityExceededError
+    # instead of silently growing; note on-disk usage can transiently reach 2x
+    # nominal because a rotated overflow file is retained until the next
+    # rotation.
+    SINK_TOTAL_BUFFER_BYTES: int = 0
+
     # Number of messages to buffer in rosbridge before sending over the WebSocket
     ROSBRIDGE_QUEUE_LENGTH: int = 1000
 
