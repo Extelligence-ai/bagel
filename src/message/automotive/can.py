@@ -25,12 +25,10 @@ class MessageDataset(base.MessageDataset):
         end_seconds_inclusive: float | None,
     ) -> Iterator[tuple[str, float, dict[str, Any]]]:
         wanted = set(topics)
-        for timestamp, name, decoded in data_source.records:
+        for timestamp, name, decoded in data_source.records(
+            start_seconds_inclusive, end_seconds_inclusive
+        ):
             if name not in wanted:
-                continue
-            if start_seconds_inclusive is not None and timestamp < start_seconds_inclusive:
-                continue
-            if end_seconds_inclusive is not None and timestamp > end_seconds_inclusive:
                 continue
             yield (name, timestamp, {key: float(value) for key, value in decoded.items()})
 

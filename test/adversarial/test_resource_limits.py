@@ -10,7 +10,15 @@ new one ~1.2x, so a 2x threshold cleanly separates them.
 import pathlib
 import tracemalloc
 
+import pytest
+
 from src.source.ros.parse import parse_file
+
+pytest.importorskip("can")
+pytest.importorskip("cantools")
+
+from src.source.automotive import can as can_source
+from test.adversarial.test_can_parse import _write_valid_dbc
 
 
 def test_parse_file_streams_instead_of_slurping(tmp_path: pathlib.Path) -> None:
@@ -30,3 +38,72 @@ def test_parse_file_streams_instead_of_slurping(tmp_path: pathlib.Path) -> None:
     assert len(records) == 2_000
     assert records[0].message == message
     assert peak < 2 * size, f"peak {peak} vs file {size}: parse_file is not streaming"
+
+
+# ---------------------------------------------------------------------------
+# CAN: one-pass metadata stats and windowed, uncached records (#134).
+#
+# ``valid_asc_and_dbc`` reuses ``_write_valid_dbc`` from test_can_parse.py
+# (a module-level function, imported directly). test_can_parse.py has no
+# reusable *valid* ASC-writing helper (only inline garbage/malformed ASC text
+# for its failure-path tests), so the ASC body here is written locally,
+# following the same frame-line format used there
+# (test_asc_with_non_hex_frame_data_raises_clean_error): hex-base timestamps,
+# arbitration id "64" (hex) = 100 (decimal) to match the DBC's ``BO_ 100
+# EngineData``.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def valid_asc_and_dbc(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
+    dbc = _write_valid_dbc(tmp_path)
+    asc = tmp_path / "valid.asc"
+    lines = [
+        "date Mon Jan 1 00:00:00 2024",
+        "base hex  timestamps absolute",
+        "no internal events logged",
+        "",
+    ]
+    for index, timestamp in enumerate((1.0, 2.0, 3.0, 4.0, 5.0)):
+        data = " ".join(f"{(byte + index) % 256:02X}" for byte in range(8))
+        lines.append(f"   {timestamp:.6f} 1  64             Rx   d 8 {data}")
+    asc.write_text("\n".join(lines) + "\n")
+    return asc, dbc
+
+
+def test_can_stats_matches_records(valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path]) -> None:
+    """stats must equal what a full decode reports, without storing frames."""
+    capture, dbc = valid_asc_and_dbc
+    log = can_source.CanLog(path=str(capture), dbc=str(dbc))
+    records = log.records()
+    count, start, end = log.stats
+    assert count == len(records)
+    assert start == records[0][0]
+    assert end == records[-1][0]
+
+
+def test_can_metadata_does_not_materialize_records(
+    valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """describe-path properties must never build the full decoded list."""
+    capture, dbc = valid_asc_and_dbc
+    factory = can_source.SourceFactory(path=str(capture), dbc=str(dbc))
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("records() must not be called by metadata paths")
+
+    monkeypatch.setattr(factory._log, "records", _boom)
+    assert factory.total_message_count > 0
+    assert factory.start_seconds <= factory.end_seconds
+    assert "dbc_messages" in factory.metadata
+
+
+def test_can_records_window_filters_before_sort(
+    valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path],
+) -> None:
+    capture, dbc = valid_asc_and_dbc
+    log = can_source.CanLog(path=str(capture), dbc=str(dbc))
+    everything = log.records()
+    mid = everything[len(everything) // 2][0]
+    windowed = log.records(start_seconds=mid)
+    assert windowed == [r for r in everything if r[0] >= mid]

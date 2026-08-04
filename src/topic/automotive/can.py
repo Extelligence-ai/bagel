@@ -14,7 +14,7 @@ class TopicRegistry(base.TopicRegistry):
 
     def available_topics(self, data_source: CanLog) -> list[str]:
         """Return the DBC message names observed in the capture."""
-        return sorted({name for _, name, _ in data_source.records})
+        return sorted({name for _, name, _ in data_source.records()})
 
     def native_type_name(self, topic: str, data_source: CanLog) -> str:
         """Return the native type name for the given topic."""
@@ -24,7 +24,7 @@ class TopicRegistry(base.TopicRegistry):
     def message_count(self, topic: str, data_source: CanLog) -> int | None:
         """Return the number of decoded frames for the message."""
         self._message(topic, data_source)
-        return sum(1 for _, name, _ in data_source.records if name == topic)
+        return sum(1 for _, name, _ in data_source.records() if name == topic)
 
     def struct(self, topic: str, data_source: CanLog) -> pa.StructType:
         """Return one float field per DBC signal, with units attached as metadata."""
