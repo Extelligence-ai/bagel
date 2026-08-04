@@ -168,4 +168,12 @@ def directory_size_bytes(directory: str | pathlib.Path) -> int:
     root = pathlib.Path(directory)
     if not root.exists():
         return 0
-    return sum(file.stat().st_size for file in root.glob("**/*") if file.is_file())
+    total = 0
+    for file in root.glob("**/*"):
+        if not file.is_file():
+            continue
+        try:
+            total += file.stat().st_size
+        except OSError:
+            continue  # deleted between glob and stat; nothing to account
+    return total

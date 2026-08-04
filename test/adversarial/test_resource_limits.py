@@ -16,13 +16,6 @@ import pytest
 
 from src.source.ros.parse import parse_file
 
-pytest.importorskip("can")
-pytest.importorskip("cantools")
-
-from src.source.automotive import can as can_source
-from src.topic.automotive.can import TopicRegistry
-from test.adversarial.test_can_parse import _write_valid_dbc
-
 
 def test_parse_file_streams_instead_of_slurping(tmp_path: pathlib.Path) -> None:
     message = "x" * 10_000
@@ -59,6 +52,10 @@ def test_parse_file_streams_instead_of_slurping(tmp_path: pathlib.Path) -> None:
 
 @pytest.fixture
 def valid_asc_and_dbc(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
+    pytest.importorskip("can")
+    pytest.importorskip("cantools")
+    from test.adversarial.test_can_parse import _write_valid_dbc
+
     dbc = _write_valid_dbc(tmp_path)
     asc = tmp_path / "valid.asc"
     lines = [
@@ -76,6 +73,8 @@ def valid_asc_and_dbc(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Pat
 
 def test_can_stats_matches_records(valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path]) -> None:
     """stats must equal what a full decode reports, without storing frames."""
+    from src.source.automotive import can as can_source
+
     capture, dbc = valid_asc_and_dbc
     log = can_source.CanLog(path=str(capture), dbc=str(dbc))
     records = log.records()
@@ -89,6 +88,8 @@ def test_can_metadata_does_not_materialize_records(
     valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """describe-path properties must never build the full decoded list."""
+    from src.source.automotive import can as can_source
+
     capture, dbc = valid_asc_and_dbc
     factory = can_source.SourceFactory(path=str(capture), dbc=str(dbc))
 
@@ -104,6 +105,8 @@ def test_can_metadata_does_not_materialize_records(
 def test_can_records_window_filters_before_sort(
     valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path],
 ) -> None:
+    from src.source.automotive import can as can_source
+
     capture, dbc = valid_asc_and_dbc
     log = can_source.CanLog(path=str(capture), dbc=str(dbc))
     everything = log.records()
@@ -116,6 +119,9 @@ def test_can_topic_counts_come_from_one_pass_not_records(
     valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Enumerating topics/counts must not re-decode via records() per topic (#134)."""
+    from src.source.automotive import can as can_source
+    from src.topic.automotive.can import TopicRegistry
+
     capture, dbc = valid_asc_and_dbc
     log = can_source.CanLog(path=str(capture), dbc=str(dbc))
 

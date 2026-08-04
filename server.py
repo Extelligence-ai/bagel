@@ -970,7 +970,7 @@ if __name__ == "__main__":
     # cache self-evicts (CACHE_MAX_BYTES), but ARTIFACT_DIRECTORY holds user
     # deliverables and is never auto-deleted -- its datestr= partition layout
     # supports external rotation (e.g. find -mtime +N).
-    logging.info(
+    logging.warning(
         "Disk usage: cache %s = %d bytes, artifacts %s = %d bytes",
         settings.CACHE_DIRECTORY,
         artifacts.directory_size_bytes(settings.CACHE_DIRECTORY),
