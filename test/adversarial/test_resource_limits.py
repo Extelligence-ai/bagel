@@ -210,3 +210,28 @@ def test_mf4_window_loads_only_the_slice(
     for kwargs in calls:
         assert kwargs.get("record_count") is not None
         assert kwargs["record_count"] < 20, "full-channel load defeats window slicing"
+
+
+def test_mf4_struct_and_end_seconds_read_one_sample(
+    small_mf4: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.source.automotive.mf4 import SourceFactory
+    from src.topic.automotive.mf4 import TopicRegistry
+
+    factory = SourceFactory(str(small_mf4))
+    mdf = factory.build()
+
+    get_counts = []
+    original_get = mdf.get
+
+    def spying_get(*args: object, **kwargs: object) -> object:
+        get_counts.append(kwargs.get("record_count"))
+        return original_get(*args, **kwargs)
+
+    monkeypatch.setattr(mdf, "get", spying_get)
+    struct = TopicRegistry().struct("Engine", mdf)
+    assert struct.field("speed").type is not None
+    assert all(count == 1 for count in get_counts), "struct() must load one sample per channel"
+
+    end = factory.end_seconds
+    assert end == factory.start_seconds + 9.5  # last timestamp in the fixture
