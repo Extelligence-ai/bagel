@@ -41,9 +41,7 @@ def test_describe_and_windowed_query_on_large_file() -> None:
             )
         args["dbc"] = str(dbc_path)
 
-    factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", args
-    )
+    factory = module.provide(f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", args)
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
     # describe must complete without materializing the file
