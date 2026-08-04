@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     # Bytes per topic buffer in a topic sink. Always respected
     JSONL_BUFFER_SIZE_PER_TOPIC_BYTES: int = 1 * GB
 
+    # Max total bytes of cached .arrow query results under
+    # <CACHE_DIRECTORY>/data/source_id=*/ . When a new cache file is about to
+    # be written and the total exceeds this, the oldest-by-access files are
+    # deleted first (cache entries are derived data and rebuild on demand).
+    # 0 disables eviction. Live sink buffers, repos, and ARTIFACT_DIRECTORY
+    # are never touched by eviction.
+    CACHE_MAX_BYTES: int = 20 * GB
+
     # Number of messages to buffer in rosbridge before sending over the WebSocket
     ROSBRIDGE_QUEUE_LENGTH: int = 1000
 

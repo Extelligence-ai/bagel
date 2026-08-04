@@ -1,6 +1,7 @@
 """An abstract base class for topic message datasets."""
 
 import abc
+import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -153,10 +154,17 @@ class MessageDataset(abc.ABC):
         seeds = [*(topics or [str(None)]), str(start_seconds), str(end_seconds), str(ffill)]
         arrow_file = artifacts.arrow_file(factory.uuid, seeds, "topics")
         if arrow_file.exists() and self._use_cache:
+            try:
+                # Mark the entry as recently used so LRU eviction prefers
+                # colder files (#134).
+                os.utime(arrow_file)
+            except OSError:
+                pass  # a read-only cache mount must not break reads
             dataset = ds.dataset(arrow_file, format="arrow")
             return duckdb.from_arrow(dataset)
         arrow_file.unlink(missing_ok=True)
         arrow_file.parent.mkdir(parents=True, exist_ok=True)
+        artifacts.evict_arrow_cache()
 
         data_source = factory.build()
         topics = topics or registry.available_topics(data_source)

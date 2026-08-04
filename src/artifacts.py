@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import json
+import logging
 import pathlib
 import re
 import uuid
@@ -64,6 +65,48 @@ def arrow_file(source_uuid: str, seeds: list[str], prefix: str) -> pathlib.Path:
         / f"source_id={source_uuid}"
         / f"{stem}.arrow"
     )
+
+
+def cached_arrow_files() -> list[pathlib.Path]:
+    """All cached .arrow query results (never sink buffers, repos, or artifacts)."""
+    data_directory = pathlib.Path(settings.CACHE_DIRECTORY) / "data"
+    return [file for file in data_directory.glob("source_id=*/**/*.arrow") if file.is_file()]
+
+
+def evict_arrow_cache() -> int:
+    """Delete oldest-by-access cached .arrow files until under CACHE_MAX_BYTES.
+
+    Cache entries are derived data keyed by (source, topics, window, ffill) and
+    rebuild on demand, so deletion is always safe. Called before each new cache
+    write; the incoming file may overshoot the cap until the next write evicts.
+    Returns the number of files deleted; no-op when CACHE_MAX_BYTES is 0.
+    """
+    limit_bytes = settings.CACHE_MAX_BYTES
+    if not limit_bytes:
+        return 0
+    entries = []
+    for file in cached_arrow_files():
+        try:
+            stat = file.stat()
+        except OSError:
+            continue  # deleted by a concurrent process; nothing to account
+        entries.append((max(stat.st_atime, stat.st_mtime), stat.st_size, file))
+    total = sum(size for _, size, _ in entries)
+    deleted = 0
+    for _, size, file in sorted(entries):
+        if total <= limit_bytes:
+            break
+        file.unlink(missing_ok=True)
+        total -= size
+        deleted += 1
+    if deleted:
+        logging.warning(
+            "Evicted %d cached arrow file(s) to keep the query cache under %d bytes "
+            "(CACHE_MAX_BYTES; 0 disables eviction)",
+            deleted,
+            limit_bytes,
+        )
+    return deleted
 
 
 def sink_directory(sink_uuid: str) -> pathlib.Path:
