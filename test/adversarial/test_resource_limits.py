@@ -9,7 +9,9 @@ new one ~1.2x, so a 2x threshold cleanly separates them.
 
 import pathlib
 import tracemalloc
+from typing import Any
 
+import numpy as np
 import pytest
 
 from src.source.ros.parse import parse_file
@@ -136,3 +138,75 @@ def test_can_topic_counts_come_from_one_pass_not_records(
     assert sorted(registry.available_topics(log)) == sorted(expected_counts)
     for name, count in expected_counts.items():
         assert registry.message_count(name, log) == count
+
+
+# ---------------------------------------------------------------------------
+# MDF4: window-first channel slicing in the message stream (#134).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def small_mf4(tmp_path: pathlib.Path) -> pathlib.Path:
+    asammdf = pytest.importorskip("asammdf")
+    timestamps = np.arange(0.0, 10.0, 0.5)  # 20 samples, relative seconds
+    signal = asammdf.Signal(
+        samples=np.arange(len(timestamps), dtype=np.float64),
+        timestamps=timestamps,
+        name="speed",
+    )
+    mdf = asammdf.MDF()
+    mdf.append([signal], acq_name="Engine")
+    path = tmp_path / "small.mf4"
+    mdf.save(path, overwrite=True)
+    mdf.close()
+    return path
+
+
+def _mf4_messages(
+    path: pathlib.Path, start: float | None = None, end: float | None = None
+) -> list[tuple[str, float, dict[str, Any]]]:
+    from asammdf import MDF
+
+    from src.message.automotive.mf4 import MessageDataset
+
+    mdf = MDF(str(path))
+    try:
+        return list(MessageDataset()._messages(mdf, ["Engine"], start, end))
+    finally:
+        mdf.close()
+
+
+def test_mf4_window_equals_filtered_full_read(small_mf4: pathlib.Path) -> None:
+    from asammdf import MDF
+
+    start_epoch = MDF(str(small_mf4)).header.start_time.timestamp()
+    everything = _mf4_messages(small_mf4)
+    windowed = _mf4_messages(small_mf4, start_epoch + 2.0, start_epoch + 7.0)
+    assert windowed == [m for m in everything if start_epoch + 2.0 <= m[1] <= start_epoch + 7.0]
+    assert 0 < len(windowed) < len(everything)
+
+
+def test_mf4_window_loads_only_the_slice(
+    small_mf4: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Channel loads must pass record_offset/record_count for the window."""
+    from asammdf import MDF
+
+    mdf = MDF(str(small_mf4))
+    start_epoch = mdf.header.start_time.timestamp()
+    calls: list[dict[str, Any]] = []
+    original_get = mdf.get
+
+    def spying_get(*args: object, **kwargs: object) -> object:
+        calls.append(kwargs)
+        return original_get(*args, **kwargs)
+
+    monkeypatch.setattr(mdf, "get", spying_get)
+    from src.message.automotive.mf4 import MessageDataset
+
+    list(MessageDataset()._messages(mdf, ["Engine"], start_epoch + 2.0, start_epoch + 7.0))
+    mdf.close()
+    assert calls, "expected channel loads"
+    for kwargs in calls:
+        assert kwargs.get("record_count") is not None
+        assert kwargs["record_count"] < 20, "full-channel load defeats window slicing"
