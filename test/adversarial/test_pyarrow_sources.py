@@ -15,12 +15,17 @@ unhardened code):
   entirely on ``exclude_invalid_files``:
 
   * ``exclude_invalid_files=True`` (the default): PyArrow performs its own
-    internal per-file validity check during dataset construction, silently
-    EXCLUDES any file that fails it, and the result is simply an empty
-    dataset (0 rows, empty schema) -- no exception at all. This means most
-    single malformed files never crash under default settings; they just
-    silently vanish from the dataset. That's a (separate, pre-existing) data
-    -correctness concern, not a crash, and is out of scope here.
+    internal per-file validity check during dataset construction and
+    silently EXCLUDES any file that fails it. ``SourceFactory._build()``
+    (``src/source/pyarrow/base.py``) now closes that silent-data-loss gap
+    (#134): if EVERY candidate file was excluded, the resulting dataset
+    would be indistinguishable from "path legitimately has no matching
+    events", so ``_build()`` raises a typed ``errors.InvalidPathError``
+    instead of returning an empty dataset. If only SOME files under a
+    directory were excluded, the good files still build normally, but the
+    drop is surfaced via a ``logging.warning`` call and recorded as
+    ``excluded_file_count`` in ``SourceFactory.metadata`` so it isn't
+    silently invisible to a caller.
   * ``exclude_invalid_files=False`` (an explicit, first-class, user-settable
     constructor argument on both ``csv.SourceFactory`` and
     ``json.SourceFactory`` -- see their docstrings, which already warn "this
@@ -55,6 +60,7 @@ Arrow-specific exceptions) share the common base `pyarrow.lib.ArrowException`
 that is what the hardening catches.
 """
 
+import logging
 import pathlib
 
 import pytest
@@ -248,30 +254,45 @@ def test_csv_header_only_file_does_not_crash_already(tmp_path: pathlib.Path) -> 
     assert messages == []
 
 
-def test_malformed_file_default_exclude_invalid_files_yields_no_crash_already(
+def test_malformed_single_file_raises_instead_of_silently_dropping(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Under the default exclude_invalid_files=True, PyArrow silently drops a
-    malformed single file from the dataset instead of raising -- this is a
-    (separate, pre-existing) silent-data-loss concern, not a crash, and is
-    documented here as out of scope for this hardening pass.
+    """#134: a source whose every file is excluded is an error, not 0 rows.
+
+    Uses the same ragged-rows fixture as ``test_csv_ragged_rows_raises_clean_error``:
+    it passes the lightweight Python-side ``is_csv_file`` sniffer (so
+    ``SourceFactory.__init__`` accepts the path) but PyArrow's own internal
+    validity check excludes it during ``ds.dataset()`` discovery under the
+    default ``exclude_invalid_files=True``.
     """
     bad = tmp_path / "ragged.csv"
     rows = ["a,b,c", *[f"{i},{i + 1},{i + 2}" for i in range(20)], "99,100"]
     bad.write_text("\n".join(rows) + "\n")
 
     factory = csv_source.SourceFactory(str(bad))  # default exclude_invalid_files=True
-    data_source = factory.build()
-    message_dataset = MessageDataset()
-    messages = list(
-        message_dataset._messages(
-            data_source,
-            topics=["message"],
-            start_seconds_inclusive=None,
-            end_seconds_inclusive=None,
-        )
-    )
-    assert messages == []
+    with pytest.raises(errors.InvalidPathError, match="excluded as invalid"):
+        factory.build()
+
+
+def test_directory_with_one_bad_file_warns_and_counts(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#134: partial drops keep working but leave a warning and metadata count."""
+    (tmp_path / "good.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    rows = ["a,b,c", *[f"{i},{i + 1},{i + 2}" for i in range(20)], "99,100"]
+    (tmp_path / "ragged.csv").write_text("\n".join(rows) + "\n")
+    factory = csv_source.SourceFactory(str(tmp_path))
+    with caplog.at_level(logging.WARNING):
+        built = factory.build()
+    assert built.dataset.count_rows() == 1
+    assert factory.metadata["excluded_file_count"] == 1
+    assert any("excluded" in record.message for record in caplog.records)
+
+
+def test_metadata_excluded_count_defaults_to_zero(tmp_path: pathlib.Path) -> None:
+    (tmp_path / "good.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    factory = csv_source.SourceFactory(str(tmp_path))
+    assert factory.metadata["excluded_file_count"] == 0
 
 
 # ---------------------------------------------------------------------------
