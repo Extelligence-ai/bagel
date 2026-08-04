@@ -24,6 +24,7 @@ def test_describe_data_source_empty_path_raises() -> None:
 def test_query_messages_bad_sql() -> None:
     # Use a real sample so the failure is in SQL handling, not path resolution.
     import pathlib
+
     sample = pathlib.Path("data/sample/ros2/mcap")
     if not sample.exists():
         pytest.skip("ros2 sample not present")
@@ -33,6 +34,7 @@ def test_query_messages_bad_sql() -> None:
 
 def test_read_loggings_inverted_window() -> None:
     import pathlib
+
     sample = pathlib.Path("data/sample/ros2/mcap")
     if not sample.exists():
         pytest.skip("ros2 sample not present")

@@ -247,9 +247,7 @@ def test_influxdb_connect_error_does_not_leak_token(monkeypatch: pytest.MonkeyPa
 
 
 def test_slack_rejects_non_http_webhook_without_echoing_it() -> None:
-    secret_looking_value = (
-        "ftp://hooks.example.com/services/T00/B00/s3cr3twebhooktoken"  # noqa: S105
-    )
+    secret_looking_value = "ftp://hooks.example.com/services/T00/B00/s3cr3twebhooktoken"  # noqa: S105
 
     with pytest.raises(ValueError, match="http") as excinfo:
         NotifySlack(webhook_url=secret_looking_value, message="x")

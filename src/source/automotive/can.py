@@ -97,8 +97,7 @@ class CanLog:
             # into a single clean, typed error instead of letting a
             # can/cantools-internal exception escape.
             raise errors.InvalidPathError(
-                f"{self._path} could not be read as a CAN capture: "
-                f"{type(exc).__name__}: {exc}"
+                f"{self._path} could not be read as a CAN capture: {type(exc).__name__}: {exc}"
             ) from exc
         if unknown:
             logging.info("Skipped %d frames with IDs not in the DBC", unknown)
