@@ -106,22 +106,41 @@ class CanLog:
             logging.info("Skipped %d frames that failed to decode", undecodable)
 
     @functools.cached_property
+    def _frame_stats(self) -> tuple[int, float, float, dict[str, int]]:
+        """One decode pass: (count, first timestamp, last timestamp, per-topic counts).
+
+        Backs both `stats` and `topic_message_counts` so enumerating N topics
+        costs one decode pass total, not N (#134). Memory for the per-topic
+        dict is bounded by the number of distinct DBC message names, not file
+        size, so it stays within the streaming design.
+        """
+        count = 0
+        start = math.inf
+        end = -math.inf
+        topic_counts: dict[str, int] = {}
+        for timestamp, name, _ in self._decoded_frames():
+            count += 1
+            start = min(start, timestamp)
+            end = max(end, timestamp)
+            topic_counts[name] = topic_counts.get(name, 0) + 1
+        if not count:
+            return (0, 0.0, 0.0, {})
+        return (count, start, end, topic_counts)
+
+    @functools.cached_property
     def stats(self) -> tuple[int, float, float]:
         """(decodable frame count, first timestamp, last timestamp), one pass, O(1) memory.
 
         Decode is still attempted per frame so the count matches records()
         exactly; the decoded values are discarded immediately (#134).
         """
-        count = 0
-        start = math.inf
-        end = -math.inf
-        for timestamp, _, _ in self._decoded_frames():
-            count += 1
-            start = min(start, timestamp)
-            end = max(end, timestamp)
-        if not count:
-            return (0, 0.0, 0.0)
+        count, start, end, _ = self._frame_stats
         return (count, start, end)
+
+    @functools.cached_property
+    def topic_message_counts(self) -> dict[str, int]:
+        """Decoded frame count per DBC message name, from the same pass as `stats` (#134)."""
+        return self._frame_stats[3]
 
     def records(
         self, start_seconds: float | None = None, end_seconds: float | None = None

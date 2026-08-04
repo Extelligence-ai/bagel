@@ -18,6 +18,7 @@ pytest.importorskip("can")
 pytest.importorskip("cantools")
 
 from src.source.automotive import can as can_source
+from src.topic.automotive.can import TopicRegistry
 from test.adversarial.test_can_parse import _write_valid_dbc
 
 
@@ -107,3 +108,31 @@ def test_can_records_window_filters_before_sort(
     mid = everything[len(everything) // 2][0]
     windowed = log.records(start_seconds=mid)
     assert windowed == [r for r in everything if r[0] >= mid]
+
+
+def test_can_topic_counts_come_from_one_pass_not_records(
+    valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Enumerating topics/counts must not re-decode via records() per topic (#134)."""
+    capture, dbc = valid_asc_and_dbc
+    log = can_source.CanLog(path=str(capture), dbc=str(dbc))
+
+    # Ground truth, independently derived from a full decode.
+    expected_counts: dict[str, int] = {}
+    for _, name, _ in log.records():
+        expected_counts[name] = expected_counts.get(name, 0) + 1
+
+    topic_counts = log.topic_message_counts
+    assert topic_counts == expected_counts
+    assert sum(topic_counts.values()) == log.stats[0]
+
+    registry = TopicRegistry()
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("records() must not be called by topic enumeration")
+
+    monkeypatch.setattr(log, "records", _boom)
+
+    assert sorted(registry.available_topics(log)) == sorted(expected_counts)
+    for name, count in expected_counts.items():
+        assert registry.message_count(name, log) == count
