@@ -136,3 +136,11 @@ def test_to_duckdb_rebuilds_after_cache_file_deleted(
     cached[0].unlink()
     relation_again = dataset.to_duckdb(factory, registry)
     assert relation_again.df().shape[0] == rows
+
+
+def test_directory_size_bytes(tmp_path: pathlib.Path) -> None:
+    assert artifacts.directory_size_bytes(tmp_path / "missing") == 0
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "a.bin").write_bytes(b"x" * 100)
+    (tmp_path / "sub" / "b.bin").write_bytes(b"y" * 50)
+    assert artifacts.directory_size_bytes(tmp_path) == 150

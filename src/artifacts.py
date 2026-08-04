@@ -161,3 +161,11 @@ def artifact_s3_key(path: pathlib.Path) -> str:
     relative_path = path.relative_to(settings.ARTIFACT_DIRECTORY)
     s3_key = pathlib.Path(settings.ARTIFACT_DIRNAME) / relative_path
     return s3_key.as_posix()
+
+
+def directory_size_bytes(directory: str | pathlib.Path) -> int:
+    """Total size of all files under a directory; 0 if it does not exist."""
+    root = pathlib.Path(directory)
+    if not root.exists():
+        return 0
+    return sum(file.stat().st_size for file in root.glob("**/*") if file.is_file())

@@ -1,5 +1,6 @@
 """Entry point for the Bagel MCP server."""
 
+import logging
 import pathlib
 from typing import Any
 
@@ -8,7 +9,7 @@ import yaml
 from poml import poml
 
 from settings import settings
-from src import mcp_compat
+from src import artifacts, mcp_compat
 from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
@@ -565,9 +566,7 @@ def preview_pipeline(  # noqa: PLR0913
         "run later with `run.py`. Returns the path to the written file."
     ),
 )
-def save_pipeline(
-    config: dict[str, Any], name: str, directory: str = "pipelines"
-) -> str:
+def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines") -> str:
     """Write a pipeline configuration to a YAML file.
 
     Args:
@@ -726,7 +725,8 @@ def export_for_plotjuggler(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -795,7 +795,8 @@ def export_for_rerun(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -864,7 +865,8 @@ def export_for_lichtblick(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -937,7 +939,8 @@ def export_for_lerobot(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -963,6 +966,17 @@ if __name__ == "__main__":
         # Standing pipelines: re-establish subscriptions (and their attached pipelines)
         # on boot, so they survive container restarts.
         startup.start(settings.STARTUP_PIPELINES_FILE)
+    # Disk-usage visibility for unattended deployments (#134): the arrow query
+    # cache self-evicts (CACHE_MAX_BYTES), but ARTIFACT_DIRECTORY holds user
+    # deliverables and is never auto-deleted -- its datestr= partition layout
+    # supports external rotation (e.g. find -mtime +N).
+    logging.info(
+        "Disk usage: cache %s = %d bytes, artifacts %s = %d bytes",
+        settings.CACHE_DIRECTORY,
+        artifacts.directory_size_bytes(settings.CACHE_DIRECTORY),
+        settings.ARTIFACT_DIRECTORY,
+        artifacts.directory_size_bytes(settings.ARTIFACT_DIRECTORY),
+    )
     mcp_compat.run_server(
         server,
         transport=settings.MCP_TRANSPORT,
