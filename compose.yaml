@@ -23,6 +23,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-jazzy:
@@ -49,6 +53,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-iron:
@@ -75,6 +83,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-humble:
@@ -101,6 +113,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic:
@@ -125,6 +141,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic-cv:
@@ -149,6 +169,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   px4:
@@ -172,6 +196,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ardupilot:
@@ -195,6 +223,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   betaflight:
@@ -218,6 +250,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   apache-arrow:
@@ -241,6 +277,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   iot:
@@ -266,6 +306,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   # Local LLM for a fully offline stack: your data AND your model never leave
