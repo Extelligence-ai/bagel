@@ -424,7 +424,7 @@ def subscribe_live_topics(  # noqa: PLR0913
         "Discover available capabilities and their paths with "
         "`list_agent_capabilities`. The file specifies task instructions and "
         "output formats. Optional context values can be injected to customize "
-        "its behavior."
+        "its behavior. Capabilities may be POML (parameterizable via context) or markdown (static)."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
@@ -467,6 +467,14 @@ def run_poml_capability(
     poml_file = pathlib.Path(poml_path)
     if not poml_file.exists():
         raise FileNotFoundError(poml_file)
+    if poml_file.suffix == ".md":
+        # Markdown capabilities are static instructions: no template engine,
+        # so parameterization is impossible rather than silently ignored.
+        if poml_context:
+            raise agent_capabilities.InvalidCapabilityError(
+                f"{poml_file} is a markdown capability; poml_context requires a POML file."
+            )
+        return [{"speaker": "human", "content": poml_file.read_text(encoding="utf-8")}]
     return poml(poml_file, context=poml_context)
 
 
@@ -500,6 +508,48 @@ def list_agent_capabilities() -> list[dict[str, str]]:
 
     """
     return agent_capabilities.list_capabilities()
+
+
+@server.tool(
+    title="Save a user capability",
+    description=(
+        "Save a reusable workflow as a named capability so it can be discovered "
+        "with `list_agent_capabilities` and run with `run_poml_capability` in any "
+        "future session. Content may be POML (validated before saving; supports "
+        "context parameterization) or plain markdown instructions. Writes only to "
+        "the user-capabilities directory; builtin capabilities cannot be modified."
+    ),
+)
+def save_agent_capability(name: str, content: str, overwrite: bool = False) -> dict[str, str]:
+    r"""Save a user-authored capability into the user-capabilities directory.
+
+    Args:
+        name (str): Capability slug (lowercase letters, digits, ``-``/``_``,
+            at most one ``/`` subdirectory level), e.g. ``fleet/battery-triage``.
+            The server chooses the file extension from the content.
+        content (str): The capability body — POML markup (starts with
+            ``<poml``) or markdown instructions.
+        overwrite (bool, optional): Replace an existing capability of the same
+            name. Defaults to False.
+
+    Returns:
+        dict[str, str]: The saved capability's ``name`` (``user/``-prefixed),
+            ``path``, and one-line ``summary`` — the same shape
+            ``list_agent_capabilities`` reports.
+
+    Raises:
+        InvalidCapabilityError: On an invalid name, empty content,
+            non-rendering POML, or a name collision without ``overwrite=True``.
+
+    Examples:
+        As an LLM prompt:
+            Save that workflow as a capability called battery-triage.
+
+        As a Python call:
+            >>> save_agent_capability("battery-triage", "# Battery triage\n\nSteps...")
+
+    """
+    return agent_capabilities.save_capability(name=name, content=content, overwrite=overwrite)
 
 
 @server.tool(

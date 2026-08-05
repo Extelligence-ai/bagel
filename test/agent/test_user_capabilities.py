@@ -136,3 +136,29 @@ def test_overwrite_replaces_across_formats(user_dir: pathlib.Path) -> None:
     capabilities.save_capability("swap", VALID_POML, overwrite=True)
     assert (user_dir / "swap.poml").exists()
     assert not (user_dir / "swap.md").exists()
+
+
+def test_run_markdown_capability_end_to_end(user_dir: pathlib.Path) -> None:
+    import server
+
+    saved = capabilities.save_capability("checklist", "# Checklist\n\nDo the thing.\n")
+    result = server.run_poml_capability(saved["path"])
+    assert isinstance(result, list) and len(result) == 1
+    assert "Do the thing." in result[0]["content"]
+
+
+def test_run_markdown_with_context_raises(user_dir: pathlib.Path) -> None:
+    import server
+
+    saved = capabilities.save_capability("static", "No variables here.\n")
+    with pytest.raises(capabilities.InvalidCapabilityError, match="POML"):
+        server.run_poml_capability(saved["path"], poml_context={"x": 1})
+
+
+def test_save_tool_round_trip(user_dir: pathlib.Path) -> None:
+    import server
+
+    saved = server.save_agent_capability("via-tool", VALID_POML)
+    assert saved["name"] == "user/via-tool"
+    names = {capability["name"] for capability in server.list_agent_capabilities()}
+    assert "user/via-tool" in names
