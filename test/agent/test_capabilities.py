@@ -38,3 +38,17 @@ def test_mcp_tool_returns_discovery_results() -> None:
 
     result = server.list_agent_capabilities()
     assert result == list_capabilities()
+
+
+def test_triage_capability_is_discovered() -> None:
+    names = {capability["name"] for capability in list_capabilities()}
+    assert "triage/investigate" in names
+
+
+def test_triage_capability_renders() -> None:
+    from poml import poml
+
+    rendered = poml("./src/agent/triage/investigate.poml")
+    assert isinstance(rendered, list)
+    assert all(isinstance(message, dict) for message in rendered)
+    assert any("content" in message for message in rendered)
