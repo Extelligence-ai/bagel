@@ -6,7 +6,11 @@ from src.agent.capabilities import list_capabilities
 
 
 def test_lists_every_poml_under_src_agent() -> None:
-    found = {capability["name"] for capability in list_capabilities()}
+    found = {
+        capability["name"]
+        for capability in list_capabilities()
+        if not capability["name"].startswith("user/")
+    }
     on_disk = {
         str(file.relative_to("src/agent").with_suffix(""))
         for file in pathlib.Path("src/agent").rglob("*.poml")
