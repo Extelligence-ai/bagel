@@ -252,3 +252,33 @@ def test_save_wraps_permission_error(
     monkeypatch.setattr(pathlib.Path, "mkdir", _raise_permission_error)
     with pytest.raises(capabilities.InvalidCapabilityError, match="mkdir -p"):
         capabilities.save_capability("battery", "Body text.\n")
+
+
+# --- Residual gap: directory-symlink escape (leaf-only checks missed this) -
+
+
+def test_save_refuses_directory_symlink_escape(
+    tmp_path: pathlib.Path, user_dir: pathlib.Path
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (user_dir / "escape").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(capabilities.InvalidCapabilityError, match="outside|escape|root"):
+        capabilities.save_capability("escape/pwn", "Body text.\n")
+    assert list(outside.iterdir()) == []
+
+
+def test_directory_symlink_contents_not_discovered(
+    tmp_path: pathlib.Path, user_dir: pathlib.Path
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "pwn.md").write_text("# Pwn\n\nSecret.\n", encoding="utf-8")
+    (user_dir / "escape").symlink_to(outside, target_is_directory=True)
+    assert "user/escape/pwn" not in _by_name()
+
+
+def test_save_into_normal_subdirectory_still_works(user_dir: pathlib.Path) -> None:
+    saved = capabilities.save_capability("fleet/battery2", "Check cells again.\n")
+    assert (user_dir / "fleet" / "battery2.md").exists()
+    assert saved["name"] == "user/fleet/battery2"
