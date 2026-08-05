@@ -1,0 +1,15 @@
+{
+  "name": "bagel",
+  "description": "Bagel plugin marketplace: query rosbags, MCAP, CAN, MDF4, and flight-controller logs in plain language via the bundled MCP server.",
+  "owner": {
+    "name": "Extelligence",
+    "url": "https://github.com/Extelligence-ai"
+  },
+  "plugins": [
+    {
+      "name": "bagel",
+      "source": "./plugin",
+      "description": "Query robot logs and live data in plain language via the Bagel MCP server; includes skills for triage, pipelines, live sinks, and visualization export."
+    }
+  ]
+}
