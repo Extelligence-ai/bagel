@@ -186,8 +186,13 @@ INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 In a new terminal:
 
 ```bash
-claude mcp add --transport sse bagel http://0.0.0.0:8000/sse
+claude mcp add --transport sse bagel http://localhost:8000/sse
 ```
+
+> [!NOTE]
+> The MCP endpoint is bound to `localhost` only (not exposed to the LAN) for security.
+> To share it with other machines, drop the `127.0.0.1` prefix in `compose.yaml` and
+> put an authenticated proxy in front—see [SECURITY.md](./SECURITY.md).
 
 #### 3. Prompt
 
