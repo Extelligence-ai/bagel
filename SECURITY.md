@@ -50,7 +50,8 @@ the product working as intended:
   network. To share an instance deliberately, remove the `127.0.0.1:` prefix
   and put an authenticated, TLS-terminating proxy in front of it.
 
-The `save_agent_capability` tool is the endpoint's first write-capable tool.
+The `save_agent_capability` tool is the endpoint's first tool whose writes are
+driven by LLM-authored content rather than caller-specified paths or configuration.
 Its writes are confined to `.poml`/`.md` files under the configured
 `USER_CAPABILITIES_DIRECTORY` (name slugs are validated; path traversal and
 absolute paths are rejected), and builtin capabilities are immutable through
