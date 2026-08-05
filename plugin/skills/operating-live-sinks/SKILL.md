@@ -13,7 +13,7 @@ pipelines run against them.
 - A `BufferCapacityExceededError` on subscribe is admission control, not a bug:
   the sink's total budget (`SINK_TOTAL_BUFFER_BYTES`) would be exceeded. Either
   lower the per-topic `buffer_size_bytes` or raise the budget — the error
-  message names both knobs. See references/settings-knobs.md for every knob and
+  message names both knobs. See ${CLAUDE_PLUGIN_ROOT}/references/settings-knobs.md for every knob and
   its default.
 - The arrow query cache self-limits (`CACHE_MAX_BYTES`, default 20 GB, LRU);
   artifacts under `~/.bagel/artifacts` are never auto-deleted — they are the

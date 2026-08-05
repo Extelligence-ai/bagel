@@ -16,4 +16,4 @@ preview-before-run rule. Do not write pipeline YAML from memory:
    arguments — never guess them.
 
 If the connection fails, the server container is not running — see
-references/formats.md.
+${CLAUDE_PLUGIN_ROOT}/references/formats.md.

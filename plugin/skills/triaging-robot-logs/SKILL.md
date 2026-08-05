@@ -14,5 +14,5 @@ improvise one: fetch and follow it.
 
 If the bagel tools are missing or the connection fails, the server is probably
 not running — the user must start the Docker container for their data format
-first (see references/formats.md for the format → image → extra-args table,
+first (see ${CLAUDE_PLUGIN_ROOT}/references/formats.md for the format → image → extra-args table,
 including the CAN `dbc` requirement).

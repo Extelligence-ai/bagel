@@ -37,5 +37,21 @@ def test_every_poml_route_in_skills_exists_on_disk() -> None:
 def test_referenced_reference_files_exist() -> None:
     for skill_file in SKILL_FILES:
         text = skill_file.read_text(encoding="utf-8")
-        for reference in re.findall(r"references/[\w-]+\.md", text):
+        # Extract references from both forms:
+        # ${CLAUDE_PLUGIN_ROOT}/references/...md and bare references/...md
+        plugin_root_refs = re.findall(
+            r"\$\{CLAUDE_PLUGIN_ROOT\}/(references/[\w-]+\.md)", text
+        )
+        bare_refs = re.findall(
+            r"(?<!\$\{CLAUDE_PLUGIN_ROOT\}/)references/[\w-]+\.md", text
+        )
+
+        # Assert all referenced files exist
+        for reference in plugin_root_refs + bare_refs:
             assert (pathlib.Path("plugin") / reference).exists(), reference
+
+        # Assert no bare-path form remains (all must use ${CLAUDE_PLUGIN_ROOT}/)
+        assert not bare_refs, (
+            f"Bare 'references/...' paths found in {skill_file.name} "
+            f"(must use ${{CLAUDE_PLUGIN_ROOT}}/): {bare_refs}"
+        )
