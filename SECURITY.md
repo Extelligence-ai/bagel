@@ -45,7 +45,8 @@ the product working as intended:
   trusted network; never expose the port to the public internet. The compose files
   publish it on the local host only for the documented single-machine setup.
 
-The `save_agent_capability` tool is the endpoint's first write-capable tool.
+The `save_agent_capability` tool is the endpoint's first tool whose writes are
+driven by LLM-authored content rather than caller-specified paths or configuration.
 Its writes are confined to `.poml`/`.md` files under the configured
 `USER_CAPABILITIES_DIRECTORY` (name slugs are validated; path traversal and
 absolute paths are rejected), and builtin capabilities are immutable through
