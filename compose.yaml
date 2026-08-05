@@ -14,8 +14,12 @@ services:
     environment:
       CONTAINER_MODE: true
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -40,8 +44,12 @@ services:
     environment:
       CONTAINER_MODE: true
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -66,8 +74,12 @@ services:
     environment:
       CONTAINER_MODE: true
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -92,8 +104,12 @@ services:
     environment:
       CONTAINER_MODE: true
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -118,8 +134,12 @@ services:
     environment:
       CONTAINER_MODE: true
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
@@ -142,8 +162,12 @@ services:
     environment:
       CONTAINER_MODE: true
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
@@ -165,8 +189,12 @@ services:
     environment:
       CONTAINER_MODE: true
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
@@ -188,8 +216,12 @@ services:
     environment:
       CONTAINER_MODE: true
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
@@ -211,8 +243,12 @@ services:
     environment:
       CONTAINER_MODE: true
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
@@ -234,8 +270,12 @@ services:
     environment:
       CONTAINER_MODE: true
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
@@ -257,8 +297,12 @@ services:
     environment:
       CONTAINER_MODE: true
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -275,7 +319,11 @@ services:
     image: ollama/ollama:latest
     profiles: ["local-llm"]
     ports:
-      - "11434:11434"
+      # Bound to localhost: like the MCP endpoint, the ollama LLM endpoint
+      # is unauthenticated. Publishing to 0.0.0.0 would expose it to the LAN.
+      # To share it deliberately, drop the 127.0.0.1 prefix and put an
+      # authenticated proxy in front (#158).
+      - "127.0.0.1:11434:11434"
     volumes:
       # Models are multi-GB; persist them across container restarts.
       - ${HOME}/.ollama:/root/.ollama
