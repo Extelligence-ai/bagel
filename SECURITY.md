@@ -53,3 +53,7 @@ the product working as intended:
   broker credentials, DSNs, and webhook URLs.
 - Cloud upload tasks use your ambient credentials (AWS/GCS/Azure SDK chains);
   scope those credentials to the destination buckets.
+- Published images contain no `.env`. Runtime configuration comes from the
+  defaults in `settings.py`, Compose's `environment:`/`env_file:`, or the
+  process environment — so a secret added to a local `.env` is never baked
+  into a published image layer.
