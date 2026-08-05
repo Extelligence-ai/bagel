@@ -44,11 +44,11 @@ the product working as intended:
   socket. Bind it to localhost (`MCP_SERVER_HOST=127.0.0.1`) or keep it inside a
   trusted network; never expose the port to the public internet. The compose files
   publish it on the local host only for the documented single-machine setup.
-- Compose publishes the MCP and Jupyter ports on `127.0.0.1` only. Docker's
-  port publishing bypasses host firewalls, so an unprefixed mapping would
-  expose the unauthenticated endpoint to every device on the network. To
-  share an instance deliberately, remove the `127.0.0.1:` prefix and put an
-  authenticated, TLS-terminating proxy in front of it.
+- Compose publishes the MCP, Jupyter, and (opt-in) ollama ports on `127.0.0.1`
+  only. Docker's port publishing bypasses host firewalls, so an unprefixed
+  mapping would expose the unauthenticated endpoint to every device on the
+  network. To share an instance deliberately, remove the `127.0.0.1:` prefix
+  and put an authenticated, TLS-terminating proxy in front of it.
 - Treat pipeline configs and startup manifests as sensitive: they can contain
   broker credentials, DSNs, and webhook URLs.
 - Cloud upload tasks use your ambient credentials (AWS/GCS/Azure SDK chains);

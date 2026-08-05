@@ -13,6 +13,7 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
     ports:
       # Bound to localhost: the MCP endpoint is unauthenticated by design
       # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
@@ -43,6 +44,7 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
     ports:
       # Bound to localhost: the MCP endpoint is unauthenticated by design
       # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
@@ -73,6 +75,7 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
     ports:
       # Bound to localhost: the MCP endpoint is unauthenticated by design
       # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
@@ -103,6 +106,7 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
     ports:
       # Bound to localhost: the MCP endpoint is unauthenticated by design
       # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
@@ -133,6 +137,7 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
     ports:
       # Bound to localhost: the MCP endpoint is unauthenticated by design
       # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
@@ -161,6 +166,7 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
     ports:
       # Bound to localhost: the MCP endpoint is unauthenticated by design
       # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
@@ -188,6 +194,7 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
     ports:
       # Bound to localhost: the MCP endpoint is unauthenticated by design
       # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
@@ -215,6 +222,7 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
     ports:
       # Bound to localhost: the MCP endpoint is unauthenticated by design
       # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
@@ -242,6 +250,7 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
     ports:
       # Bound to localhost: the MCP endpoint is unauthenticated by design
       # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
@@ -269,6 +278,7 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
     ports:
       # Bound to localhost: the MCP endpoint is unauthenticated by design
       # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
@@ -296,6 +306,7 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
     ports:
       # Bound to localhost: the MCP endpoint is unauthenticated by design
       # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and

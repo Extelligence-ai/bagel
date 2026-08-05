@@ -7,6 +7,7 @@ network, so the compose file must match it by default.
 """
 
 import pathlib
+import re
 
 import yaml
 
@@ -29,3 +30,46 @@ def test_container_side_host_still_binds_all_interfaces() -> None:
     """The in-container listen address must stay 0.0.0.0 for port mapping to work."""
     env = pathlib.Path(".env").read_text(encoding="utf-8")
     assert "MCP_SERVER_HOST=0.0.0.0" in env
+
+
+def test_every_mcp_publishing_service_passes_mcp_server_port_env() -> None:
+    """Services that publish the MCP port must also inject MCP_SERVER_PORT.
+
+    Settings defaults MCP_SERVER_PORT to 8000 (issue #158's Task 2), so a user
+    who edits the port in .env but relies only on compose's `ports:` mapping
+    gets a host-side mapping to their custom port while the in-container
+    server keeps listening on 8000 -- connection refused. Every service whose
+    `ports:` block maps `${MCP_SERVER_PORT}:${MCP_SERVER_PORT}` must also pass
+    MCP_SERVER_PORT through its `environment:` block so the in-container
+    server picks up the same value.
+    """
+    offenders = []
+    for name, service in _services().items():
+        mappings = [str(m) for m in service.get("ports", [])]
+        publishes_mcp_port = any("${MCP_SERVER_PORT}" in m for m in mappings)
+        if not publishes_mcp_port:
+            continue
+        env = service.get("environment", {}) or {}
+        if str(env.get("MCP_SERVER_PORT", "")) != "${MCP_SERVER_PORT}":
+            offenders.append(name)
+    assert not offenders, (
+        f"services publish the MCP port but don't pass MCP_SERVER_PORT in "
+        f"environment: {offenders}"
+    )
+
+
+def test_no_dockerfile_copies_env_file() -> None:
+    """Published images must never bake in the local .env (see SECURITY.md).
+
+    Task 2 (#158) removed the `COPY .env` that used to embed local secrets
+    into public image layers. This guards against it silently coming back in
+    a future Dockerfile edit or a new Dockerfile.*.
+    """
+    offenders = []
+    for dockerfile in sorted(pathlib.Path("docker").glob("Dockerfile.*")):
+        for lineno, line in enumerate(
+            dockerfile.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if re.match(r"\s*COPY\b.*\.env\b", line):
+                offenders.append(f"{dockerfile}:{lineno}: {line.strip()}")
+    assert not offenders, f"Dockerfile(s) copy .env into the image: {offenders}"
