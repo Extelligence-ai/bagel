@@ -42,6 +42,31 @@ def _user_root() -> pathlib.Path:
     return pathlib.Path(settings.USER_CAPABILITIES_DIRECTORY)
 
 
+def _is_confined(path: pathlib.Path, root: pathlib.Path) -> bool:
+    """Return True if ``path``'s resolved (symlink-followed) location is ``root`` or beneath it.
+
+    The single containment check used by both save and discovery: a leaf-level
+    ``.is_symlink()`` check alone misses an intermediate directory symlink (e.g.
+    ``<root>/escape -> /outside/dir``, then operating on ``escape/whatever``),
+    because resolving that path lands outside ``root`` even though no path
+    *component* by itself looked suspicious. Resolving both sides and checking
+    ``is_relative_to`` catches that regardless of which segment is the symlink.
+    """
+    try:
+        return path.resolve().is_relative_to(root.resolve())
+    except OSError:
+        return False  # unresolvable (e.g. vanished mid-walk): treat as not confined
+
+
+def _assert_confined(path: pathlib.Path, root: pathlib.Path, action: str) -> None:
+    """Raise InvalidCapabilityError if ``path`` resolves outside ``root``."""
+    if not _is_confined(path, root):
+        raise InvalidCapabilityError(
+            f"Refusing to {action} {path}: it resolves to {path.resolve()}, "
+            f"outside the user-capabilities root {root.resolve()}."
+        )
+
+
 _LIST_MARKER_PATTERN = re.compile(r"^(?:[-*+]\s+|\d+[.)]\s+)")
 
 
@@ -111,6 +136,8 @@ def list_capabilities() -> list[dict[str, str]]:
             for user_file in user_root.rglob(pattern):
                 if user_file.is_symlink():
                     continue  # never read through a symlink, planted or otherwise
+                if not _is_confined(user_file, user_root):
+                    continue  # reached via a symlinked ancestor directory instead
                 try:
                     text = user_file.read_text(encoding="utf-8", errors="replace")
                 except OSError:
@@ -200,15 +227,21 @@ def _validate_poml_renders(content: str) -> None:
 
 
 def _write_capability_file(
-    target: pathlib.Path, existing: list[pathlib.Path], content: str
+    target: pathlib.Path, existing: list[pathlib.Path], content: str, user_root: pathlib.Path
 ) -> None:
     """Create the target's parent dir, drop stale same-name siblings, and write it.
 
     Raised OS errors (e.g. a non-writable directory on a fresh Linux bind mount)
     are translated to the module's typed error with a pointer to the likely fix.
+    After creating the parent dir, its resolved location is checked against
+    ``user_root``: a pre-planted *directory* symlink one level up (e.g.
+    ``<root>/escape -> /outside/dir``) would otherwise let a write land outside
+    the confinement guarantee even though no single path component looked like
+    a symlink from the target's own leaf-level check.
     """
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
+        _assert_confined(target.parent, user_root, action="save a capability under")
         for stale in existing:
             if stale != target:
                 stale.unlink(missing_ok=True)
@@ -240,8 +273,10 @@ def save_capability(name: str, content: str, overwrite: bool = False) -> dict[st
     Raises:
         InvalidCapabilityError: On an invalid name, empty content,
             non-rendering POML, a collision without ``overwrite=True``, an
-            attempt to write through a symlink, or an OS-level failure (e.g.
-            a non-writable directory) while creating or writing the file.
+            attempt to write through a symlinked file or a symlinked ancestor
+            directory (resolved location outside the user-capabilities root),
+            or an OS-level failure (e.g. a non-writable directory) while
+            creating or writing the file.
 
     """
     if name.startswith("user/"):
@@ -274,7 +309,7 @@ def save_capability(name: str, content: str, overwrite: bool = False) -> dict[st
             f"Capability {name!r} already exists ({existing[0].name}); "
             "pass overwrite=True to replace it."
         )
-    _write_capability_file(target, existing, content)
+    _write_capability_file(target, existing, content, user_root)
 
     summarize = _summary if is_poml else _markdown_summary
     relative = target.relative_to(user_root)
