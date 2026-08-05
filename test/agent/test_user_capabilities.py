@@ -80,3 +80,59 @@ def test_combined_list_sorted_by_name(user_dir: pathlib.Path) -> None:
     (user_dir / "aaa.md").write_text("First.\n", encoding="utf-8")
     names = [capability["name"] for capability in capabilities.list_capabilities()]
     assert names == sorted(names)
+
+
+VALID_POML = "<poml><task>Saved workflow. More detail.</task></poml>"
+
+
+def test_save_poml_round_trip(user_dir: pathlib.Path) -> None:
+    saved = capabilities.save_capability("battery-triage", VALID_POML)
+    assert saved["name"] == "user/battery-triage"
+    assert saved["path"].endswith("battery-triage.poml")
+    assert saved["summary"] == "Saved workflow."
+    assert "user/battery-triage" in _by_name()
+
+
+def test_save_markdown_round_trip(user_dir: pathlib.Path) -> None:
+    saved = capabilities.save_capability("preflight", "# Preflight\n\nCheck the props.\n")
+    assert saved["path"].endswith("preflight.md")
+    assert saved["summary"] == "Check the props."
+
+
+def test_save_into_subdirectory(user_dir: pathlib.Path) -> None:
+    saved = capabilities.save_capability("fleet/battery", "Check cells.\n")
+    assert (user_dir / "fleet" / "battery.md").exists()
+    assert saved["name"] == "user/fleet/battery"
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    ["../escape", "/absolute", "Upper", "a b", "a/b/c", "", "name.poml"],
+)
+def test_save_rejects_bad_names(user_dir: pathlib.Path, bad_name: str) -> None:
+    with pytest.raises(capabilities.InvalidCapabilityError):
+        capabilities.save_capability(bad_name, "content")
+
+
+def test_save_rejects_empty_content(user_dir: pathlib.Path) -> None:
+    with pytest.raises(capabilities.InvalidCapabilityError, match="empty"):
+        capabilities.save_capability("blank", "   \n")
+
+
+def test_save_rejects_non_rendering_poml_and_writes_nothing(user_dir: pathlib.Path) -> None:
+    with pytest.raises(capabilities.InvalidCapabilityError, match="render"):
+        capabilities.save_capability("broken", "<poml><task>unclosed")
+    assert list(user_dir.rglob("*")) == []
+
+
+def test_save_collision_requires_overwrite(user_dir: pathlib.Path) -> None:
+    capabilities.save_capability("dupe", "First.\n")
+    with pytest.raises(capabilities.InvalidCapabilityError, match="overwrite=True"):
+        capabilities.save_capability("dupe", "Second.\n")
+
+
+def test_overwrite_replaces_across_formats(user_dir: pathlib.Path) -> None:
+    capabilities.save_capability("swap", "Markdown first.\n")
+    capabilities.save_capability("swap", VALID_POML, overwrite=True)
+    assert (user_dir / "swap.poml").exists()
+    assert not (user_dir / "swap.md").exists()

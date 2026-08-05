@@ -11,6 +11,7 @@ capabilities — .poml or .md files under ``settings.USER_CAPABILITIES_DIRECTORY
 
 import pathlib
 import re
+import tempfile
 
 from settings import settings
 
@@ -18,6 +19,11 @@ _AGENT_ROOT = pathlib.Path(__file__).parent
 
 _TASK_PATTERN = re.compile(r"<task>(.*?)</task>", re.DOTALL)
 _TAG_PATTERN = re.compile(r"<[^>]+>")
+_NAME_PATTERN = re.compile(r"^[a-z0-9_-]+(?:/[a-z0-9_-]+)?$")
+
+
+class InvalidCapabilityError(Exception):
+    """Raised when a capability cannot be saved or parameterized as requested."""
 
 
 def _summary(poml_text: str, fallback: str) -> str:
@@ -95,3 +101,74 @@ def list_capabilities() -> list[dict[str, str]]:
 
     capabilities.sort(key=lambda capability: capability["name"])
     return capabilities
+
+
+def _validate_poml_renders(content: str) -> None:
+    """Reject content that poml() cannot render, before anything is saved."""
+    from poml import poml  # deferred: keep module import light for discovery-only callers
+
+    with tempfile.NamedTemporaryFile("w", suffix=".poml", encoding="utf-8", delete=False) as handle:
+        handle.write(content)
+        temp_path = pathlib.Path(handle.name)
+    try:
+        poml(str(temp_path))
+    except Exception as exc:
+        # poml's renderer raises implementation-defined exceptions for bad
+        # markup; translate to the layer's typed error (#154 idiom).
+        raise InvalidCapabilityError(
+            f"Capability content does not render as POML: {type(exc).__name__}: {exc}"
+        ) from exc
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def save_capability(name: str, content: str, overwrite: bool = False) -> dict[str, str]:
+    """Save a user-authored capability and return its discovery entry.
+
+    Content starting with ``<poml`` is render-validated and saved as
+    ``.poml``; any other non-empty content is saved as markdown. Writes are
+    confined to ``settings.USER_CAPABILITIES_DIRECTORY``; builtins cannot be
+    modified through this function.
+
+    Raises:
+        InvalidCapabilityError: On an invalid name, empty content,
+            non-rendering POML, or a collision without ``overwrite=True``.
+
+    """
+    if not _NAME_PATTERN.fullmatch(name):
+        raise InvalidCapabilityError(
+            f"Invalid capability name {name!r}: use lowercase letters, digits, '-' or '_', "
+            "with at most one '/' subdirectory level. The server chooses the file extension."
+        )
+    stripped = content.strip()
+    if not stripped:
+        raise InvalidCapabilityError("Capability content is empty.")
+    is_poml = stripped.startswith("<poml")
+    if is_poml:
+        _validate_poml_renders(content)
+
+    user_root = _user_root()
+    target = user_root / f"{name}{'.poml' if is_poml else '.md'}"
+    existing = [
+        candidate
+        for candidate in (user_root / f"{name}.poml", user_root / f"{name}.md")
+        if candidate.exists()
+    ]
+    if existing and not overwrite:
+        raise InvalidCapabilityError(
+            f"Capability {name!r} already exists ({existing[0].name}); "
+            "pass overwrite=True to replace it."
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    for stale in existing:
+        if stale != target:
+            stale.unlink(missing_ok=True)
+    target.write_text(content, encoding="utf-8")
+
+    summarize = _summary if is_poml else _markdown_summary
+    relative = target.relative_to(user_root)
+    return {
+        "name": f"user/{relative.with_suffix('')}",
+        "path": str(target.resolve()),
+        "summary": summarize(content, relative.stem),
+    }
