@@ -12,6 +12,7 @@ Defined in `settings.py`; set via the container environment or `.env`.
 | `CACHE_MAX_BYTES` | 20 GB | LRU cap on the arrow query cache; 0 disables eviction. Never touches sink buffers or artifacts |
 | `MAX_ARROW_RECORD_BATCH_SIZE_COUNT` | 100000 | Row ceiling per arrow batch; bounds peak memory when converting large topics |
 | `ARTIFACT_DIRECTORY` | `~/.bagel/artifacts` | User deliverables (snippets, GIFs, exports). Never cleaned up automatically |
+| `USER_CAPABILITIES_DIRECTORY` | `~/.bagel/capabilities` | User-authored capability files, discovered by `list_agent_capabilities`, written by `save_agent_capability`. Never auto-deleted |
 | `CACHE_DIRECTORY` | `~/.cache/bagel` | Intermediate artifact cache |
 | `STARTUP_PIPELINES_FILE` | unset | YAML manifest of subscriptions/pipelines re-established on boot |
 | `ARROW_RECORD_BATCH_SIZE_BYTES` | 1 GB | Bytes per record batch in arrow files (best effort) |
