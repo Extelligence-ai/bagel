@@ -406,24 +406,29 @@ def run_poml_capability(
     poml_path: str,
     poml_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Execute a structured capability from a POML file.
+    """Execute a structured capability from a POML or markdown file.
 
     Loads a `.poml` file containing instructions written in the POML
-    (Prompt-Oriented Markup Language) format. The file defines the task the
-    LLM should perform and how the output should be structured. This tool
-    produces a ready-to-use prompt for LLM execution.
+    (Prompt-Oriented Markup Language) format, or a `.md` file containing
+    static markdown instructions. The file defines the task the LLM should
+    perform and how the output should be structured. This tool produces a
+    ready-to-use prompt for LLM execution.
 
     Optionally, a context dictionary can be passed to substitute values in
-    the POML template, enabling dynamic parameterization.
+    the POML template, enabling dynamic parameterization. Markdown
+    capabilities have no template engine, so `poml_context` is rejected for
+    them rather than silently ignored.
 
     Args:
-        poml_path (str): Filesystem path to the `.poml` file containing the
-            capability definition.
+        poml_path (str): Filesystem path to the `.poml` or `.md` file
+            containing the capability definition.
         poml_context (dict[str, Any] | None, optional): Key-value pairs injected
             into the POML file to customize behavior. Defaults to None.
 
     Raises:
-        FileNotFoundError: If the `.poml` file cannot be found.
+        FileNotFoundError: If the file cannot be found.
+        InvalidCapabilityError: If `poml_context` is passed for a markdown
+            (`.md`) capability, which has no template engine to apply it to.
 
     Returns:
         list[dict[str, Any]]: A structured prompt representation, typically in the format:
@@ -455,10 +460,12 @@ def run_poml_capability(
 @server.tool(
     title="List agent capabilities",
     description=(
-        "List the predefined POML capabilities shipped with Bagel: each entry has "
-        "a `name`, a `path` to pass to `run_poml_capability`, and a one-line "
-        "`summary`. Use this to discover available capabilities instead of "
-        "guessing file paths."
+        "List every capability available to run: the predefined `.poml` capabilities "
+        "shipped with Bagel, plus any user-saved capabilities (`.poml` or `.md`, "
+        "named with a `user/` prefix) discovered under the user-capabilities "
+        "directory. Each entry has a `name`, a `path` to pass to "
+        "`run_poml_capability`, and a one-line `summary`. Use this to discover "
+        "available capabilities instead of guessing file paths."
     ),
 )
 def list_agent_capabilities() -> list[dict[str, str]]:

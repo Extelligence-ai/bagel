@@ -292,7 +292,8 @@ Bagel discovers your own capabilities from `~/.bagel/capabilities/`:
 Either way it shows up in `list_agent_capabilities` as `user/<name>` and runs
 with `run_poml_capability` — from Claude Code, Claude Desktop, or any MCP
 client. Teams: keep the directory in your own git repo and sync it to every
-robot; it's just files.
+robot; it's just files. On Linux, run `mkdir -p ~/.bagel/capabilities` once
+before starting the container so the mount is owned by you, not root.
 
 ## 📚 Guides
 
