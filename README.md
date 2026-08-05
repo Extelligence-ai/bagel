@@ -330,6 +330,23 @@ Result:
 meow 🐱 4 topics 🐱💤🎯
 ```
 
+### Teach it your own tricks (no rebuild)
+
+Bagel discovers your own capabilities from `~/.bagel/capabilities/`:
+
+- **In conversation:** do a workflow once, then say *"save that as a
+  capability called battery-triage"* — Claude calls `save_agent_capability`
+  and it's reusable in any future session.
+- **As a file:** drop a markdown file with your steps (or a
+  [POML](https://github.com/microsoft/poml) file, if you want parameterized
+  templates — see `src/agent/compose/pipeline.poml` for the house style)
+  into `~/.bagel/capabilities/`.
+
+Either way it shows up in `list_agent_capabilities` as `user/<name>` and runs
+with `run_poml_capability` — from Claude Code, Claude Desktop, or any MCP
+client. Teams: keep the directory in your own git repo and sync it to every
+robot; it's just files.
+
 ## 📚 Guides
 
 - [Natural-language pipelines](./doc/runbooks/pipelines.md) · the model: a cadence, gates,

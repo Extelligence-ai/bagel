@@ -49,6 +49,14 @@ the product working as intended:
   mapping would expose the unauthenticated endpoint to every device on the
   network. To share an instance deliberately, remove the `127.0.0.1:` prefix
   and put an authenticated, TLS-terminating proxy in front of it.
+
+The `save_agent_capability` tool is the endpoint's first write-capable tool.
+Its writes are confined to `.poml`/`.md` files under the configured
+`USER_CAPABILITIES_DIRECTORY` (name slugs are validated; path traversal and
+absolute paths are rejected), and builtin capabilities are immutable through
+it. As with every tool on this endpoint, it is intended for trusted-network
+deployment.
+
 - Treat pipeline configs and startup manifests as sensitive: they can contain
   broker credentials, DSNs, and webhook URLs.
 - Cloud upload tasks use your ambient credentials (AWS/GCS/Azure SDK chains);
