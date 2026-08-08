@@ -56,6 +56,30 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
 
+  # Top-level test modules run on the host, not in the service images.
+  #
+  # The `docker` job runs pytest inside each image, and the Dockerfiles copy
+  # test paths in explicitly -- so anything at the root of test/ that isn't on
+  # those COPY lists never executes. That silently included the security guards
+  # for #158, which assert on files the images deliberately do not contain
+  # (compose.yaml, docker/Dockerfile.*, and a working directory with no .env),
+  # so copying them in was never an option. These modules are dependency-light
+  # and repo-shaped: the host is where they belong.
+  #
+  # The glob is non-recursive on purpose -- subdirectories of test/ need the
+  # per-service runtimes (ROS, PX4, ...) and stay with the `docker` job.
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.0"
+      - name: Install dependencies
+        run: uv sync
+      - name: Run top-level tests
+        run: uv run pytest -p no:warnings test/*.py
+
   coverage-gate:
     needs: docker
     runs-on: ubuntu-latest
