@@ -56,18 +56,20 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
 
-  # Top-level test modules run on the host, not in the service images.
+  # Runtime-independent test modules run on the host, not in the service
+  # images.
   #
   # The `docker` job runs pytest inside each image, and the Dockerfiles copy
-  # test paths in explicitly -- so anything at the root of test/ that isn't on
-  # those COPY lists never executes. That silently included the security guards
-  # for #158, which assert on files the images deliberately do not contain
-  # (compose.yaml, docker/Dockerfile.*, and a working directory with no .env),
-  # so copying them in was never an option. These modules are dependency-light
-  # and repo-shaped: the host is where they belong.
+  # test paths in explicitly -- so any test path missing from both those COPY
+  # lists and the pytest invocation below never executes anywhere (issue #161:
+  # 42 files sat in that gap, including the #158 security guards).
+  # test/test_ci_reachability.py fails the build if a test file is reachable
+  # from neither place, so additions to test/ must be routed here or into a
+  # Dockerfile.
   #
-  # The glob is non-recursive on purpose -- subdirectories of test/ need the
-  # per-service runtimes (ROS, PX4, ...) and stay with the `docker` job.
+  # Paths listed here need no service runtime (ROS, PX4, ...): they run
+  # against the default deps plus the groups installed below. Service-bound
+  # suites (test/source/ros2, test/e2e, ...) stay with the `docker` job.
   host-tests:
     runs-on: ubuntu-latest
     steps:
@@ -76,12 +78,34 @@ jobs:
         with:
           version: "0.8.0"
       - name: Install dependencies
-        run: uv sync
-      - name: Run top-level tests
-        run: uv run pytest -p no:warnings test/*.py
+        # iot/automotive: hard imports in sink and message tests.
+        # upload/viz: optional-dep tests skip without them; install so they run.
+        run: uv sync --group iot --group automotive --group upload --group viz
+      - name: Run host-side tests
+        env:
+          COVERAGE_FILE: .coverage.host
+        run: |
+          uv run pytest -p no:warnings --cov --cov-report= \
+            test/*.py \
+            test/pipeline \
+            test/sink \
+            test/message/automotive \
+            test/source/test_influxdb.py \
+            test/source/test_postgres.py \
+            test/logging/ros \
+            test/message/ros \
+            test/source/ros
+      - name: Upload coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-host
+          path: .coverage.host
+          include-hidden-files: true
+          if-no-files-found: warn
 
   coverage-gate:
-    needs: docker
+    needs: [docker, host-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
