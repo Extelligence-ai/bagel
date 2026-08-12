@@ -1,6 +1,9 @@
 # Ubuntu 22.04 LTS (Jammy Jellyfish)
 # Python 3.10.6
 FROM ubuntu:22.04
+# MCP registry ownership proof: registry.modelcontextprotocol.io validates
+# this label on the public image before accepting the server record.
+LABEL io.modelcontextprotocol.server.name="io.github.extelligence-ai/bagel"
 
 # Install common tools
 # hadolint ignore=DL3008
