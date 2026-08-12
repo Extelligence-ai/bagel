@@ -161,6 +161,15 @@ real events.
 
 <p align="center">
   <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/edge_reduce_dark_mode.svg">
+    <img src="./doc/assets/edge_reduce_light_mode.svg" width="80%">
+  </picture>
+</p>
+
+Here it is in one conversation:
+
+<p align="center">
+  <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/nl_reduction_dark_mode.gif">
     <img src="./doc/assets/nl_reduction_light_mode.gif" width="80%">
   </picture>
