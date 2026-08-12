@@ -1,6 +1,9 @@
 # Ubuntu 20.04 LTS (Focal Fossa)
 # Python 3.8.10
 FROM ros:noetic
+# MCP registry ownership proof: registry.modelcontextprotocol.io validates
+# this label on the public image before accepting the server record.
+LABEL io.modelcontextprotocol.server.name="io.github.extelligence-ai/bagel"
 
 # Set the shell to use for RUN commands, enabling pipefail for robust scripting
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -58,11 +61,20 @@ RUN echo "source /opt/ros/noetic/setup.bash" >> /etc/bash.bashrc
 
 # Install new version Python
 ARG PYTHON_VERSION=3.10
+# add-apt-repository is retried because Launchpad's keyserver times out
+# intermittently ("Error: retrieving gpg key timed out."), which repeatedly
+# broke CI builds (7 failures across 2026-08-11/12 alone).
 # hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     software-properties-common && \
-    add-apt-repository ppa:deadsnakes/ppa && \
+    ok=0 && \
+    for attempt in 1 2 3; do \
+      if add-apt-repository -y ppa:deadsnakes/ppa; then ok=1; break; fi; \
+      echo "add-apt-repository attempt ${attempt} failed; retrying in 20s"; \
+      sleep 20; \
+    done && \
+    [ "${ok}" = "1" ] && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     python${PYTHON_VERSION} && \
