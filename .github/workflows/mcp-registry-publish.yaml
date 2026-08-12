@@ -1,0 +1,43 @@
+# Publishes server.json to the official MCP registry
+# (registry.modelcontextprotocol.io) using GitHub Actions OIDC.
+#
+# Why OIDC and not `mcp-publisher login github`: the interactive flow derives
+# org-namespace permission from the user's OAuth token, which org third-party
+# access policies can silently block (and its registry JWT expires in 5
+# minutes). The OIDC token minted by Actions carries the repository owner
+# directly, so a run in this repo is authorized for io.github.extelligence-ai/*
+# with no user tokens involved.
+#
+# Run it manually (Actions tab or `gh workflow run mcp-registry-publish`)
+# after bumping the version in pyproject.toml and server.json and letting
+# `publish` push the matching image tag.
+
+name: mcp-registry-publish
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # mint the OIDC token mcp-publisher exchanges
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+      - name: Publish server.json to the MCP registry
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
+      - name: Verify listing
+        run: |
+          sleep 5
+          curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=extelligence" \
+            | grep -q "io.github.extelligence-ai/bagel" \
+            && echo "Listed on the official MCP registry." \
+            || { echo "Server not found in registry search"; exit 1; }
