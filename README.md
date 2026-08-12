@@ -30,9 +30,9 @@
   </picture>
 </p>
 
-Bagel lets you ask questions about robotics, drone, and IoT data in plain English.
-Every answer is computed by DuckDB SQL over your actual messages, not guessed by a
-model, and Bagel shows you the query.
+Bagel is an MCP server that lets you ask questions about robotics, drone, and IoT
+data in plain English. Every answer is computed by DuckDB SQL over your actual
+messages, not guessed by a model, and Bagel shows you the query.
 
 > Is my IMU sensor overheating?
 
