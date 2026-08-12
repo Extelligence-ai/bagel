@@ -12,9 +12,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "registryBaseUrl": "https://ghcr.io",
-      "identifier": "extelligence-ai/bagel/ros2-kilted",
-      "version": "2.0.0",
+      "identifier": "ghcr.io/extelligence-ai/bagel/ros2-kilted:2.0.0",
       "transport": {
         "type": "sse",
         "url": "http://127.0.0.1:8000/sse"
