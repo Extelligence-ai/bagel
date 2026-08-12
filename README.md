@@ -30,15 +30,16 @@
   </picture>
 </p>
 
-Bagel is an intelligent edge data reduction pipeline for robotics, drone, and IoT
-data, with an MCP server so you can drive it in plain English. Ask a question and
-the answer is computed by DuckDB SQL over your actual messages, not guessed by a
-model; Bagel shows you the query.
+Bagel lets you ask questions about robotics, drone, and IoT data in plain English.
+Every answer is computed by DuckDB SQL over your actual messages, not guessed by a
+model, and Bagel shows you the query.
 
 > Is my IMU sensor overheating?
 
-Then promote the question into a pipeline: describe an event and Bagel runs the
-detection on the robot, keeping the windows that matter and dropping the rest.
+Bagel also has an intelligent edge data reduction pipeline: describe an event and
+Bagel runs the detection on the robot, keeping the windows that matter and dropping
+the rest. An MCP server puts all of it in your LLM's hands: Claude Code, Gemini,
+Cursor, or a fully local model.
 
 ### 🥯 Key Features
 
