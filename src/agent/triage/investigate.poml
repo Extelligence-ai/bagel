@@ -13,10 +13,12 @@
                     retrying blindly.
                 </item>
                 <item>
-                    If the source is CSV/JSON and the metadata reports a non-zero
-                    `excluded_file_count`, tell the user some files were excluded
-                    as invalid before drawing conclusions - an empty-looking
-                    result may be missing data, not absent events.
+                    CSV/JSON sources exclude invalid files by default
+                    (`exclude_invalid_files=True`). If results look emptier than
+                    the user expects, say so and retry with
+                    `args={"exclude_invalid_files": false}` to surface the bad
+                    files - an empty-looking result may be missing data, not
+                    absent events.
                 </item>
                 <item>
                     Call `describe_topic` on the one or two topics most relevant

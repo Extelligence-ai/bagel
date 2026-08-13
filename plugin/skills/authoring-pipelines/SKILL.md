@@ -14,6 +14,10 @@ preview-before-run rule. Do not write pipeline YAML from memory:
    user the summary (events found, data kept) BEFORE running anything.
 3. Use `list_pipeline_capabilities` for the exact task/gate module paths and
    arguments — never guess them.
+4. Execute the approved config through the MCP tools (`run_pipeline`, or
+   `run_pipeline_batch` for many sources). The capability also mentions a host
+   CLI (`run.py`); that path is for users at a terminal in the repo, not for
+   plugin sessions — do not shell out to it.
 
 If the connection fails, the server container is not running — see
 references/formats.md.
