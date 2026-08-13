@@ -2,7 +2,7 @@ ARG ROS_DISTRO
 FROM ros:${ROS_DISTRO}-ros-core
 # MCP registry ownership proof: registry.modelcontextprotocol.io validates
 # this label on the public image before accepting the server record.
-LABEL io.modelcontextprotocol.server.name="io.github.extelligence-ai/bagel"
+LABEL io.modelcontextprotocol.server.name="io.github.Extelligence-ai/bagel"
 
 # Install common tools and ROS2 packages
 # hadolint ignore=DL3008
