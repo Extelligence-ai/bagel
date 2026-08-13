@@ -5,7 +5,7 @@
 # org-namespace permission from the user's OAuth token, which org third-party
 # access policies can silently block (and its registry JWT expires in 5
 # minutes). The OIDC token minted by Actions carries the repository owner
-# directly, so a run in this repo is authorized for io.github.extelligence-ai/*
+# directly, so a run in this repo is authorized for io.github.Extelligence-ai/*
 # with no user tokens involved.
 #
 # Run it manually (Actions tab or `gh workflow run mcp-registry-publish`)
@@ -47,6 +47,6 @@ jobs:
         run: |
           sleep 5
           curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=extelligence" \
-            | grep -q "io.github.extelligence-ai/bagel" \
+            | grep -q "io.github.Extelligence-ai/bagel" \
             && echo "Listed on the official MCP registry." \
             || { echo "Server not found in registry search"; exit 1; }
