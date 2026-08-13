@@ -36,7 +36,8 @@ def test_every_poml_route_in_skills_exists_on_disk() -> None:
 
 def test_referenced_reference_files_exist() -> None:
     for skill_file in SKILL_FILES:
-        for reference in re.findall(r"references/[\w-]+\.md", skill_file.read_text(encoding="utf-8")):
+        text = skill_file.read_text(encoding="utf-8")
+        for reference in re.findall(r"references/[\w-]+\.md", text):
             assert (pathlib.Path("plugin") / reference).exists(), reference
 
 
@@ -47,9 +48,23 @@ def test_skills_only_reference_real_mcp_tools() -> None:
     for skill_file in SKILL_FILES:
         claimed.update(re.findall(r"`(\w+)`", skill_file.read_text(encoding="utf-8")))
     fake_tools = {
-        name for name in claimed
-        if (name.startswith(("describe_", "query_", "list_", "run_", "preview_",
-                             "save_", "export_", "subscribe_", "read_"))
-            and name not in real)
+        name
+        for name in claimed
+        if (
+            name.startswith(
+                (
+                    "describe_",
+                    "query_",
+                    "list_",
+                    "run_",
+                    "preview_",
+                    "save_",
+                    "export_",
+                    "subscribe_",
+                    "read_",
+                )
+            )
+            and name not in real
+        )
     }
     assert not fake_tools, f"skills reference nonexistent tools: {sorted(fake_tools)}"
