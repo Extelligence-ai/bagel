@@ -3,7 +3,7 @@
 FROM ros:noetic
 # MCP registry ownership proof: registry.modelcontextprotocol.io validates
 # this label on the public image before accepting the server record.
-LABEL io.modelcontextprotocol.server.name="io.github.extelligence-ai/bagel"
+LABEL io.modelcontextprotocol.server.name="io.github.Extelligence-ai/bagel"
 
 # Set the shell to use for RUN commands, enabling pipefail for robust scripting
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
