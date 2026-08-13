@@ -30,6 +30,18 @@ server = mcp_compat.create_server(
     name="Bagel MCP Server",
     host=settings.MCP_SERVER_HOST,
     port=settings.MCP_SERVER_PORT,
+    instructions=(
+        "Bagel answers questions about robotics, drone, and IoT data (ROS 1/2 "
+        "bags, MCAP, PX4/ArduPilot/Betaflight logs, CAN/MF4, live MQTT) by "
+        "generating DuckDB SQL over the actual messages: never estimate a "
+        "numeric answer yourself, and show the user the query you ran. "
+        "Workflow: describe_source first for an overview; describe_topic before "
+        "writing any predicate (field paths and units differ per source). For "
+        "event detection and data reduction, always preview_pipeline and report "
+        "events/kept-seconds before run_pipeline writes anything. Sample data "
+        "for smoke tests lives in ./data/sample/. Outputs land under the "
+        "artifacts directory and paths are returned by the tools."
+    ),
 )
 
 
@@ -565,9 +577,7 @@ def preview_pipeline(  # noqa: PLR0913
         "run later with `run.py`. Returns the path to the written file."
     ),
 )
-def save_pipeline(
-    config: dict[str, Any], name: str, directory: str = "pipelines"
-) -> str:
+def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines") -> str:
     """Write a pipeline configuration to a YAML file.
 
     Args:
@@ -726,7 +736,8 @@ def export_for_plotjuggler(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -795,7 +806,8 @@ def export_for_rerun(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -864,7 +876,8 @@ def export_for_lichtblick(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -937,7 +950,8 @@ def export_for_lerobot(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
