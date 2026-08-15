@@ -60,8 +60,12 @@ docker compose run --rm ros2-jazzy \
 The reduced bag is written under the artifact directory
 (`~/.bagel/artifacts/pipeline=hard_decel_reduce/...`).
 
-Or drive it conversationally from an MCP client with `run_pipeline` (build + run a config)
-and `save_pipeline` (persist a config as YAML for reuse).
+Or drive it conversationally from an MCP client: `preview_pipeline` takes the
+flat arguments shown above, but `run_pipeline` takes a full pipeline `config`
+dict (the same shape as the YAML: `name`, `path`, `cadence`, `tasks`), and
+`save_pipeline` persists a config as YAML for reuse. Your LLM assembles the
+config from the preview parameters; the reduce task module for MCAP output is
+`src.pipeline.tasks.reduce.mcap`.
 
 ## Reduce an MCAP bag
 
@@ -216,6 +220,10 @@ To generate a standalone synthetic telemetry bag (db3 or mcap) for manual experi
 ```bash
 uv run python -m test.pipeline.integration.synth --directory ./data/synthetic --storage mcap
 ```
+
+> [!NOTE]
+> Run the synthesizer from a repo checkout on the host: published images strip
+> the `test/` tree, so the module is not available inside a pulled container.
 
 > [!NOTE]
 > The bundled ROS2 sample (`data/sample/ros2/db3`) contains only `std_msgs/String`
