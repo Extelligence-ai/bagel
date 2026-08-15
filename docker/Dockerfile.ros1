@@ -161,7 +161,7 @@ COPY --chown=${USERNAME}:${USERNAME} test/topic/ros1 ./test/topic/ros1
 COPY --chown=${USERNAME}:${USERNAME} test/message/ros1 ./test/message/ros1
 COPY --chown=${USERNAME}:${USERNAME} test/logging/ros1 ./test/logging/ros1
 
-RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test ./data; fi
+RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test; fi
 
 # By default, the Bagel MCP server will be launched
 CMD ["uv", "run", "server.py", "--transport", "sse"]

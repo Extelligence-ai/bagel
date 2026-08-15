@@ -82,7 +82,7 @@ RUN uv run python -c "import server"
 # Copy sample data
 COPY --chown=${USERNAME}:${USERNAME} data/sample/ ./data/sample/
 
-RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test ./data; fi
+RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test; fi
 
 # By default, the Bagel MCP server will be launched
 CMD ["uv", "run", "server.py", "--transport", "sse"]
