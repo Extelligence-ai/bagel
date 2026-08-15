@@ -91,6 +91,17 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
         return DataSource.PYARROW_JSON
     elif is_csv_file(path) or is_csv_directory(path):
         return DataSource.PYARROW_CSV
+    elif is_copper_unified_log_file(path):
+        # Recognized but not directly ingestable: Copper unified logs are
+        # decoded with the generating app's compile-time types. Point the user
+        # at the app-side MCAP export, which Bagel reads natively.
+        raise ValueError(
+            f"{path} is a Copper (copper-rs) unified log. Bagel cannot decode it "
+            "directly because unified logs require the generating application's "
+            "types. Export it to MCAP with your app's log extractor first, e.g. "
+            "`<your-app>-logreader <log>.copper export-mcap --output out.mcap`, "
+            "then point Bagel at the .mcap file. See doc/runbooks/copper.md."
+        )
     else:
         # `path` may be a malformed/typo'd URL (e.g. a DSN missing the "//" after the
         # scheme) that fell through from `resolve()`'s URL branch into this
@@ -155,6 +166,17 @@ def is_ros2_db3_directory(path: pathlib.Path) -> bool:
 def is_mcap_file(path: pathlib.Path) -> bool:
     """Check if the given path is an MCAP file."""
     return has_magic_bytes(path, b"\x89MCAP0\r\n")
+
+
+def is_copper_unified_log_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Copper (copper-rs) unified log file.
+
+    Copper unified logs start with the MAIN_MAGIC bytes defined in
+    cu29-unifiedlog. They are not directly readable: decoding requires the
+    generating application's compile-time types, so Bagel ingests Copper data
+    through the app's MCAP export instead (see the copper runbook).
+    """
+    return has_magic_bytes(path, b"\xb4\xa5\x50\xff")
 
 
 def is_mcap_zstd_file(path: pathlib.Path) -> bool:
