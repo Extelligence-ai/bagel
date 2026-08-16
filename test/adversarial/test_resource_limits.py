@@ -9,8 +9,7 @@ new one ~1.2x, so a 2x threshold cleanly separates them.
 
 import pathlib
 import tracemalloc
-from typing import NoReturn
-from typing import Any
+from typing import Any, NoReturn
 
 import numpy as np
 import pytest
