@@ -41,6 +41,10 @@ Bagel runs the detection on the robot, keeping the windows that matter and dropp
 the rest. An MCP server puts all of it in your LLM's hands: Claude Code, Gemini,
 Cursor, or a fully local model.
 
+Bagel was the first MCP server to ship a real analysis toolkit for robotics data,
+and it keeps the LLM where it belongs: in front of your logs, never in your robot's
+control loop.
+
 ### 🥯 Key Features
 
 - **Ask in plain language**: No deep domain expertise needed.
