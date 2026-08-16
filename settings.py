@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # Bytes per record batch in arrow files. Not always respected
     ARROW_RECORD_BATCH_SIZE_BYTES: int = 1 * GB
 
+    # Hard row-count ceiling per record batch. The byte target above is
+    # measured in Arrow bytes, but rows accumulate as Python objects (10-20x
+    # overhead) until a batch flushes; with small rows the byte target alone
+    # resolves to millions of buffered rows and can OOM the server (#134).
+    MAX_ARROW_RECORD_BATCH_SIZE_COUNT: int = 100_000
+
     # Bytes per topic buffer in a topic sink. Always respected
     JSONL_BUFFER_SIZE_PER_TOPIC_BYTES: int = 1 * GB
 

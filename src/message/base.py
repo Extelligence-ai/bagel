@@ -240,7 +240,13 @@ class MessageDataset(abc.ABC):
                     (settings.ARROW_RECORD_BATCH_SIZE_BYTES / record_batch.nbytes)
                     * record_batch.num_rows
                 )
-                batch_size = max(estimate, settings.MIN_ARROW_RECORD_BATCH_SIZE_COUNT)
+                # Clamp: the estimate targets Arrow bytes, but rows buffer as
+                # Python objects until the flush; small rows would otherwise
+                # resolve to millions of buffered rows and OOM (#134).
+                batch_size = min(
+                    max(estimate, settings.MIN_ARROW_RECORD_BATCH_SIZE_COUNT),
+                    settings.MAX_ARROW_RECORD_BATCH_SIZE_COUNT,
+                )
                 batch = {column: [] for column in schema.names}
                 yield record_batch
 

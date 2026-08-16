@@ -241,3 +241,40 @@ def test_mf4_struct_and_end_seconds_read_one_sample(
 
     end = factory.end_seconds
     assert end == factory.start_seconds + 9.5  # last timestamp in the fixture
+
+
+def test_record_batches_row_count_is_clamped() -> None:
+    """#134 addendum: the byte-target batch estimate must be clamped by row count.
+
+    Small rows (e.g. IMU) make the 1 GB Arrow-byte target resolve to millions of
+    rows per batch, which accumulate as Python objects at 10-20x overhead before
+    each flush: a 416 MB / 1.2M-message bag OOM-killed an 8 GB server (matrix,
+    2026-08-14). Batches must flush at MAX_ARROW_RECORD_BATCH_SIZE_COUNT rows
+    regardless of the byte estimate.
+    """
+    import pyarrow as pa
+
+    from settings import settings
+    from src.message.base import MessageDataset
+
+    class _Dataset(MessageDataset):
+        def _messages(self, *args, **kwargs):  # pragma: no cover - unused
+            raise NotImplementedError
+
+        def _to_json(self, message, struct):
+            return message
+
+    schema = pa.schema(
+        [
+            pa.field(settings.TIMESTAMP_SECONDS_COLUMN_NAME, pa.float64()),
+            pa.field("/imu", pa.struct([pa.field("x", pa.float64())])),
+        ]
+    )
+    total = 300_000
+    messages = (("/imu", float(i), {"x": 1.0}) for i in range(total))
+    batches = list(_Dataset()._record_batches(messages, schema, ffill=False))
+
+    assert sum(batch.num_rows for batch in batches) == total
+    cap = settings.MAX_ARROW_RECORD_BATCH_SIZE_COUNT
+    oversized = [batch.num_rows for batch in batches if batch.num_rows > cap]
+    assert not oversized, f"batches exceed the row cap ({cap}): {oversized}"
