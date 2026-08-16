@@ -10,6 +10,7 @@ from poml import poml
 
 from settings import settings
 from src import artifacts, mcp_compat
+from src.agent import capabilities as agent_capabilities
 from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
@@ -31,6 +32,18 @@ server = mcp_compat.create_server(
     name="Bagel MCP Server",
     host=settings.MCP_SERVER_HOST,
     port=settings.MCP_SERVER_PORT,
+    instructions=(
+        "Bagel answers questions about robotics, drone, and IoT data (ROS 1/2 "
+        "bags, MCAP, PX4/ArduPilot/Betaflight logs, CAN/MF4, live MQTT) by "
+        "generating DuckDB SQL over the actual messages: never estimate a "
+        "numeric answer yourself, and show the user the query you ran. "
+        "Workflow: describe_source first for an overview; describe_topic before "
+        "writing any predicate (field paths and units differ per source). For "
+        "event detection and data reduction, always preview_pipeline and report "
+        "events/kept-seconds before run_pipeline writes anything. Sample data "
+        "for smoke tests lives in ./data/sample/. Outputs land under the "
+        "artifacts directory and paths are returned by the tools."
+    ),
 )
 
 
@@ -396,8 +409,10 @@ def subscribe_live_topics(  # noqa: PLR0913
     title="Run a capability defined in a POML file",
     description=(
         "Use this tool to run a predefined capability described in a `.poml` file. "
-        "The file specifies task instructions and output formats. "
-        "Optional context values can be injected to customize its behavior."
+        "Discover available capabilities and their paths with "
+        "`list_agent_capabilities`. The file specifies task instructions and "
+        "output formats. Optional context values can be injected to customize "
+        "its behavior."
     ),
 )
 def run_poml_capability(
@@ -440,6 +455,37 @@ def run_poml_capability(
     if not poml_file.exists():
         raise FileNotFoundError(poml_file)
     return poml(poml_file, context=poml_context)
+
+
+@server.tool(
+    title="List agent capabilities",
+    description=(
+        "List the predefined POML capabilities shipped with Bagel: each entry has "
+        "a `name`, a `path` to pass to `run_poml_capability`, and a one-line "
+        "`summary`. Use this to discover available capabilities instead of "
+        "guessing file paths."
+    ),
+)
+def list_agent_capabilities() -> list[dict[str, str]]:
+    """List the POML capability files shipped under ``src/agent``.
+
+    Each capability is a predefined, structured workflow (e.g. composing a
+    data-reduction pipeline, triaging a log). Run one by passing its ``path``
+    to ``run_poml_capability``.
+
+    Returns:
+        list[dict[str, str]]: Capability entries with ``name``, ``path``, and
+            ``summary``, sorted by name.
+
+    Examples:
+        As an LLM prompt:
+            List the agent capabilities available on this server.
+
+        As a Python call:
+            >>> list_agent_capabilities()
+
+    """
+    return agent_capabilities.list_capabilities()
 
 
 @server.tool(
