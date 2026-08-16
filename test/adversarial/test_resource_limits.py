@@ -9,6 +9,7 @@ new one ~1.2x, so a 2x threshold cleanly separates them.
 
 import pathlib
 import tracemalloc
+from typing import NoReturn
 from typing import Any
 
 import numpy as np
@@ -258,10 +259,10 @@ def test_record_batches_row_count_is_clamped() -> None:
     from src.message.base import MessageDataset
 
     class _Dataset(MessageDataset):
-        def _messages(self, *args, **kwargs):  # pragma: no cover - unused
+        def _messages(self, *args: object, **kwargs: object) -> NoReturn:  # pragma: no cover
             raise NotImplementedError
 
-        def _to_json(self, message, struct):
+        def _to_json(self, message: object, struct: object) -> object:
             return message
 
     schema = pa.schema(
