@@ -208,7 +208,7 @@ depends entirely on your workload.
 | **Drones**   | PX4, ArduPilot, Betaflight     |
 | **Automotive** | ASAM MDF4 (`.mf4`), CAN captures (`.blf`/`.asc` + DBC) · *beta* |
 | **IoT**      | MQTT (live, Sparkplug B), PostgreSQL / TimescaleDB, InfluxDB 3 |
-| **Hardware state** | [WaffleForm](./doc/runbooks/waffle.md) snapshots (`.waffleform.yaml`), auto-detected via waffle-iron · *experimental* |
+| **Hardware state** | [WaffleForm](./doc/runbooks/waffle.md) snapshots (`.waffleform.yaml`), auto-detected via waffle-iron · *beta* |
 
 ## 🆚 Bagel vs. the Tools You Already Use
 
@@ -240,6 +240,8 @@ You can ask Bagel almost anything. For example:
 > I think the robot hit a pothole. Can you check for sudden deceleration on the z-axis to confirm?
 
 > Every time the drone decelerates harder than -10 m/s², keep 10 seconds before and after. Drop everything else.
+
+> Did anything change on this robot since last week?
 
 Time to put Bagel to the test: can it catch a drone doing barrel rolls? Spoiler: 🎉 It totally can.
 
