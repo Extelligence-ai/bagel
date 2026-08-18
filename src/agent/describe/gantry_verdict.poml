@@ -1,0 +1,52 @@
+<poml>
+    <task>
+        Interrogate a Gantry Bench evidence bundle: report what the verdict concluded and
+        what the underlying tables actually support, using auditable SQL for every number.
+        <stepwise-instructions>
+            <list listStyle="decimal">
+                <item>
+                    Call describe_data_source on the bundle path. Create a "Verdict" section
+                    quoting each gate's one-line summary from the source metadata, in gate
+                    order (g0 intake, g1 data report, g2 signal check, g3 robot test).
+                </item>
+                <item>
+                    Create a "Signal check, clip by clip" section. Query the signal_pairs
+                    topic: count clips where the real pairing beat its shuffled control
+                    (better = true), and list the three thinnest margins
+                    (error_shuffled - error_yours, ascending) with their episode ids. A thin
+                    margin is a clip whose visual-action correspondence barely survived the
+                    control; name them so the owner can watch exactly those clips.
+                </item>
+                <item>
+                    Create a "Where the ladder breaks" section. Query the ladder topic:
+                    success rate per rung per arm, ordered by rung_index. Identify the first
+                    rung where the rate drops sharply. Treat NULL rates as "not measured" and
+                    say so; never present an unmeasured rung as a zero.
+                </item>
+                <item>
+                    Create a "What to fix" section. Query the findings topic for rows with
+                    severity above info, and join each against the coach topic's fix rows on
+                    the finding code, so every problem appears beside the recorded advice for
+                    it. If the coach table is absent, present the findings alone and say the
+                    bundle carries no coaching.
+                </item>
+                <item>
+                    End with an "Honesty notes" section: whether a shuffled control arm was
+                    present in the robot test (g3_context.has_control in the source
+                    metadata), any abstained modules with their reasons, and any rung the
+                    baseline never measured. These are the caveats the bench itself attaches;
+                    do not soften them.
+                </item>
+            </list>
+        </stepwise-instructions>
+        Every number in the report must come from a SQL query over the bundle's topics or
+        verbatim from the source metadata. If a question cannot be answered from the tables
+        present, say so plainly rather than estimating; a bundle is allowed to be missing a
+        gate, and the honest answer there is "not run", not a guess.
+    </task>
+
+    <output-format>
+        A markdown report with the five sections above. Keep each SQL query you ran visible
+        in a code block beside the numbers it produced, so the owner can audit every claim.
+    </output-format>
+</poml>
