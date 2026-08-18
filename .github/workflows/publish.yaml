@@ -40,6 +40,18 @@ jobs:
         run: |
           IMAGE=ghcr.io/extelligence-ai/bagel/${{ matrix.service }}
           TAG=sha-${{ github.sha }}
+          # Semver tag from pyproject: the MCP registry rejects "latest", so
+          # server.json pins this tag (see server.json at the repo root).
+          # Never overwrite an existing semver tag: this workflow runs on every
+          # push to main, and the registry entry treats the tag as immutable.
+          # Bump the pyproject version to publish a new one.
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
           docker tag $IMAGE:latest $IMAGE:$TAG
           docker push $IMAGE:latest
           docker push $IMAGE:$TAG
+          if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+            echo "$IMAGE:$VERSION already published; leaving it untouched"
+          else
+            docker tag $IMAGE:latest $IMAGE:$VERSION
+            docker push $IMAGE:$VERSION
+          fi

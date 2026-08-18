@@ -5,9 +5,7 @@ import pathlib
 import duckdb
 import pytest
 
-asammdf = pytest.importorskip(
-    "asammdf", reason="asammdf is optional (uv sync --group automotive)"
-)
+asammdf = pytest.importorskip("asammdf", reason="asammdf is optional (uv sync --group automotive)")
 import numpy as np  # noqa: E402
 from asammdf import MDF, Signal  # noqa: E402
 
@@ -89,7 +87,7 @@ def test_sql_over_channel_group(mf4_file: pathlib.Path) -> None:
     relation = dataset.to_duckdb(factory, registry, ["EngineData"])
     duckdb.register("engine", relation)
     row = duckdb.sql(
-        'SELECT COUNT(*) AS n, MIN("EngineData"[\'EngineSpeed\']) AS low FROM engine'
+        "SELECT COUNT(*) AS n, MIN(\"EngineData\"['EngineSpeed']) AS low FROM engine"
     ).fetchone()
     assert row == (20, 3000.0 - 100 * 9.5)
 

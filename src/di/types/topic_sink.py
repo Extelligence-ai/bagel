@@ -18,7 +18,7 @@ def guess_host(type_: TopicSink) -> str:
     match type_:
         case TopicSink.ROS1_BRIDGE:
             return "0.0.0.0"  # noqa: S104
-        case (TopicSink.ROS2_BRIDGE | TopicSink.MQTT) if settings.CONTAINER_MODE:
+        case TopicSink.ROS2_BRIDGE | TopicSink.MQTT if settings.CONTAINER_MODE:
             return "host.docker.internal"
         case TopicSink.ROS2_BRIDGE | TopicSink.MQTT:
             return "localhost"

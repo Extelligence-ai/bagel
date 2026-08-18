@@ -37,3 +37,11 @@ def test_exactly_one_sdk_branch_is_active() -> None:
     # Under the project venv this is v1; under the v2 beta venv it flips. Either
     # way the flag must be a real bool and the server class importable.
     assert isinstance(mcp_compat.MCP_SDK_V2, bool)
+
+
+def test_create_server_passes_instructions_to_the_client_handshake() -> None:
+    """Server-level instructions must reach the SDK so clients get them at init."""
+    server = mcp_compat.create_server(
+        name="test", host="127.0.0.1", port=18001, instructions="Use preview before run."
+    )
+    assert server.instructions == "Use preview before run."

@@ -9,9 +9,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 
 
-def rising_edges(
-    samples: Iterable[tuple[float, Any]], min_gap_seconds: float = 0.0
-) -> list[float]:
+def rising_edges(samples: Iterable[tuple[float, Any]], min_gap_seconds: float = 0.0) -> list[float]:
     """Return timestamps where a boolean predicate transitions False -> True.
 
     A condition that stays true across consecutive samples produces a single edge

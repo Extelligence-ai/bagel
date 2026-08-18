@@ -71,9 +71,7 @@ class SnipMcap(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
             case base.Lookback(last=_, unit=_):
                 start_ns = int((asof_seconds - lookback.to_seconds()) * SECOND)
                 records = (
-                    record
-                    for record in raw_messages
-                    if start_ns <= record[2].log_time <= end_ns
+                    record for record in raw_messages if start_ns <= record[2].log_time <= end_ns
                 )
             case _:
                 records = (record for record in raw_messages if record[2].log_time <= end_ns)

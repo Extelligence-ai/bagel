@@ -116,20 +116,22 @@ def parse_file(path: str | pathlib.Path) -> list[LogRecord]:
 
     Unmatched lines are appended to the previous record's message (multi-line
     messages such as tracebacks); unmatched lines before the first record are
-    dropped.
+    dropped. The file is streamed line-by-line so peak memory is the records
+    themselves, not multiples of the file size (#134).
     """
     path = pathlib.Path(path)
     records: list[LogRecord] = []
-    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw_line.rstrip()
-        if not line:
-            continue
-        record = parse_line(line, fallback_node=path.stem)
-        if record is not None:
-            record.file = path.name
-            records.append(record)
-        elif records:
-            records[-1].message += "\n" + line
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for raw_line in f:
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            record = parse_line(line, fallback_node=path.stem)
+            if record is not None:
+                record.file = path.name
+                records.append(record)
+            elif records:
+                records[-1].message += "\n" + line
     return records
 
 

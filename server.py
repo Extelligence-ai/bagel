@@ -1,5 +1,6 @@
 """Entry point for the Bagel MCP server."""
 
+import logging
 import pathlib
 from typing import Any
 
@@ -8,7 +9,8 @@ import yaml
 from poml import poml
 
 from settings import settings
-from src import mcp_compat
+from src import artifacts, mcp_compat
+from src.agent import capabilities as agent_capabilities
 from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
@@ -30,6 +32,18 @@ server = mcp_compat.create_server(
     name="Bagel MCP Server",
     host=settings.MCP_SERVER_HOST,
     port=settings.MCP_SERVER_PORT,
+    instructions=(
+        "Bagel answers questions about robotics, drone, and IoT data (ROS 1/2 "
+        "bags, MCAP, PX4/ArduPilot/Betaflight logs, CAN/MF4, live MQTT) by "
+        "generating DuckDB SQL over the actual messages: never estimate a "
+        "numeric answer yourself, and show the user the query you ran. "
+        "Workflow: describe_source first for an overview; describe_topic before "
+        "writing any predicate (field paths and units differ per source). For "
+        "event detection and data reduction, always preview_pipeline and report "
+        "events/kept-seconds before run_pipeline writes anything. Sample data "
+        "for smoke tests lives in ./data/sample/. Outputs land under the "
+        "artifacts directory and paths are returned by the tools."
+    ),
 )
 
 
@@ -73,11 +87,14 @@ def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[
         f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    # Build BEFORE reading metadata: _build() populates excluded_file_count,
+    # and dict values evaluate in order (Codex review on #156).
+    data_source = factory.build()
     return poml(
         "./src/agent/describe/data_source.poml",
         context={
             "metadata": factory.metadata,
-            "topics": registry.available_topics(factory.build()),
+            "topics": registry.available_topics(data_source),
         },
     )
 
@@ -395,8 +412,10 @@ def subscribe_live_topics(  # noqa: PLR0913
     title="Run a capability defined in a POML file",
     description=(
         "Use this tool to run a predefined capability described in a `.poml` file. "
-        "The file specifies task instructions and output formats. "
-        "Optional context values can be injected to customize its behavior."
+        "Discover available capabilities and their paths with "
+        "`list_agent_capabilities`. The file specifies task instructions and "
+        "output formats. Optional context values can be injected to customize "
+        "its behavior."
     ),
 )
 def run_poml_capability(
@@ -439,6 +458,37 @@ def run_poml_capability(
     if not poml_file.exists():
         raise FileNotFoundError(poml_file)
     return poml(poml_file, context=poml_context)
+
+
+@server.tool(
+    title="List agent capabilities",
+    description=(
+        "List the predefined POML capabilities shipped with Bagel: each entry has "
+        "a `name`, a `path` to pass to `run_poml_capability`, and a one-line "
+        "`summary`. Use this to discover available capabilities instead of "
+        "guessing file paths."
+    ),
+)
+def list_agent_capabilities() -> list[dict[str, str]]:
+    """List the POML capability files shipped under ``src/agent``.
+
+    Each capability is a predefined, structured workflow (e.g. composing a
+    data-reduction pipeline, triaging a log). Run one by passing its ``path``
+    to ``run_poml_capability``.
+
+    Returns:
+        list[dict[str, str]]: Capability entries with ``name``, ``path``, and
+            ``summary``, sorted by name.
+
+    Examples:
+        As an LLM prompt:
+            List the agent capabilities available on this server.
+
+        As a Python call:
+            >>> list_agent_capabilities()
+
+    """
+    return agent_capabilities.list_capabilities()
 
 
 @server.tool(
@@ -565,9 +615,7 @@ def preview_pipeline(  # noqa: PLR0913
         "run later with `run.py`. Returns the path to the written file."
     ),
 )
-def save_pipeline(
-    config: dict[str, Any], name: str, directory: str = "pipelines"
-) -> str:
+def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines") -> str:
     """Write a pipeline configuration to a YAML file.
 
     Args:
@@ -726,7 +774,8 @@ def export_for_plotjuggler(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -795,7 +844,8 @@ def export_for_rerun(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -864,7 +914,8 @@ def export_for_lichtblick(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -937,7 +988,8 @@ def export_for_lerobot(  # noqa: PLR0913
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
@@ -963,6 +1015,17 @@ if __name__ == "__main__":
         # Standing pipelines: re-establish subscriptions (and their attached pipelines)
         # on boot, so they survive container restarts.
         startup.start(settings.STARTUP_PIPELINES_FILE)
+    # Disk-usage visibility for unattended deployments (#134): the arrow query
+    # cache self-evicts (CACHE_MAX_BYTES), but ARTIFACT_DIRECTORY holds user
+    # deliverables and is never auto-deleted -- its datestr= partition layout
+    # supports external rotation (e.g. find -mtime +N).
+    logging.warning(
+        "Disk usage: cache %s = %d bytes, artifacts %s = %d bytes",
+        settings.CACHE_DIRECTORY,
+        artifacts.directory_size_bytes(settings.CACHE_DIRECTORY),
+        settings.ARTIFACT_DIRECTORY,
+        artifacts.directory_size_bytes(settings.ARTIFACT_DIRECTORY),
+    )
     mcp_compat.run_server(
         server,
         transport=settings.MCP_TRANSPORT,
