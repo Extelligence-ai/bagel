@@ -11,6 +11,10 @@ import re
 
 import yaml
 
+# Matches COPY of the local .env itself; deliberately does NOT match
+# .env.example or other .env-prefixed sample files (Copilot on #163).
+COPY_ENV_PATTERN = re.compile(r"\s*COPY\b.*[\s/]\.env(?=\s|$)")
+
 
 def _services() -> dict:
     compose = yaml.safe_load(pathlib.Path("compose.yaml").read_text(encoding="utf-8"))
@@ -84,6 +88,6 @@ def test_no_dockerfile_copies_env_file() -> None:
     offenders = []
     for dockerfile in sorted(pathlib.Path("docker").glob("Dockerfile.*")):
         for lineno, line in enumerate(dockerfile.read_text(encoding="utf-8").splitlines(), start=1):
-            if re.match(r"\s*COPY\b.*\.env\b", line):
+            if COPY_ENV_PATTERN.match(line):
                 offenders.append(f"{dockerfile}:{lineno}: {line.strip()}")
     assert not offenders, f"Dockerfile(s) copy .env into the image: {offenders}"

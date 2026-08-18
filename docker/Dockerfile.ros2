@@ -95,6 +95,10 @@ COPY --chown=${USERNAME}:${USERNAME} test/source/ros2 ./test/source/ros2
 COPY --chown=${USERNAME}:${USERNAME} test/topic/ros2 ./test/topic/ros2
 COPY --chown=${USERNAME}:${USERNAME} test/message/ros2 ./test/message/ros2
 COPY --chown=${USERNAME}:${USERNAME} test/logging/ros2 ./test/logging/ros2
+# Bag write-path integration tests need rosbag2_py: they skip on the host
+# (issue #161) and only execute here. __init__.py completes the package chain.
+COPY --chown=${USERNAME}:${USERNAME} test/pipeline/__init__.py ./test/pipeline/__init__.py
+COPY --chown=${USERNAME}:${USERNAME} test/pipeline/integration ./test/pipeline/integration
 
 RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test ./data; fi
 
