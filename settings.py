@@ -96,11 +96,11 @@ class Settings(BaseSettings):
     # Whether running in a container
     CONTAINER_MODE: bool = False
 
-    # Host of the MCP server. 0.0.0.0 is correct INSIDE a container -- the
-    # server must listen on all container interfaces for Docker's port
-    # publishing to reach it. Host-side exposure is controlled by the
-    # 127.0.0.1 prefix on compose.yaml's port mappings, not here.
-    MCP_SERVER_HOST: str = "0.0.0.0"  # noqa: S104 -- container-internal default, not a bind call
+    # Host of the MCP server. Defaults to loopback so a bare `uv run
+    # server.py` outside Compose never exposes the unauthenticated endpoint
+    # on all interfaces. Containers NEED 0.0.0.0 for Docker port publishing;
+    # compose.yaml injects MCP_SERVER_HOST=0.0.0.0 explicitly per service.
+    MCP_SERVER_HOST: str = "127.0.0.1"
 
     # Port of the MCP server
     MCP_SERVER_PORT: int = 8000

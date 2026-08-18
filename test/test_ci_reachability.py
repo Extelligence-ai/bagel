@@ -47,10 +47,31 @@ def _host_job_files() -> set[str]:
     return reached
 
 
+def _tested_dockerfiles() -> set[pathlib.Path]:
+    """Dockerfiles backing services that actually run pytest in test.yaml.
+
+    apache-arrow and iot images are built elsewhere with DEV_MODE=false and
+    never run the suite, so a file copied only by their Dockerfiles is NOT
+    CI-reachable (Copilot on #163).
+    """
+    workflow = yaml.safe_load(
+        pathlib.Path(".github/workflows/test.yaml").read_text(encoding="utf-8")
+    )
+    services = {
+        entry["service"] for entry in workflow["jobs"]["docker"]["strategy"]["matrix"]["include"]
+    }
+    compose = yaml.safe_load(pathlib.Path("compose.yaml").read_text(encoding="utf-8"))
+    return {
+        pathlib.Path(compose["services"][service]["build"]["dockerfile"])
+        for service in services
+        if service in compose["services"]
+    }
+
+
 def _image_files() -> set[str]:
-    """Files reachable inside at least one service image via Dockerfile COPY."""
+    """Files reachable inside at least one pytest-running image via COPY."""
     reached: set[str] = set()
-    for dockerfile in pathlib.Path("docker").glob("Dockerfile.*"):
+    for dockerfile in _tested_dockerfiles():
         for line in dockerfile.read_text(encoding="utf-8").splitlines():
             match = _COPY_TEST_PATH.match(line)
             if match:
@@ -80,3 +101,23 @@ def test_host_job_paths_exist() -> None:
         for arg in step["run"].split():
             if (arg == "test" or arg.startswith("test/")) and "*" not in arg:
                 assert pathlib.Path(arg).exists(), f"host-tests pytest path does not exist: {arg}"
+
+
+def test_image_files_only_counts_images_that_run_pytest() -> None:
+    """Copilot on #163: apache-arrow and iot images are built but never run
+    pytest (absent from test.yaml's matrix), so files copied only by their
+    Dockerfiles must not count as CI-reachable."""
+    tested = {str(dockerfile) for dockerfile in _tested_dockerfiles()}
+    assert tested, "expected at least one pytest-running dockerfile"
+    assert "docker/Dockerfile.arrow" not in tested
+    assert "docker/Dockerfile.iot" not in tested
+    assert "docker/Dockerfile.ros2" in tested
+
+
+def test_env_guard_allows_env_example() -> None:
+    """Copilot on #163: the .env guard must not reject .env.example."""
+    from test.test_compose_bindings import COPY_ENV_PATTERN
+
+    assert COPY_ENV_PATTERN.match("COPY .env ./.env")
+    assert COPY_ENV_PATTERN.match("COPY --chown=u:u .env ./.env")
+    assert not COPY_ENV_PATTERN.match("COPY .env.example ./.env.example")
