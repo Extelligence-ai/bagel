@@ -2,8 +2,8 @@
 
 Data reduction's endgame is training-data curation: *"keep the 30 seconds around
 every interesting event"* is episode selection. Bagel exports those windows as a
-[LeRobotDataset v3.0](https://huggingface.co/docs/lerobot/en/lerobot-dataset-v3)
-— the Hugging Face robot-learning format — ready to load with `lerobot >= 0.4.0`
+[LeRobotDataset v3.0](https://huggingface.co/docs/lerobot/en/lerobot-dataset-v3),
+the Hugging Face robot-learning format, ready to load with `lerobot >= 0.4.0`
 or push to the Hub.
 
 ## From a prompt
@@ -52,12 +52,12 @@ sample = dataset[0]  # {'observation.state': tensor([...]), 'action': tensor([..
 Exports **load-test clean with the real `lerobot` package** (`LeRobotDataset`
 returns correct tensors, shapes, and episode boundaries), and the on-disk layout
 matches a reference v3 dataset on the Hub field-for-field. It stays beta until
-real policies have been trained from Bagel exports — if you train from one,
+real policies have been trained from Bagel exports. If you train from one,
 please report anything odd, and anything great.
 
 ## Notes
 
 - Tabular features only for now; camera-topics-to-MP4 is the planned follow-up.
 - Format grounded against the published v3.0 spec **and** a real v3 dataset on the
-  Hub (`yaak-ai/L2D-v3`) — the exporter's parquet columns and metadata match its
+  Hub (`yaak-ai/L2D-v3`): the exporter's parquet columns and metadata match its
   schemas field-for-field.

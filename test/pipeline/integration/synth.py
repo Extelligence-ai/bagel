@@ -51,21 +51,21 @@ def write_imu_bag(directory: pathlib.Path, storage_id: str) -> pathlib.Path:
     from sensor_msgs.msg import Imu
     from std_msgs.msg import String
 
+    def topic_metadata(topic_id: int, name: str, type_name: str) -> "rosbag2_py.TopicMetadata":
+        try:  # Iron and newer require an id kwarg
+            return rosbag2_py.TopicMetadata(
+                id=topic_id, name=name, type=type_name, serialization_format="cdr"
+            )
+        except TypeError:  # Humble's TopicMetadata predates the id field
+            return rosbag2_py.TopicMetadata(name=name, type=type_name, serialization_format="cdr")
+
     writer = rosbag2_py.SequentialWriter()
     writer.open(
         rosbag2_py.StorageOptions(uri=str(directory), storage_id=storage_id),
         rosbag2_py.ConverterOptions("", ""),
     )
-    writer.create_topic(
-        rosbag2_py.TopicMetadata(
-            id=0, name="/imu", type="sensor_msgs/msg/Imu", serialization_format="cdr"
-        )
-    )
-    writer.create_topic(
-        rosbag2_py.TopicMetadata(
-            id=1, name="/status", type="std_msgs/msg/String", serialization_format="cdr"
-        )
-    )
+    writer.create_topic(topic_metadata(0, "/imu", "sensor_msgs/msg/Imu"))
+    writer.create_topic(topic_metadata(1, "/status", "std_msgs/msg/String"))
 
     count = int(DURATION_SECONDS * RATE_HZ)
     for i in range(count):

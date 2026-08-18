@@ -1,5 +1,6 @@
 """Entry point for the Bagel MCP server."""
 
+import logging
 import pathlib
 from typing import Any
 
@@ -8,7 +9,7 @@ import yaml
 from poml import poml
 
 from settings import settings
-from src import mcp_compat
+from src import artifacts, mcp_compat
 from src.agent import capabilities as agent_capabilities
 from src.di import module
 from src.di.types.base_module import BaseModule
@@ -86,11 +87,14 @@ def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[
         f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    # Build BEFORE reading metadata: _build() populates excluded_file_count,
+    # and dict values evaluate in order (Codex review on #156).
+    data_source = factory.build()
     return poml(
         "./src/agent/describe/data_source.poml",
         context={
             "metadata": factory.metadata,
-            "topics": registry.available_topics(factory.build()),
+            "topics": registry.available_topics(data_source),
         },
     )
 
@@ -1011,6 +1015,17 @@ if __name__ == "__main__":
         # Standing pipelines: re-establish subscriptions (and their attached pipelines)
         # on boot, so they survive container restarts.
         startup.start(settings.STARTUP_PIPELINES_FILE)
+    # Disk-usage visibility for unattended deployments (#134): the arrow query
+    # cache self-evicts (CACHE_MAX_BYTES), but ARTIFACT_DIRECTORY holds user
+    # deliverables and is never auto-deleted -- its datestr= partition layout
+    # supports external rotation (e.g. find -mtime +N).
+    logging.warning(
+        "Disk usage: cache %s = %d bytes, artifacts %s = %d bytes",
+        settings.CACHE_DIRECTORY,
+        artifacts.directory_size_bytes(settings.CACHE_DIRECTORY),
+        settings.ARTIFACT_DIRECTORY,
+        artifacts.directory_size_bytes(settings.ARTIFACT_DIRECTORY),
+    )
     mcp_compat.run_server(
         server,
         transport=settings.MCP_TRANSPORT,

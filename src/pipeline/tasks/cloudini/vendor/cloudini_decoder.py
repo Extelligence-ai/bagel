@@ -25,7 +25,7 @@ class CloudiniDecoder:
         """
         # Load the WASM module
         print(f"Loading WASM module from {wasm_path}")
-        with open(wasm_path, 'rb') as f:
+        with open(wasm_path, "rb") as f:
             wasm_bytes = f.read()
 
         # Create wasmtime engine with exception handling enabled
@@ -65,10 +65,11 @@ class CloudiniDecoder:
                         if len(func_type.results) > 0:
                             # Return appropriate default based on result type
                             result_type = str(func_type.results[0])
-                            if 'f32' in result_type or 'f64' in result_type:
+                            if "f32" in result_type or "f64" in result_type:
                                 return 0.0  # Float
                             return 0  # Integer
                         return None
+
                     return stub
 
                 stub_func = make_stub(func_type)
@@ -92,6 +93,7 @@ class CloudiniDecoder:
         if not self.memory:
             # Find memory by type
             from wasmtime import Memory as MemoryType
+
             for name, obj in exports.items():
                 if isinstance(obj, MemoryType):
                     self.memory = obj
@@ -99,15 +101,17 @@ class CloudiniDecoder:
                     break
 
         if not self.memory:
-            raise RuntimeError(f"Could not find memory export. Available: {list(export_info.keys())}")
+            raise RuntimeError(
+                f"Could not find memory export. Available: {list(export_info.keys())}"
+            )
 
         # Get malloc/free (may not exist in all modules)
         self.malloc = exports.get("malloc")
         self.free = exports.get("free")
 
         # Get the cloudini functions
-        self.decode_compressed_msg = exports.get('cldn_DecodeCompressedMessage')
-        self.get_header_as_yaml = exports.get('cldn_GetHeaderAsYAMLFromDDS')
+        self.decode_compressed_msg = exports.get("cldn_DecodeCompressedMessage")
+        self.get_header_as_yaml = exports.get("cldn_GetHeaderAsYAMLFromDDS")
 
         if not all([self.decode_compressed_msg, self.get_header_as_yaml]):
             raise RuntimeError("Could not find required Cloudini functions in WASM module")
@@ -120,7 +124,9 @@ class CloudiniDecoder:
         # Simple allocator offset (start at 2MB to avoid stack/heap)
         self.alloc_offset = 2 * 1024 * 1024
 
-        self.output_ptr = self.allocate(32 * 1024 * 1024) # allocate 32 megabytes as worst case scenario
+        self.output_ptr = self.allocate(
+            32 * 1024 * 1024
+        )  # allocate 32 megabytes as worst case scenario
 
         print("WASM module loaded successfully!")
 
@@ -147,7 +153,9 @@ class CloudiniDecoder:
         """Read bytes from WASM memory."""
         return self.memory.read(self.store, ptr, ptr + size)
 
-    def decode_message(self, compressed_msg: bytes, verbose: bool = True) -> tuple[np.ndarray, dict]:
+    def decode_message(
+        self, compressed_msg: bytes, verbose: bool = True
+    ) -> tuple[np.ndarray, dict]:
         """
         Decode a compressed DDS message to raw point cloud data.
 
@@ -167,9 +175,10 @@ class CloudiniDecoder:
             # Write compressed message to WASM memory
             self.write_bytes(input_ptr, compressed_msg)
 
-
             # Convert compressed message to PointCloud2 message
-            actual_size = self.decode_compressed_msg(self.store, input_ptr, len(compressed_msg), self.output_ptr)
+            actual_size = self.decode_compressed_msg(
+                self.store, input_ptr, len(compressed_msg), self.output_ptr
+            )
 
             if actual_size == 0:
                 raise RuntimeError("Failed to convert compressed message to PointCloud2")
@@ -184,8 +193,10 @@ class CloudiniDecoder:
             except Exception as e:
                 raise RuntimeError(f"Failed to extract header info from compressed message: {e}")
 
-            if not header_info or 'width' not in header_info:
-                raise RuntimeError("Header info extraction returned incomplete data (missing 'width')")
+            if not header_info or "width" not in header_info:
+                raise RuntimeError(
+                    "Header info extraction returned incomplete data (missing 'width')"
+                )
 
             # Parse the PointCloud2 message to extract the point cloud data
             # The PointCloud2 message contains the data field with raw point cloud bytes
@@ -199,7 +210,7 @@ class CloudiniDecoder:
     @staticmethod
     def _parse_yaml_value(value: str):
         """Convert a YAML scalar string to int, float, None, or str."""
-        if value == 'null' or value == 'None':
+        if value == "null" or value == "None":
             return None
         try:
             return int(value)
@@ -230,13 +241,15 @@ class CloudiniDecoder:
             self.write_bytes(input_ptr, compressed_msg)
 
             # Get header as YAML
-            yaml_size = self.get_header_as_yaml(self.store, input_ptr, len(compressed_msg), yaml_ptr)
+            yaml_size = self.get_header_as_yaml(
+                self.store, input_ptr, len(compressed_msg), yaml_ptr
+            )
             if yaml_size == 0:
                 return {}
 
-            yaml_str = self.read_bytes(yaml_ptr, yaml_size).decode('utf-8')
+            yaml_str = self.read_bytes(yaml_ptr, yaml_size).decode("utf-8")
 
-            #print(f"Extracted YAML header:\n{yaml_str}")
+            # print(f"Extracted YAML header:\n{yaml_str}")
 
             # Parse YAML (handles nested fields structure)
             header = {}
@@ -244,23 +257,23 @@ class CloudiniDecoder:
             current_field = None
             in_fields_section = False
 
-            for line in yaml_str.split('\n'):
+            for line in yaml_str.split("\n"):
                 stripped = line.strip()
 
                 # Check if we're in the fields section
-                if stripped.startswith('fields:'):
+                if stripped.startswith("fields:"):
                     in_fields_section = True
                     continue
 
                 if in_fields_section:
                     # New field starts with '- name:'
-                    if stripped.startswith('- name:'):
+                    if stripped.startswith("- name:"):
                         if current_field:
                             fields.append(current_field)
-                        current_field = {'name': stripped.split(':', 1)[1].strip()}
-                    elif stripped and ':' in stripped and not stripped.startswith('-'):
+                        current_field = {"name": stripped.split(":", 1)[1].strip()}
+                    elif stripped and ":" in stripped and not stripped.startswith("-"):
                         # Field property
-                        key, value = stripped.split(':', 1)
+                        key, value = stripped.split(":", 1)
                         key = key.strip()
                         value = value.strip()
 
@@ -268,8 +281,8 @@ class CloudiniDecoder:
                             current_field[key] = self._parse_yaml_value(value)
                 else:
                     # Top-level properties
-                    if ':' in stripped:
-                        key, value = stripped.split(':', 1)
+                    if ":" in stripped:
+                        key, value = stripped.split(":", 1)
                         key = key.strip()
                         value = value.strip()
 
@@ -279,7 +292,7 @@ class CloudiniDecoder:
             if current_field:
                 fields.append(current_field)
 
-            header['fields'] = fields
+            header["fields"] = fields
             return header
 
         finally:
@@ -299,9 +312,9 @@ class CloudiniDecoder:
         """
         # For now, we'll use a simplified approach and extract based on expected size
         # A full CDR deserializer would be needed for proper parsing
-        width = header_info.get('width', 0)
-        height = header_info.get('height', 0)
-        point_step = header_info.get('point_step', 0)
+        width = header_info.get("width", 0)
+        height = header_info.get("height", 0)
+        point_step = header_info.get("point_step", 0)
 
         expected_data_size = width * height * point_step
 
@@ -312,7 +325,9 @@ class CloudiniDecoder:
             data_bytes = pc2_msg[-expected_data_size:]
             return self.bytes_to_numpy(data_bytes, header_info)
         else:
-            print(f"Warning: PC2 message size {len(pc2_msg)} < expected data size {expected_data_size}")
+            print(
+                f"Warning: PC2 message size {len(pc2_msg)} < expected data size {expected_data_size}"
+            )
             return self.bytes_to_numpy(pc2_msg, header_info)
 
     def bytes_to_numpy(self, data: bytes, header_info: dict) -> np.ndarray:
@@ -326,40 +341,44 @@ class CloudiniDecoder:
         Returns:
             Structured numpy array with named fields
         """
-        width = header_info.get('width', 0)
-        height = header_info.get('height', 0)
-        point_step = header_info.get('point_step', 0)
-        fields = header_info.get('fields', [])
+        width = header_info.get("width", 0)
+        height = header_info.get("height", 0)
+        point_step = header_info.get("point_step", 0)
+        fields = header_info.get("fields", [])
 
         num_points = width * height
 
         if len(data) != num_points * point_step:
-            print(f"Warning: Data size mismatch. Expected {num_points * point_step}, got {len(data)}")
+            print(
+                f"Warning: Data size mismatch. Expected {num_points * point_step}, got {len(data)}"
+            )
 
         # Map Cloudini types to numpy dtypes
         type_map = {
-            'FLOAT32': np.float32,
-            'FLOAT64': np.float64,
-            'UINT8': np.uint8,
-            'UINT16': np.uint16,
-            'UINT32': np.uint32,
-            'INT8': np.int8,
-            'INT16': np.int16,
-            'INT32': np.int32,
+            "FLOAT32": np.float32,
+            "FLOAT64": np.float64,
+            "UINT8": np.uint8,
+            "UINT16": np.uint16,
+            "UINT32": np.uint32,
+            "INT8": np.int8,
+            "INT16": np.int16,
+            "INT32": np.int32,
         }
 
         # Create structured dtype from fields
         if fields:
             try:
                 # Sort fields by offset to ensure correct order
-                sorted_fields = sorted(fields, key=lambda f: f.get('offset', 0))
+                sorted_fields = sorted(fields, key=lambda f: f.get("offset", 0))
 
                 # Build dtype specification with explicit offsets
                 dtype_spec = {
-                    'names': [f.get('name', f'field_{i}') for i, f in enumerate(sorted_fields)],
-                    'formats': [type_map.get(f.get('type', 'UINT8'), np.uint8) for f in sorted_fields],
-                    'offsets': [f.get('offset', 0) for f in sorted_fields],
-                    'itemsize': point_step
+                    "names": [f.get("name", f"field_{i}") for i, f in enumerate(sorted_fields)],
+                    "formats": [
+                        type_map.get(f.get("type", "UINT8"), np.uint8) for f in sorted_fields
+                    ],
+                    "offsets": [f.get("offset", 0) for f in sorted_fields],
+                    "itemsize": point_step,
                 }
 
                 dtype = np.dtype(dtype_spec)

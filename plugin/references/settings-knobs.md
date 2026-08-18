@@ -8,6 +8,9 @@ Defined in `settings.py`; set via the container environment or `.env`.
 | `MCP_SERVER_HOST` | `0.0.0.0` | In-container listen address; host-side exposure is governed by the compose port mapping - see SECURITY.md before sharing the endpoint beyond the machine |
 | `MCP_TRANSPORT` | `sse` | MCP transport the server runs |
 | `JSONL_BUFFER_SIZE_PER_TOPIC_BYTES` | 1 GB | Rolling live buffer per subscribed topic |
+| `SINK_TOTAL_BUFFER_BYTES` | 0 (unbounded) | Total live-buffer budget per sink; when set, subscribe() refuses topics that would exceed it (`BufferCapacityExceededError` names both knobs to adjust) |
+| `CACHE_MAX_BYTES` | 20 GB | LRU cap on the arrow query cache; 0 disables eviction. Never touches sink buffers or artifacts |
+| `MAX_ARROW_RECORD_BATCH_SIZE_COUNT` | 100000 | Row ceiling per arrow batch; bounds peak memory when converting large topics |
 | `ARTIFACT_DIRECTORY` | `~/.bagel/artifacts` | User deliverables (snippets, GIFs, exports). Never cleaned up automatically |
 | `CACHE_DIRECTORY` | `~/.cache/bagel` | Intermediate artifact cache |
 | `STARTUP_PIPELINES_FILE` | unset | YAML manifest of subscriptions/pipelines re-established on boot |
