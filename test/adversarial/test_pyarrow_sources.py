@@ -337,3 +337,22 @@ def test_valid_json_file_still_builds_and_materializes_correctly(tmp_path: pathl
     )
     assert len(messages) == 2
     assert {msg["a"] for _, _, msg in messages} == {1, 2}
+
+
+def test_describe_surfaces_excluded_file_count(tmp_path: pathlib.Path) -> None:
+    """Codex review on #156: describe_data_source must report exclusions.
+
+    server.py evaluated factory.metadata before factory.build(), so the
+    excluded_file_count the triage workflow tells agents to check was
+    always 0 in the describe response.
+    """
+    import server
+
+    (tmp_path / "good.csv").write_text("t,a\n1.0,2\n", encoding="utf-8")
+    # the first 4 KiB is valid CSV so the cheap sniff (is_csv_file reads 4096
+    # bytes) passes; the binary tail beyond it fails PyArrow's deeper file
+    # inspection, so the file is excluded at build
+    (tmp_path / "bad.csv").write_bytes(b"t,a\n" + b"1,2\n" * 5000 + b"\x00\xff" * 200)
+    rendered = server.describe_data_source(str(tmp_path))
+    joined = " ".join(str(message) for message in rendered)
+    assert '"excluded_file_count": 1' in joined  # metadata renders as JSON

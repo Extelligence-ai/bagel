@@ -87,11 +87,14 @@ def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[
         f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
     )
     registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    # Build BEFORE reading metadata: _build() populates excluded_file_count,
+    # and dict values evaluate in order (Codex review on #156).
+    data_source = factory.build()
     return poml(
         "./src/agent/describe/data_source.poml",
         context={
             "metadata": factory.metadata,
-            "topics": registry.available_topics(factory.build()),
+            "topics": registry.available_topics(data_source),
         },
     )
 
