@@ -13,6 +13,7 @@ Start the container matching the data format, then connect (default
 | Betaflight | `.bbl`, `.bfl` | `betaflight` | none |
 | CAN capture | `.blf`, `.asc` | host install: `uv sync --group automotive` (beta; no dedicated image yet) | **required**: `args={"dbc": "./path/to/bus.dbc"}` — the DBC is the bus schema; without it the source cannot decode |
 | ASAM MDF | `.mf4` | host install: `uv sync --group automotive` (beta) | none |
+| Copper (copper-rs) | app-exported `.mcap` (a raw `.copper` log must be exported by its app's log extractor first; Bagel's error message walks you through it) | `apache-arrow` (lightest) | none |
 | CSV / JSON / Parquet | files or partitioned dirs | `apache-arrow` (lightest) | optional timestamp column/format args |
 | Live MQTT (incl. Sparkplug B) | broker | `iot` | host/port of the broker |
 | Live rosbridge | websocket | image matching the robot's ROS stack | host/port of the bridge |

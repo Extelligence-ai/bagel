@@ -204,7 +204,7 @@ depends entirely on your workload.
 
 | Industry     | Formats                        |
 | ------------ | ------------------------------ |
-| **Robotics** | ROS1, ROS2, MCAP (any profile), ROS text logs (`~/.ros/log`) |
+| **Robotics** | ROS1, ROS2, MCAP (any profile), [Copper](./doc/runbooks/copper.md) (via MCAP export), ROS text logs (`~/.ros/log`) |
 | **Drones**   | PX4, ArduPilot, Betaflight     |
 | **Automotive** | ASAM MDF4 (`.mf4`), CAN captures (`.blf`/`.asc` + DBC) · *beta* |
 | **IoT**      | MQTT (live, Sparkplug B), PostgreSQL / TimescaleDB, InfluxDB 3 |
