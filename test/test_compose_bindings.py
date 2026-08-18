@@ -31,9 +31,26 @@ def test_every_published_port_binds_to_localhost() -> None:
 
 
 def test_container_side_host_still_binds_all_interfaces() -> None:
-    """The in-container listen address must stay 0.0.0.0 for port mapping to work."""
+    """Every MCP-publishing service must inject MCP_SERVER_HOST=0.0.0.0.
+
+    The settings default is loopback (secure for bare host runs, Codex on
+    #160), so containers must opt into all-interfaces explicitly or Docker
+    port publishing cannot reach them.
+    """
+    offenders = []
+    for name, service in _services().items():
+        env = service.get("environment", {}) or {}
+        if "MCP_SERVER_PORT" not in env:
+            continue
+        if str(env.get("MCP_SERVER_HOST", "")) != "0.0.0.0":  # noqa: S104 -- asserting config, not binding
+            offenders.append(name)
+    assert not offenders, f"services missing MCP_SERVER_HOST=0.0.0.0: {offenders}"
+
+
+def test_host_run_defaults_to_loopback() -> None:
+    """Bare host runs must not expose the unauthenticated endpoint."""
     env = pathlib.Path(".env").read_text(encoding="utf-8")
-    assert "MCP_SERVER_HOST=0.0.0.0" in env
+    assert "MCP_SERVER_HOST=127.0.0.1" in env
 
 
 def test_every_mcp_publishing_service_passes_mcp_server_port_env() -> None:
