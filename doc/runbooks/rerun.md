@@ -33,7 +33,7 @@ export_for_rerun(
 
 Run the returned command and the event is on screen.
 
-Signal names are the flattened `topic/field/subfield` paths — the same naming as the
+Signal names are the flattened `topic/field/subfield` paths: the same naming as the
 [PlotJuggler export](./plotjuggler.md), so the two integrations are interchangeable:
 pick the viewer your team already uses. Pass `signals=[...]` to narrow the export;
 by default every numeric signal in the selected topics is included.

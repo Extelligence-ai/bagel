@@ -34,7 +34,7 @@ framed to the window.
 
 ## Notes
 
-- The MCAP uses JSON-encoded channels (`jsonschema` schemas) — readable by
+- The MCAP uses JSON-encoded channels (`jsonschema` schemas): readable by
   Lichtblick, Foxglove, and Bagel itself, so you can keep querying the exported
   window with SQL.
 - Signal names in `signals=[...]` use the flattened `topic/field/subfield`

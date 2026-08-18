@@ -6,7 +6,7 @@ Bagel to find and cut the interesting windows, then eyeball them in PlotJuggler.
 
 ## Open Bagel's outputs directly (no export needed)
 
-Every reduced bag and event snippet Bagel writes is a standard `.mcap` file —
+Every reduced bag and event snippet Bagel writes is a standard `.mcap` file:
 PlotJuggler (≥ 3.6) opens them natively, any profile:
 
 > Find every hard brake in this bag and cut ±10s clips around each.
@@ -57,7 +57,7 @@ which curves to plot (default: all numeric signals, capped at 8).
 ## Watching live data side by side
 
 PlotJuggler's MQTT/ROS streaming plugins can subscribe to the **same broker or bridge**
-Bagel is watching — live curves in PlotJuggler while Bagel runs event detection and
+Bagel is watching: live curves in PlotJuggler while Bagel runs event detection and
 standing pipelines on the identical stream. No integration needed; point both at the
 same endpoint.
 

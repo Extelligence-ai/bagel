@@ -55,9 +55,9 @@ tasks:
 
 | Parameter          | Type       | Required | Default | Description                                      |
 | ------------------ | ---------- | -------- | ------- | ------------------------------------------------ |
-| `topics`           | list[str]  | Yes      | —       | Pointcloud topics to decode                      |
-| `output_directory` | str        | Yes      | —       | Directory to write decoded files                 |
-| `wasm_path`        | str        | Yes      | —       | Path to `cloudini_wasm.wasm`                     |
+| `topics`           | list[str]  | Yes      | (required) | Pointcloud topics to decode                      |
+| `output_directory` | str        | Yes      | (required) | Directory to write decoded files                 |
+| `wasm_path`        | str        | Yes      | (required) | Path to `cloudini_wasm.wasm`                     |
 | `output_format`    | str        | No       | `npz`   | Output format: `npz` or `csv`                    |
 | `cloudini`         | bool       | No       | `true`  | Set to `false` to disable cloudini for this task |
 
