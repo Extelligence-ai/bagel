@@ -33,7 +33,8 @@ def test_settings_instantiate_without_env_file(tmp_path: pathlib.Path) -> None:
         check=False,  # non-zero return code is asserted on below
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "False 0.0.0.0 8000"
+    # loopback default: a bare host run must not expose the endpoint (Codex, #160)
+    assert result.stdout.strip() == "False 127.0.0.1 8000"
 
 
 def test_defaults_match_repo_env_file() -> None:

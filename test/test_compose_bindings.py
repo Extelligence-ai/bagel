@@ -27,9 +27,26 @@ def test_every_published_port_binds_to_localhost() -> None:
 
 
 def test_container_side_host_still_binds_all_interfaces() -> None:
-    """The in-container listen address must stay 0.0.0.0 for port mapping to work."""
+    """Every MCP-publishing service must inject MCP_SERVER_HOST=0.0.0.0.
+
+    The settings default is loopback (secure for bare host runs, Codex on
+    #160), so containers must opt into all-interfaces explicitly or Docker
+    port publishing cannot reach them.
+    """
+    offenders = []
+    for name, service in _services().items():
+        env = service.get("environment", {}) or {}
+        if "MCP_SERVER_PORT" not in env:
+            continue
+        if str(env.get("MCP_SERVER_HOST", "")) != "0.0.0.0":  # noqa: S104 -- asserting config, not binding
+            offenders.append(name)
+    assert not offenders, f"services missing MCP_SERVER_HOST=0.0.0.0: {offenders}"
+
+
+def test_host_run_defaults_to_loopback() -> None:
+    """Bare host runs must not expose the unauthenticated endpoint."""
     env = pathlib.Path(".env").read_text(encoding="utf-8")
-    assert "MCP_SERVER_HOST=0.0.0.0" in env
+    assert "MCP_SERVER_HOST=127.0.0.1" in env
 
 
 def test_every_mcp_publishing_service_passes_mcp_server_port_env() -> None:
@@ -53,8 +70,7 @@ def test_every_mcp_publishing_service_passes_mcp_server_port_env() -> None:
         if str(env.get("MCP_SERVER_PORT", "")) != "${MCP_SERVER_PORT}":
             offenders.append(name)
     assert not offenders, (
-        f"services publish the MCP port but don't pass MCP_SERVER_PORT in "
-        f"environment: {offenders}"
+        f"services publish the MCP port but don't pass MCP_SERVER_PORT in environment: {offenders}"
     )
 
 
@@ -67,9 +83,7 @@ def test_no_dockerfile_copies_env_file() -> None:
     """
     offenders = []
     for dockerfile in sorted(pathlib.Path("docker").glob("Dockerfile.*")):
-        for lineno, line in enumerate(
-            dockerfile.read_text(encoding="utf-8").splitlines(), start=1
-        ):
+        for lineno, line in enumerate(dockerfile.read_text(encoding="utf-8").splitlines(), start=1):
             if re.match(r"\s*COPY\b.*\.env\b", line):
                 offenders.append(f"{dockerfile}:{lineno}: {line.strip()}")
     assert not offenders, f"Dockerfile(s) copy .env into the image: {offenders}"
