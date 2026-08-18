@@ -176,6 +176,52 @@ class TopicSink(abc.ABC):
             "magic": "BAGEL_SINK",  # Magic keyword to identify Bagel sink directories
         }
 
+    @property
+    def subscribed_topics(self) -> list[str]:
+        """Topics currently subscribed on this sink, in insertion order."""
+        return list(self._buffers)
+
+    def ensure_capacity(
+        self,
+        topics: list[str],
+        overwrite: bool = False,
+        buffer_size_bytes: int | None = settings.JSONL_BUFFER_SIZE_PER_TOPIC_BYTES,
+    ) -> None:
+        """Raise if subscribing all ``topics`` would exceed SINK_TOTAL_BUFFER_BYTES.
+
+        Batch admission is checked up front so a refusal happens before any
+        topic is subscribed: a mid-batch failure would otherwise leave a
+        partial subscription set behind (Codex review on #156). No-op when
+        the budget is 0 (unbounded).
+        """
+        total_limit = settings.SINK_TOTAL_BUFFER_BYTES
+        if not total_limit:
+            return
+        if buffer_size_bytes is None:
+            raise BufferCapacityExceededError(
+                f"Cannot batch-subscribe {len(topics)} topic(s) with unbounded "
+                f"buffers while SINK_TOTAL_BUFFER_BYTES={total_limit}: unbounded "
+                "topics cannot be accounted. Pass an explicit buffer_size_bytes "
+                "or set SINK_TOTAL_BUFFER_BYTES=0."
+            )
+        new_topics = [topic for topic in topics if overwrite or topic not in self._buffers]
+        existing_total = sum(
+            writer.buffer_size_bytes or 0
+            for existing_topic, writer in self._buffers.items()
+            if not (overwrite and existing_topic in topics)
+        )
+        projected = existing_total + len(new_topics) * buffer_size_bytes
+        if projected > total_limit:
+            raise BufferCapacityExceededError(
+                f"Subscribing {len(new_topics)} topic(s) at "
+                f"buffer_size_bytes={buffer_size_bytes} each would bring this "
+                f"sink's total to {projected} bytes, exceeding "
+                f"SINK_TOTAL_BUFFER_BYTES={total_limit}. Lower buffer_size_bytes "
+                "(default JSONL_BUFFER_SIZE_PER_TOPIC_BYTES) or raise "
+                "SINK_TOTAL_BUFFER_BYTES; no topics from this request were "
+                "subscribed."
+            )
+
     def subscribe(
         self,
         topic: str,

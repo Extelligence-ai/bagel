@@ -80,3 +80,17 @@ def test_overwrite_replaces_rather_than_adds(
     monkeypatch.setattr(settings, "SINK_TOTAL_BUFFER_BYTES", 2_000)
     sink.subscribe("/a", buffer_size_bytes=1_500)
     sink.subscribe("/a", buffer_size_bytes=1_800, overwrite=True)  # replaces, still fits
+
+
+def test_batch_subscribe_is_all_or_nothing(
+    sink: _FakeSink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex review on #156: admission failure mid-batch must not leave a
+    partial subscription set behind."""
+    from src.sink import startup
+
+    per_topic = settings.JSONL_BUFFER_SIZE_PER_TOPIC_BYTES
+    monkeypatch.setattr(settings, "SINK_TOTAL_BUFFER_BYTES", int(per_topic * 2.5))
+    with pytest.raises(base.BufferCapacityExceededError):
+        startup.subscribe_with_pipeline(sink, ["/a", "/b", "/c"], None)
+    assert sink.subscribed_topics == []

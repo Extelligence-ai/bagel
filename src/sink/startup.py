@@ -78,6 +78,10 @@ def subscribe_with_pipeline(
                 f"subscribed topics: {topics}"
             )
 
+    # All-or-nothing admission: refuse the whole batch up front rather than
+    # subscribing a prefix and failing mid-loop (Codex review on #156).
+    sink.ensure_capacity(list(topics), overwrite=overwrite)
+
     for topic in topics:
         sink.subscribe(
             topic,
