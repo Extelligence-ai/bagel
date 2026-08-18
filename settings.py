@@ -86,18 +86,24 @@ class Settings(BaseSettings):
     EXTELLIGENCE_S3_BUCKET_REGION: str | None = None  # If not set, will use default region
 
     ################################################
-    # The default values of the following settings #
-    # are specified via the ".env" file.           #
+    # The following settings default to the values #
+    # in the repo's ".env", which Compose also     #
+    # interpolates from. Images ship no .env: the  #
+    # defaults below are the source of truth for a #
+    # running container (#158).                    #
     ################################################
 
     # Whether running in a container
-    CONTAINER_MODE: bool
+    CONTAINER_MODE: bool = False
 
-    # Host of the MCP server
-    MCP_SERVER_HOST: str
+    # Host of the MCP server. Defaults to loopback so a bare `uv run
+    # server.py` outside Compose never exposes the unauthenticated endpoint
+    # on all interfaces. Containers NEED 0.0.0.0 for Docker port publishing;
+    # compose.yaml injects MCP_SERVER_HOST=0.0.0.0 explicitly per service.
+    MCP_SERVER_HOST: str = "127.0.0.1"
 
     # Port of the MCP server
-    MCP_SERVER_PORT: int
+    MCP_SERVER_PORT: int = 8000
 
     # MCP transport: "sse" (current default, matches the README quickstart) or
     # "streamable-http" (the newer transport; both are supported by MCP SDK v1 and v2)

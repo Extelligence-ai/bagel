@@ -8,7 +8,7 @@ But first, make sure the Bagel MCP server is already running in a separate termi
 
 If not, follow the [⚡️ Quickstart](../../../README.md#️-quickstart) guide to start it.
 
-You can check if it’s running by visiting [http://0.0.0.0:8000/sse](http://0.0.0.0:8000/sse)
+You can check if it’s running by visiting [http://localhost:8000/sse](http://localhost:8000/sse)
 in your browser. You should see output like:
 
 ```
@@ -43,7 +43,7 @@ Visit [Gemini CLI on GitHub](https://github.com/google-gemini/gemini-cli) for mo
 Add the Bagel MCP server to Gemini CLI:
 
 ```bash
-gemini mcp add -t sse bagel http://0.0.0.0:8000/sse
+gemini mcp add -t sse bagel http://localhost:8000/sse
 ```
 
 Confirm the connection:
@@ -57,7 +57,7 @@ You should see output like:
 ```bash
 Configured MCP servers:
 
-✓ bagel: http://0.0.0.0:8000/sse (sse) - Connected
+✓ bagel: http://localhost:8000/sse (sse) - Connected
 ```
 
 For more details on connecting MCP servers to Gemini CLI, see the

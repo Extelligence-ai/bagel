@@ -72,9 +72,6 @@ COPY --chown=${USERNAME}:${USERNAME} test/_fixtures ./test/_fixtures
 COPY --chown=${USERNAME}:${USERNAME} test/adversarial ./test/adversarial
 COPY --chown=${USERNAME}:${USERNAME} test/e2e ./test/e2e
 
-# Copy configuration file
-COPY --chown=${USERNAME}:${USERNAME} .env ./.env
-
 # Fail the build if the server cannot even import -- catches missing-module
 # regressions (issue #151) at build time instead of at the user's terminal.
 RUN uv run python -c "import server"
