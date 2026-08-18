@@ -23,6 +23,7 @@ class DataSource(Enum):
     BETAFLIGHT_BBL = "betaflight.bbl"
     BETAFLIGHT_BFL = "betaflight.bfl"
     BAGEL_SINK = "bagel.sink"
+    GANTRY_EVIDENCE = "gantry.evidence"
     PYARROW_JSON = "pyarrow.json"
     PYARROW_CSV = "pyarrow.csv"
     POSTGRES = "postgres"
@@ -64,6 +65,8 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
     path = pathlib.Path(path)
     if is_bagel_sink_directory(path):
         return DataSource.BAGEL_SINK
+    elif is_gantry_evidence_directory(path):
+        return DataSource.GANTRY_EVIDENCE
     elif is_ros1_bag_file(path):
         return DataSource.ROS1_BAG
     elif is_ros2_db3_file(path) or is_ros2_db3_zstd_file(path) or is_ros2_db3_directory(path):
@@ -265,6 +268,28 @@ def is_bagel_sink_directory(path: pathlib.Path) -> bool:
         return False
 
     return True
+
+
+def is_gantry_evidence_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a Gantry Bench evidence bundle directory.
+
+    Gantry Bench (a robot-dataset evaluation harness) exports a submission's
+    verdict evidence as a directory of CSV tables indexed by a manifest.json
+    whose "magic" field identifies the format.
+    """
+    if not path.is_dir():
+        return False
+
+    manifest_file = path / "manifest.json"
+    if not manifest_file.exists():
+        return False
+
+    try:
+        manifest = json.loads(manifest_file.read_text())
+    except (OSError, ValueError):
+        return False
+
+    return isinstance(manifest, dict) and manifest.get("magic") == "GANTRY_EVIDENCE"
 
 
 def is_standard_json_file(path: pathlib.Path) -> bool:
