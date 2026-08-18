@@ -117,6 +117,39 @@ print(points["x"], points["y"], points["z"])
 Each pointcloud is saved as a CSV file with column headers matching the
 pointcloud field names.
 
+## Compressing pointclouds
+
+The reverse of decoding: shrink a bag's pointcloud topics for storage or transfer. The
+`compress_pointcloud` task wraps cloudini's `cloudini_rosbag_converter`, converting every
+`sensor_msgs/PointCloud2` topic in a ROS2 MCAP bag into the much smaller
+`point_cloud_interfaces/CompressedPointCloud2`. Other topics pass through unchanged. To
+analyze the compressed topics afterwards, run the `decode_pointcloud` task on the
+result (see above): Bagel does not decode cloudini transparently during ingestion.
+
+### Requirements
+
+The `cloudini_rosbag_converter` binary must be on PATH. Build it from
+[cloudini](https://github.com/facontidavide/cloudini) (see `cloudini_ros`). If the binary
+is missing, or `CLOUDINI_ENABLED=false`, the task logs a message and skips rather than
+failing the pipeline.
+
+### Pipeline usage
+
+```yaml
+tasks:
+  - module: src.pipeline.tasks.cloudini.compress_pointcloud
+    args:
+      cloudini: true # per-task opt-out; set false to skip this pipeline
+```
+
+Under the hood this runs:
+
+```bash
+cloudini_rosbag_converter -f <source.mcap> -o <artifact.mcap> -c
+```
+
+The compressed bag lands in the pipeline's artifact directory.
+
 ## Settings Reference
 
 These settings are configured in `.env` or as environment variables:
@@ -124,4 +157,4 @@ These settings are configured in `.env` or as environment variables:
 | Setting                      | Default | Description                                        |
 | ---------------------------- | ------- | -------------------------------------------------- |
 | `CLOUDINI_ENABLED`           | `true`  | Global toggle for cloudini decoding                |
-| `CLOUDINI_DEFAULT_RESOLUTION`| `0.001` | Default quantization resolution in meters (1 mm)   |
+| `CLOUDINI_DEFAULT_RESOLUTION`| `0.001` | Reserved: not currently applied by any task. The compress task uses the converter's built-in quantization (its CLI has no resolution option) |
