@@ -138,7 +138,7 @@ def test_empty_blf_raises_clean_error(tmp_path: pathlib.Path) -> None:
 
     log = can_source.CanLog(path=str(blf), dbc=str(dbc))
     with pytest.raises(errors.InvalidPathError):
-        _ = log.records
+        _ = log.records()
 
 
 def test_corrupt_blf_header_raises_clean_error(tmp_path: pathlib.Path) -> None:
@@ -153,7 +153,7 @@ def test_corrupt_blf_header_raises_clean_error(tmp_path: pathlib.Path) -> None:
 
     log = can_source.CanLog(path=str(blf), dbc=str(dbc))
     with pytest.raises(errors.InvalidPathError):
-        _ = log.records
+        _ = log.records()
 
 
 def test_unrecognized_capture_extension_raises_clean_error(tmp_path: pathlib.Path) -> None:
@@ -164,7 +164,7 @@ def test_unrecognized_capture_extension_raises_clean_error(tmp_path: pathlib.Pat
 
     log = can_source.CanLog(path=str(capture), dbc=str(dbc))
     with pytest.raises(errors.InvalidPathError):
-        _ = log.records
+        _ = log.records()
 
 
 def test_asc_with_non_hex_frame_data_raises_clean_error(tmp_path: pathlib.Path) -> None:
@@ -185,7 +185,7 @@ def test_asc_with_non_hex_frame_data_raises_clean_error(tmp_path: pathlib.Path) 
 
     log = can_source.CanLog(path=str(asc), dbc=str(dbc))
     with pytest.raises(errors.InvalidPathError):
-        _ = log.records
+        _ = log.records()
 
 
 def test_frame_data_length_mismatch_is_skipped_not_fatal(tmp_path: pathlib.Path) -> None:
@@ -207,7 +207,7 @@ def test_frame_data_length_mismatch_is_skipped_not_fatal(tmp_path: pathlib.Path)
     blf = _write_blf(tmp_path, "mixed.blf", [*good, bad])
 
     log = can_source.CanLog(path=str(blf), dbc=str(dbc))
-    records = log.records
+    records = log.records()
 
     assert len(records) == len(good)
     assert all(name == "EngineData" for _, name, _ in records)
@@ -219,7 +219,7 @@ def test_missing_capture_file_raises_file_not_found_already(tmp_path: pathlib.Pa
     log = can_source.CanLog(path=str(tmp_path / "does_not_exist.blf"), dbc=str(dbc))
 
     with pytest.raises(FileNotFoundError):
-        _ = log.records
+        _ = log.records()
 
 
 def test_asc_with_only_unrecognized_lines_is_already_clean(tmp_path: pathlib.Path) -> None:
@@ -232,7 +232,7 @@ def test_asc_with_only_unrecognized_lines_is_already_clean(tmp_path: pathlib.Pat
     asc.write_text("this is not an asc file\nrandom garbage\n\x00\x01\x02")
 
     log = can_source.CanLog(path=str(asc), dbc=str(dbc))
-    assert log.records == []
+    assert log.records() == []
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +246,7 @@ def test_valid_dbc_and_capture_still_decode_correctly(tmp_path: pathlib.Path) ->
     blf = _write_valid_blf(tmp_path)
 
     log = can_source.CanLog(path=str(blf), dbc=str(dbc))
-    records = log.records
+    records = log.records()
 
     assert len(records) == 1
     timestamp, name, signals = records[0]

@@ -30,6 +30,10 @@ class TopicAlreadySubscribedError(Exception):
     """Raised when topic is already subscribed."""
 
 
+class BufferCapacityExceededError(Exception):
+    """Raised when a subscription would exceed SINK_TOTAL_BUFFER_BYTES."""
+
+
 class TopicSink(abc.ABC):
     """Abstract base class for topic sinks.
 
@@ -172,6 +176,52 @@ class TopicSink(abc.ABC):
             "magic": "BAGEL_SINK",  # Magic keyword to identify Bagel sink directories
         }
 
+    @property
+    def subscribed_topics(self) -> list[str]:
+        """Topics currently subscribed on this sink, in insertion order."""
+        return list(self._buffers)
+
+    def ensure_capacity(
+        self,
+        topics: list[str],
+        overwrite: bool = False,
+        buffer_size_bytes: int | None = settings.JSONL_BUFFER_SIZE_PER_TOPIC_BYTES,
+    ) -> None:
+        """Raise if subscribing all ``topics`` would exceed SINK_TOTAL_BUFFER_BYTES.
+
+        Batch admission is checked up front so a refusal happens before any
+        topic is subscribed: a mid-batch failure would otherwise leave a
+        partial subscription set behind (Codex review on #156). No-op when
+        the budget is 0 (unbounded).
+        """
+        total_limit = settings.SINK_TOTAL_BUFFER_BYTES
+        if not total_limit:
+            return
+        if buffer_size_bytes is None:
+            raise BufferCapacityExceededError(
+                f"Cannot batch-subscribe {len(topics)} topic(s) with unbounded "
+                f"buffers while SINK_TOTAL_BUFFER_BYTES={total_limit}: unbounded "
+                "topics cannot be accounted. Pass an explicit buffer_size_bytes "
+                "or set SINK_TOTAL_BUFFER_BYTES=0."
+            )
+        new_topics = [topic for topic in topics if overwrite or topic not in self._buffers]
+        existing_total = sum(
+            writer.buffer_size_bytes or 0
+            for existing_topic, writer in self._buffers.items()
+            if not (overwrite and existing_topic in topics)
+        )
+        projected = existing_total + len(new_topics) * buffer_size_bytes
+        if projected > total_limit:
+            raise BufferCapacityExceededError(
+                f"Subscribing {len(new_topics)} topic(s) at "
+                f"buffer_size_bytes={buffer_size_bytes} each would bring this "
+                f"sink's total to {projected} bytes, exceeding "
+                f"SINK_TOTAL_BUFFER_BYTES={total_limit}. Lower buffer_size_bytes "
+                "(default JSONL_BUFFER_SIZE_PER_TOPIC_BYTES) or raise "
+                "SINK_TOTAL_BUFFER_BYTES; no topics from this request were "
+                "subscribed."
+            )
+
     def subscribe(
         self,
         topic: str,
@@ -198,6 +248,8 @@ class TopicSink(abc.ABC):
 
         Raises:
             TopicNotFoundError: If any requested topic is unavailable.
+            BufferCapacityExceededError: If SINK_TOTAL_BUFFER_BYTES is set and this
+                subscription would exceed it.
 
         """
         if topic not in self.available_topics:
@@ -205,6 +257,30 @@ class TopicSink(abc.ABC):
 
         if topic in self._buffers and not overwrite:
             raise TopicAlreadySubscribedError(topic)
+
+        total_limit = settings.SINK_TOTAL_BUFFER_BYTES
+        if total_limit:
+            if buffer_size_bytes is None:
+                raise BufferCapacityExceededError(
+                    f"Cannot subscribe to {topic} with an unbounded buffer while "
+                    f"SINK_TOTAL_BUFFER_BYTES={total_limit}: an unbounded topic cannot be "
+                    "accounted. Pass an explicit buffer_size_bytes or set "
+                    "SINK_TOTAL_BUFFER_BYTES=0."
+                )
+            existing_total = sum(
+                writer.buffer_size_bytes or 0
+                for existing_topic, writer in self._buffers.items()
+                if existing_topic != topic  # overwrite replaces its own budget
+            )
+            if existing_total + buffer_size_bytes > total_limit:
+                raise BufferCapacityExceededError(
+                    f"Subscribing to {topic} with buffer_size_bytes={buffer_size_bytes} "
+                    f"would bring this sink's total to {existing_total + buffer_size_bytes} "
+                    f"bytes, exceeding SINK_TOTAL_BUFFER_BYTES={total_limit}. Lower "
+                    "buffer_size_bytes (default JSONL_BUFFER_SIZE_PER_TOPIC_BYTES) or "
+                    "raise SINK_TOTAL_BUFFER_BYTES; on-disk usage can transiently reach "
+                    "2x nominal during overflow rotation."
+                )
 
         self._buffers[topic] = TopicBufferWriter(
             self.directory,

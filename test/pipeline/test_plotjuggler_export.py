@@ -92,7 +92,7 @@ def test_signals_filter_and_unknown_signal_error() -> None:
 
 def test_non_numeric_signal_rejected_cleanly() -> None:
     relation = duckdb.sql(
-        f'SELECT 1.0 AS "{TS}", struct_pack(temp := 20.0, mode := \'auto\') AS sensor'
+        f"SELECT 1.0 AS \"{TS}\", struct_pack(temp := 20.0, mode := 'auto') AS sensor"
     )
     # "sensor/mode" exists after flattening but is a string -- it must fail with a
     # clean ValueError, not a TypeError from the y-range computation.
@@ -109,7 +109,5 @@ def test_non_numeric_signal_rejected_cleanly() -> None:
 def test_curve_cap_applies_without_explicit_signals() -> None:
     columns = ", ".join(f"s{i:02d} := {float(i)}" for i in range(12))
     relation = duckdb.sql(f'SELECT 1.0 AS "{TS}", struct_pack({columns}) AS wide')
-    result = plotjuggler.export_window(
-        relation, name="wide", start_seconds=0.0, end_seconds=2.0
-    )
+    result = plotjuggler.export_window(relation, name="wide", start_seconds=0.0, end_seconds=2.0)
     assert len(result["curves"]) == plotjuggler.MAX_CURVES

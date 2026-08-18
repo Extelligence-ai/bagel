@@ -231,6 +231,21 @@ Can’t find your LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/
 
 </details>
 
+## 🔌 Claude Code plugin
+
+Bagel ships a Claude Code plugin: four skills that teach Claude when and how
+to drive the server (log triage, pipeline authoring, live sinks, visualization
+export) plus the MCP connection, wired automatically.
+
+```
+/plugin marketplace add Extelligence-ai/bagel
+/plugin install bagel@bagel
+```
+
+Then start the container for your data format (see Quickstart): the plugin
+connects to `http://localhost:8000/sse` by default. Any other MCP client can
+discover the same workflows server-side via the `list_agent_capabilities` tool.
+
 ## 🐶 Teach Bagel a New Trick
 
 Bagel learns new capabilities through [POML](https://microsoft.github.io/poml/latest/)
