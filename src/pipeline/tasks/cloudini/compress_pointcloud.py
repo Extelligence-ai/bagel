@@ -92,8 +92,12 @@ class CompressPointCloud(base.ArtifactMixin, base.Task):
                 if len(inputs) == 1
                 else base_output.with_name(f"{base_output.stem}_part{index:02d}.mcap")
             )
-            # -y: artifact_path is deterministic, so a retry finds the previous
-            # output in place; without it the converter prompts and a
+            # Remove any previous run's artifact first: with a deterministic
+            # path, exists() below must only ever see a file written by THIS
+            # invocation (Copilot on #142).
+            output_file.unlink(missing_ok=True)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            # -y: without it the converter prompts on overwrite and a
             # non-interactive pipeline blocks (Copilot on #142).
             command = [
                 CLOUDINI_CONVERTER,

@@ -172,3 +172,25 @@ def test_multi_part_directory_compresses_every_segment(
     assert run.call_count == 2
     assert result is not None and len(result) == 2
     assert len({str(artifact) for artifact in result}) == 2
+
+
+@patch("shutil.which", return_value="/usr/bin/mcap_converter")
+def test_stale_artifact_from_prior_run_is_not_reported(
+    _which: MagicMock, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Copilot (suppressed) on #142: with a deterministic output path, a retry
+    where the converter writes nothing must not report the previous run's
+    artifact as this run's result."""
+    monkeypatch.setattr(settings, "CLOUDINI_ENABLED", True)
+    monkeypatch.setattr(settings, "ARTIFACT_DIRECTORY", str(tmp_path / "artifacts"))
+    task = _task(tmp_path)
+
+    stale = task.artifact_path(1.0, ".mcap")
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_bytes(b"stale from an earlier run")
+
+    with patch("subprocess.run") as run:
+        run.return_value = MagicMock(args=[], stdout="")
+        result = task.execute(asof_seconds=1.0, lookback=None)
+
+    assert result is None
