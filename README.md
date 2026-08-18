@@ -300,7 +300,7 @@ meow 🐱 4 topics 🐱💤🎯
 - [Rerun](./doc/runbooks/rerun.md) — "show me that event in Rerun": any time window as a ready-to-open recording
 - [Lichtblick / Foxglove](./doc/runbooks/lichtblick.md) — event windows as MCAP + pre-framed layouts for either viewer
 - [PlotJuggler](./doc/runbooks/plotjuggler.md) — open Bagel's MCAP outputs directly; one-sentence pre-framed sessions, flattened CSV/Parquet exports
-- [Cloudini](./doc/runbooks/cloudini.md) — Decode cloudini-compressed pointcloud data in pipelines
+- [Cloudini](./doc/runbooks/cloudini.md): decode cloudini-compressed pointclouds, or compress a bag's PointCloud2 topics into CompressedPointCloud2
 - [Slack](./doc/runbooks/pipelines.md) — pipelines post to your ops channel when they fire: "🚨 hard brake on {asset}"
 - [LeRobot](./doc/runbooks/lerobot.md) *(beta)* — detected events become training episodes: a LeRobotDataset v3.0
 
