@@ -42,3 +42,11 @@ framed to the window.
   [Rerun](./rerun.md) exports; pick the viewer your team already uses.
 - If Bagel runs in Docker, artifacts land in `~/.bagel/artifacts` on the host
   (the compose services mount it).
+
+## Troubleshooting
+
+- **Plot panel opens empty** with the exported layout: clear the plot's X-axis
+  min/max (panel settings) and it will auto-fit. Exported layouts currently
+  write absolute-epoch X bounds while Lichtblick's timestamp axis uses elapsed
+  seconds, which parks the preset viewport far from the data: a fix in
+  `export_for_lichtblick` is tracked. Y-axis framing is unaffected.
