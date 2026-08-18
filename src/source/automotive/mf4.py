@@ -43,8 +43,7 @@ class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
             # typed error instead of letting an asammdf-internal traceback
             # escape.
             raise errors.InvalidPathError(
-                f"{self.path} could not be parsed as an ASAM MDF file: "
-                f"{type(exc).__name__}: {exc}"
+                f"{self.path} could not be parsed as an ASAM MDF file: {type(exc).__name__}: {exc}"
             ) from exc
 
     @property
@@ -79,8 +78,13 @@ class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
     def end_seconds(self) -> float:
         """Return the epoch seconds of the last sample in any channel group."""
         last = 0.0
-        for index in range(len(self._mdf.groups)):
-            master = self._mdf.get_master(index)
+        for index, group in enumerate(self._mdf.groups):
+            cycles = group.channel_group.cycles_nr
+            if not cycles:
+                continue
+            # Read only the final master sample instead of the whole time
+            # array per group (#134).
+            master = self._mdf.get_master(index, record_offset=cycles - 1, record_count=1)
             if len(master):
                 last = max(last, float(master[-1]))
         return self.start_seconds + last

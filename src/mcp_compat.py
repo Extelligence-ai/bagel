@@ -23,14 +23,16 @@ except ImportError:  # mcp 1.x
     MCP_SDK_V2 = False
 
 
-def create_server(name: str, host: str, port: int) -> Any:  # noqa: ANN401 -- SDK type varies by major version
+def create_server(name: str, host: str, port: int, instructions: str | None = None) -> Any:  # noqa: ANN401 -- SDK type varies by major version
     """Create the MCP server object for whichever SDK major version is installed.
 
     v1 takes host/port at construction; v2 takes them at `run()` (see `run_server`).
+    `instructions` is delivered to every client at the initialize handshake on
+    both majors: it is the one server-authored prompt surface agents read.
     """
     if MCP_SDK_V2:
-        return _Server(name=name)
-    return _Server(name=name, host=host, port=port)
+        return _Server(name=name, instructions=instructions)
+    return _Server(name=name, instructions=instructions, host=host, port=port)
 
 
 def run_server(server: Any, transport: str, host: str, port: int) -> None:  # noqa: ANN401

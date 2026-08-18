@@ -49,9 +49,7 @@ def test_standing_pipeline_fires_and_writes_artifact(make_sink) -> None:  # noqa
 
     # Cruise, then an excursion: the rising edge fires the standing pipeline.
     for t, temp in ((101.0, -18.0), (102.0, -12.0)):
-        sink._fake.deliver(
-            "freezer/1/status", json.dumps({"temp": temp, "t": t}).encode()
-        )
+        sink._fake.deliver("freezer/1/status", json.dumps({"temp": temp, "t": t}).encode())
 
     artifacts = list(pathlib.Path(settings.ARTIFACT_DIRECTORY).rglob("*.csv"))
     assert len(artifacts) == 1, "the excursion must produce exactly one snapshot"
@@ -92,9 +90,7 @@ def test_manifest_startup_end_to_end(
     manifest_file.write_text(yaml.safe_dump(manifest))
 
     reports = startup.start(manifest_file)
-    assert reports == [
-        {"sink": "mqtt", "status": "subscribed", "topics": ["freezer/1/status"]}
-    ]
+    assert reports == [{"sink": "mqtt", "status": "subscribed", "topics": ["freezer/1/status"]}]
 
     # The subscription is live: an excursion fires the pipeline from the manifest.
     fake.deliver("freezer/1/status", json.dumps({"temp": -12.0, "t": 101.0}).encode())

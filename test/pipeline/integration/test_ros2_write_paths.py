@@ -31,9 +31,7 @@ POST_SECONDS = 1.0
 
 # Ground truth from synth: events at EPOCH+4 and EPOCH+8 -> kept windows [3,6] and [7,9.75].
 EXPECTED_EVENTS = synth.event_onsets()
-EXPECTED_WINDOWS = [
-    (start - PRE_SECONDS, end + POST_SECONDS) for start, end, _ in synth.EVENTS
-]
+EXPECTED_WINDOWS = [(start - PRE_SECONDS, end + POST_SECONDS) for start, end, _ in synth.EVENTS]
 
 
 def _read_messages(bag_dir: pathlib.Path, storage_id: str) -> list[tuple[str, float]]:
@@ -85,9 +83,7 @@ def _isolated_artifacts(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch)
 def test_reduce_db3_keeps_only_event_windows(tmp_path: pathlib.Path) -> None:
     bag = synth.write_imu_bag(tmp_path / "source_bag", "sqlite3")
 
-    pipeline = base.Pipeline.build(
-        _reduce_config(bag, "src.pipeline.tasks.reduce.ros2.db3")
-    )
+    pipeline = base.Pipeline.build(_reduce_config(bag, "src.pipeline.tasks.reduce.ros2.db3"))
     produced = pipeline.run_all()
 
     assert len(produced) == 1

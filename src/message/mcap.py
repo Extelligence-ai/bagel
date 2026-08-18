@@ -46,8 +46,7 @@ def decoder_for(schema: Schema | None, channel: Channel) -> Callable[[bytes], ob
         if decoder is not None:
             return decoder
     raise UnsupportedEncodingError(
-        f"No decoder for message encoding '{channel.message_encoding}' "
-        f"on topic '{channel.topic}'"
+        f"No decoder for message encoding '{channel.message_encoding}' on topic '{channel.topic}'"
     )
 
 

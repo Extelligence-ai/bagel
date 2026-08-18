@@ -87,6 +87,8 @@ jobs:
         run: |
           uv run pytest -p no:warnings --cov --cov-report= \
             test/*.py \
+            test/agent \
+            test/plugin \
             test/pipeline \
             test/sink \
             test/message/automotive \

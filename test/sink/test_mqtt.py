@@ -116,9 +116,7 @@ def test_on_event_pipeline_fires_on_live_messages(make_sink: MakeSink) -> None:
     )
 
     for t, temp in ((1.0, -18.0), (2.0, -12.0), (3.0, -11.5), (4.0, -18.0)):
-        sink._fake.deliver(
-            "freezer/1/status", json.dumps({"temp": temp, "t": t}).encode()
-        )
+        sink._fake.deliver("freezer/1/status", json.dumps({"temp": temp, "t": t}).encode())
 
     # One rising edge at t=2.0 (sustained warm reading counts once).
     assert [call.args[0] for call in pipeline.run_at.call_args_list] == [2.0]
@@ -153,8 +151,12 @@ def test_websockets_transport_and_tls_configure_paho(
     captured: dict[str, object] = {}
 
     class RecordingFake(FakePahoClient):
-        def __init__(self, callback_api_version: object = None, client_id: str | None = None,
-                     transport: str = "tcp") -> None:
+        def __init__(
+            self,
+            callback_api_version: object = None,
+            client_id: str | None = None,
+            transport: str = "tcp",
+        ) -> None:
             super().__init__(callback_api_version, client_id)
             captured["transport"] = transport
             self.tls_args: dict[str, object] | None = None
