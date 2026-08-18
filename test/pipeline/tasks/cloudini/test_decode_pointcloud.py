@@ -18,7 +18,7 @@ def test_empty_topics_raises() -> None:
         DecodePointCloudTask(
             topics=[],
             output_directory="/tmp/out",
-            wasm_path=WASM_PATH,  # noqa: S108
+            wasm_path=WASM_PATH,
         )
 
 
@@ -56,7 +56,7 @@ def test_extract_raw_data_from_dict() -> None:
     task = DecodePointCloudTask(
         topics=["/lidar"],
         output_directory="/tmp/out",
-        wasm_path=WASM_PATH,  # noqa: S108
+        wasm_path=WASM_PATH,
     )
     assert task._extract_raw_data({"data": b"\x01\x02"}) == b"\x01\x02"
     assert task._extract_raw_data({"other": 1}) is None
@@ -66,7 +66,7 @@ def test_extract_raw_data_from_object() -> None:
     task = DecodePointCloudTask(
         topics=["/lidar"],
         output_directory="/tmp/out",
-        wasm_path=WASM_PATH,  # noqa: S108
+        wasm_path=WASM_PATH,
     )
     msg = MagicMock()
     msg.data = b"\x03\x04"
@@ -77,7 +77,7 @@ def test_extract_raw_data_from_list() -> None:
     task = DecodePointCloudTask(
         topics=["/lidar"],
         output_directory="/tmp/out",
-        wasm_path=WASM_PATH,  # noqa: S108
+        wasm_path=WASM_PATH,
     )
     msg = MagicMock()
     msg.data = [1, 2, 3]

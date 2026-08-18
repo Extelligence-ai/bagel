@@ -9,6 +9,7 @@ import subprocess
 from settings import settings
 from src.di import module
 from src.pipeline import base
+from src.source.mcap import McapBag
 
 CLOUDINI_CONVERTER = "cloudini_rosbag_converter"
 
@@ -71,31 +72,61 @@ class CompressPointCloud(base.ArtifactMixin, base.Task):
         if not _converter_available():
             return None
 
-        output_file = self.artifact_path(asof_seconds, ".mcap")
-        # -y: artifact_path is deterministic, so a retry finds the previous
-        # output in place; without it the converter prompts and a
-        # non-interactive pipeline blocks (Copilot on #142).
-        command = [CLOUDINI_CONVERTER, "-f", str(self.path), "-o", str(output_file), "-c", "-y"]
+        # rosbag2 MCAP directories are a supported source layout: resolve the
+        # contained .mcap segment(s) rather than passing the directory to the
+        # converter (Codex on #142).
+        source = pathlib.Path(self.path)
+        if source.is_dir():
+            inputs = McapBag(path=source).mcap_files
+            if not inputs:
+                logging.info("No .mcap files under %s; nothing to compress.", source)
+                return None
+        else:
+            inputs = [source]
 
-        result = subprocess.run(  # noqa: S603
-            command,
-            check=True,  # raise CalledProcessError if nonzero exit
-            text=True,
-            capture_output=True,
-        )
+        base_output = self.artifact_path(asof_seconds, ".mcap")
+        outputs: list[pathlib.Path] = []
+        for index, input_file in enumerate(inputs):
+            output_file = (
+                base_output
+                if len(inputs) == 1
+                else base_output.with_name(f"{base_output.stem}_part{index:02d}.mcap")
+            )
+            # -y: artifact_path is deterministic, so a retry finds the previous
+            # output in place; without it the converter prompts and a
+            # non-interactive pipeline blocks (Copilot on #142).
+            command = [
+                CLOUDINI_CONVERTER,
+                "-f",
+                str(input_file),
+                "-o",
+                str(output_file),
+                "-c",
+                "-y",
+            ]
 
-        logging.debug(shlex.join(result.args))
-        if result.stdout.strip():
-            logging.debug(result.stdout.strip())
-        if not output_file.exists():
+            result = subprocess.run(  # noqa: S603
+                command,
+                check=True,  # raise CalledProcessError if nonzero exit
+                text=True,
+                capture_output=True,
+            )
+
+            logging.debug(shlex.join(result.args))
+            if result.stdout.strip():
+                logging.debug(result.stdout.strip())
+            if output_file.exists():
+                outputs.append(output_file)
+                logging.info("Wrote %s", output_file)
+
+        if not outputs:
             # The converter exits 0 without writing when the bag has no
             # pointcloud topics; reporting a nonexistent artifact would make
             # a downstream upload raise FileNotFoundError (Copilot on #142).
             logging.info("No pointcloud topics in %s; nothing to compress.", self.path)
             return None
-        logging.info("Wrote %s", output_file)
 
-        return [output_file]
+        return outputs
 
 
 def register() -> None:

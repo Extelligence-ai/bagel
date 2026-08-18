@@ -120,3 +120,55 @@ def test_missing_output_returns_no_artifact(
         result = task.execute(asof_seconds=1.0, lookback=None)
 
     assert result is None
+
+
+@patch("shutil.which", return_value="/usr/bin/mcap_converter")
+def test_directory_source_resolves_inner_mcap(
+    _which: MagicMock, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex on #142: rosbag2 MCAP directories are a supported source layout;
+    the converter must receive the contained .mcap file, not the directory."""
+    monkeypatch.setattr(settings, "CLOUDINI_ENABLED", True)
+    monkeypatch.setattr(settings, "ARTIFACT_DIRECTORY", str(tmp_path / "artifacts"))
+    bag_dir = tmp_path / "rosbag2_dir"
+    bag_dir.mkdir()
+    inner = bag_dir / "rosbag2_0.mcap"
+    inner.write_bytes(b"mcap")
+    task = _task(tmp_path)
+    task._path = str(bag_dir)
+
+    def write_output(command: list[str], **kwargs: object) -> MagicMock:
+        pathlib.Path(command[command.index("-o") + 1]).write_bytes(b"mcap")
+        return MagicMock(args=command, stdout="")
+
+    with patch("subprocess.run", side_effect=write_output) as run:
+        result = task.execute(asof_seconds=1.0, lookback=None)
+
+    command = run.call_args.args[0]
+    assert command[command.index("-f") + 1] == str(inner)
+    assert result is not None and len(result) == 1
+
+
+@patch("shutil.which", return_value="/usr/bin/mcap_converter")
+def test_multi_part_directory_compresses_every_segment(
+    _which: MagicMock, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "CLOUDINI_ENABLED", True)
+    monkeypatch.setattr(settings, "ARTIFACT_DIRECTORY", str(tmp_path / "artifacts"))
+    bag_dir = tmp_path / "rosbag2_dir"
+    bag_dir.mkdir()
+    (bag_dir / "rosbag2_0.mcap").write_bytes(b"mcap")
+    (bag_dir / "rosbag2_1.mcap").write_bytes(b"mcap")
+    task = _task(tmp_path)
+    task._path = str(bag_dir)
+
+    def write_output(command: list[str], **kwargs: object) -> MagicMock:
+        pathlib.Path(command[command.index("-o") + 1]).write_bytes(b"mcap")
+        return MagicMock(args=command, stdout="")
+
+    with patch("subprocess.run", side_effect=write_output) as run:
+        result = task.execute(asof_seconds=1.0, lookback=None)
+
+    assert run.call_count == 2
+    assert result is not None and len(result) == 2
+    assert len({str(artifact) for artifact in result}) == 2
