@@ -28,8 +28,8 @@
 </p>
 
 Bagel lets you ask questions about robotics, drone, and IoT data in plain English.
-Every answer is computed by DuckDB SQL over your actual messages, not guessed by a
-model, and Bagel shows you the query.
+Every calculation over your message data is DuckDB SQL, not model guesswork, and
+Bagel shows you the query so you can audit it.
 
 > Is my IMU sensor overheating?
 
@@ -349,18 +349,19 @@ Rough edges we know about, so you don't find them the hard way:
   event-window duration over total duration: quiet recordings reduce dramatically,
   eventful ones much less. The figures in this README are illustrative demo output,
   not a measured benchmark.
-- **SSE transport only.** The MCP SDK Bagel ships also implements streamable HTTP,
-  but Bagel does not yet wire it through compose or document it. Clients connect
-  over SSE.
+- **SSE is the documented transport.** Streamable HTTP is already wired
+  (`MCP_TRANSPORT=streamable-http`), but compose does not forward the setting and
+  no client runbook covers it yet, so SSE is the supported path today (#168).
 - **No authentication on the MCP endpoint.** By design it binds to localhost only;
   treat it like a database socket and see [SECURITY.md](./SECURITY.md) before
   sharing it beyond your machine.
 - **Small local models struggle with multi-step pipelines.** A 4-8B model handles
   tool selection and simple SQL; event-windowed reduction and multi-topic joins
   want a bigger model. See the [Local LLMs guide](./doc/runbooks/local_llm.md).
-- **Live-database tests run outside CI.** The InfluxDB and Postgres suites only
-  execute against a live instance you point them at; everything else, including
-  the ROS bag write paths, runs in CI.
+- **Live-database end-to-end tests run outside CI.** The InfluxDB and Postgres
+  suites' pure tests run in CI; their live end-to-end cases only execute against
+  an instance you point them at. Everything else, including the ROS bag write
+  paths, runs in CI.
 
 ## 🫶 Contributing
 
