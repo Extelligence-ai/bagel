@@ -208,6 +208,7 @@ depends entirely on your workload.
 | **Drones**   | PX4, ArduPilot, Betaflight     |
 | **Automotive** | ASAM MDF4 (`.mf4`), CAN captures (`.blf`/`.asc` + DBC) · *beta* |
 | **IoT**      | MQTT (live, Sparkplug B), PostgreSQL / TimescaleDB, InfluxDB 3 |
+| **Hardware state** | [WaffleForm](./doc/runbooks/waffle.md) snapshots (`.waffleform.yaml`), auto-detected via waffle-iron · *experimental* |
 
 ## 🆚 Bagel vs. the Tools You Already Use
 

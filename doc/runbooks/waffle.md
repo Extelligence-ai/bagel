@@ -32,6 +32,28 @@ Point the batch tools at a fleet's worth of forms:
 
 > Across ./fleet/*.waffleform.yaml, which robots still run nav2 1.1.12?
 
+## Automatic detection: snapshot the live robot
+
+You don't have to write the WaffleForm by hand. With waffle-iron installed on the
+robot (`cargo install waffle-iron`), ask Bagel:
+
+> What hardware is this robot actually running right now?
+
+The `snap_hardware` tool runs `waffle snap` (or `waffle init` on first contact),
+which auto-detects connected hardware, firmware, and software versions, then
+returns the parsed state. For continuous history, add the `waffle.snap` pipeline
+task on a cadence — every snapshot lands in the artifact directory as a
+timestamped, queryable `.waffleform.yaml`:
+
+> Every hour, snapshot the hardware state.
+
+Then later: *"when did robot 7's camera firmware change?"* is a SQL question over
+the accumulated snaps.
+
+**Docker note:** hardware detection needs to see the hardware. Run waffle-iron on
+the robot host (or a privileged container with device mounts); a stock Bagel
+container can read and archive the form, but can't scan USB devices itself.
+
 ## Experimental beta status
 
 This is the first slice of the Waffle Iron integration (WaffleForm as a data
