@@ -90,9 +90,16 @@ def parse_line(line: str, fallback_node: str) -> LogRecord | None:
         else:
             # rospy writes local wall-clock time with no timezone; interpret it
             # in the machine's local timezone, mirroring how it was written.
-            timestamp_seconds = datetime.datetime.strptime(
-                groups["datetime"], "%Y-%m-%d %H:%M:%S,%f"
-            ).timestamp()
+            # A regex match doesn't guarantee a valid calendar date/time (e.g.
+            # month 13, hour 25) or a timestamp representable on this
+            # platform (e.g. year 1 underflowing once the local UTC offset is
+            # applied), so treat those as "no match" rather than crashing.
+            try:
+                timestamp_seconds = datetime.datetime.strptime(
+                    groups["datetime"], "%Y-%m-%d %H:%M:%S,%f"
+                ).timestamp()
+            except (ValueError, OverflowError, OSError):
+                continue
         level = groups["level"].upper()
         return LogRecord(
             timestamp_seconds=timestamp_seconds,
@@ -109,20 +116,22 @@ def parse_file(path: str | pathlib.Path) -> list[LogRecord]:
 
     Unmatched lines are appended to the previous record's message (multi-line
     messages such as tracebacks); unmatched lines before the first record are
-    dropped.
+    dropped. The file is streamed line-by-line so peak memory is the records
+    themselves, not multiples of the file size (#134).
     """
     path = pathlib.Path(path)
     records: list[LogRecord] = []
-    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw_line.rstrip()
-        if not line:
-            continue
-        record = parse_line(line, fallback_node=path.stem)
-        if record is not None:
-            record.file = path.name
-            records.append(record)
-        elif records:
-            records[-1].message += "\n" + line
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for raw_line in f:
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            record = parse_line(line, fallback_node=path.stem)
+            if record is not None:
+                record.file = path.name
+                records.append(record)
+            elif records:
+                records[-1].message += "\n" + line
     return records
 
 

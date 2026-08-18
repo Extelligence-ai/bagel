@@ -226,3 +226,25 @@ def test_resolve_should_raise_for_fifo() -> None:
         # WHEN / THEN
         with pytest.raises(ValueError, match="Cannot resolve data source type from path:"):
             data_source.resolve(str(fifo_path))
+
+
+def test_has_magic_bytes_should_not_read_entire_huge_file() -> None:
+    # GIVEN — create a 1 GB sparse file with magic bytes at the beginning
+    import os
+    import pathlib
+
+    with tempfile.NamedTemporaryFile(delete=False) as tmpfile:
+        tmpfile.write(b"#ROSBAG V2")
+        tmpfile.flush()
+        # Expand the file to 1 GB without writing actual data (sparse)
+        os.truncate(tmpfile.name, 1024**3)
+        path = pathlib.Path(tmpfile.name)
+
+        try:
+            # WHEN
+            result = data_source.has_magic_bytes(path, b"#ROSBAG V2")
+
+            # THEN — should return True without reading the entire 1 GB
+            assert result is True
+        finally:
+            os.unlink(path)

@@ -140,9 +140,7 @@ class DecodePointCloudTask(base.Task):
         ):
             start_seconds = asof_seconds - lookback.to_seconds()
 
-        messages = self._dataset._messages(
-            data_source, self._topics, start_seconds, asof_seconds
-        )
+        messages = self._dataset._messages(data_source, self._topics, start_seconds, asof_seconds)
 
         digest = short_digest([*self._topics, str(lookback)])
         output_dir = self._output_directory / f"timestamp_seconds={asof_seconds}" / digest

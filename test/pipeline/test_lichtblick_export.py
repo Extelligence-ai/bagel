@@ -44,8 +44,11 @@ def test_layout_matches_lichtblick_schema() -> None:
 
     plot = layout["configById"]["Plot!bagel"]
     assert plot["xAxisVal"] == "timestamp"
-    assert plot["minXValue"] == 15.0
-    assert plot["maxXValue"] == 25.0
+    # Lichtblick's timestamp axis is elapsed-seconds-since-start; absolute-epoch
+    # bounds park the viewport ~1.7e9 units from the data (UAT 2026-08-15).
+    # The MCAP contains only the window, so omitting bounds auto-fits perfectly.
+    assert "minXValue" not in plot
+    assert "maxXValue" not in plot
     assert plot["minYValue"] < plot["maxYValue"]
     assert {"value", "enabled", "timestampMethod"} <= set(plot["paths"][0])
     assert "message.vel" in {p["value"] for p in plot["paths"]}

@@ -16,7 +16,7 @@ windows → merge overlaps.
 ## Always preview first
 
 `preview_pipeline` is a dry run: it reports how many events were found and how much data
-would be kept, and **writes nothing**. Preview, confirm, then run — the same "audit before
+would be kept, and **writes nothing**. Preview, confirm, then run: the same "audit before
 you act" discipline as inspecting a SQL query.
 
 From an MCP client (e.g. Claude Code):
@@ -42,14 +42,14 @@ preview_pipeline(
 ### The predicate contract
 
 The topic column is a DuckDB `STRUCT`, so predicate fields are accessed as
-`"<topic>"['field']['subfield']` — for example `"/imu"['linear_acceleration']['x'] < -10`.
+`"<topic>"['field']['subfield']`: for example `"/imu"['linear_acceleration']['x'] < -10`.
 Use `describe_topic` to find the exact field paths and units before writing a predicate.
 
 ## Run the reduction (ROS2 bag)
 
 The reduce/snippet writers use `rosbag2`, so run them inside a ROS service from
 `compose.yaml` (e.g. `ros2-jazzy`). An example pipeline lives at
-[`pipelines/hard_decel_reduce.yaml`](../../pipelines/hard_decel_reduce.yaml) — edit its
+[`pipelines/hard_decel_reduce.yaml`](../../pipelines/hard_decel_reduce.yaml): edit its
 `path`, `event_topic`, and `predicate` to match your bag.
 
 ```bash
@@ -60,8 +60,12 @@ docker compose run --rm ros2-jazzy \
 The reduced bag is written under the artifact directory
 (`~/.bagel/artifacts/pipeline=hard_decel_reduce/...`).
 
-Or drive it conversationally from an MCP client with `run_pipeline` (build + run a config)
-and `save_pipeline` (persist a config as YAML for reuse).
+Or drive it conversationally from an MCP client: `preview_pipeline` takes the
+flat arguments shown above, but `run_pipeline` takes a full pipeline `config`
+dict (the same shape as the YAML: `name`, `path`, `cadence`, `tasks`), and
+`save_pipeline` persists a config as YAML for reuse. Your LLM assembles the
+config from the preview parameters; the reduce task module for MCAP output is
+`src.pipeline.tasks.reduce.mcap`.
 
 ## Reduce an MCAP bag
 
@@ -84,7 +88,7 @@ tasks:
 (`src.pipeline.tasks.reduce.ros2.mcap` remains as a back-compat alias.)
 
 For per-event clips instead of one reduced file, pair the snippet variant with an
-`on_event` cadence — same raw passthrough, one `.mcap` per event:
+`on_event` cadence · same raw passthrough, one `.mcap` per event:
 
 ```yaml
 cadence:
@@ -137,7 +141,7 @@ which calls `run_pipeline_batch(config, ["./logs/*"])` and returns a summary:
 { "sources": 42, "completed": 40, "failed": 2, "artifacts": 40, "results": [ ... ] }
 ```
 
-The base config's `path` is ignored — it is overridden per source. Pair this with the
+The base config's `path` is ignored: it is overridden per source. Pair this with the
 upload task below to push the reduced bags to cloud storage.
 
 ## Upload the reduced data to S3
@@ -218,6 +222,10 @@ uv run python -m test.pipeline.integration.synth --directory ./data/synthetic --
 ```
 
 > [!NOTE]
+> Run the synthesizer from a repo checkout on the host: published images strip
+> the `test/` tree, so the module is not available inside a pulled container.
+
+> [!NOTE]
 > The bundled ROS2 sample (`data/sample/ros2/db3`) contains only `std_msgs/String`
-> topics over a sub-microsecond span, so it is not a meaningful reduction target — use
+> topics over a sub-microsecond span, so it is not a meaningful reduction target: use
 > the synthesizer above or a bag with real numeric telemetry.

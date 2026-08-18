@@ -1,6 +1,6 @@
-# Automotive: ASAM MDF (.mf4) and raw CAN (.blf / .asc) — beta
+# Automotive: ASAM MDF (.mf4) and raw CAN (.blf / .asc) · beta
 
-MDF is the measurement format the automotive world runs on — CANape, INCA, Vector
+MDF is the measurement format the automotive world runs on: CANape, INCA, Vector
 tooling, and most DAQ hardware write it. Bagel reads `.mf4` (and older MDF)
 files directly: **channel groups become topics, channels become fields**, and every
 prompt that works on a ROS bag works on a measurement.
@@ -13,7 +13,7 @@ The MDF reader needs the optional `automotive` dependency group:
 uv sync --group automotive
 ```
 
-Everything is pure pip (`asammdf`) — no vendor tooling required.
+Everything is pure pip (`asammdf`): no vendor tooling required.
 
 ## Prompts to try
 
@@ -29,7 +29,7 @@ knows `EngineSpeed` is in rpm without being told.
 
 ## Raw CAN captures with a DBC
 
-Vector BLF and ASC captures work too — pass the DBC that describes the bus, and
+Vector BLF and ASC captures work too: pass the DBC that describes the bus, and
 **DBC messages become topics, signals become fields** with physical values
 (scaling applied) and units attached:
 
@@ -42,7 +42,7 @@ partial DBC still works.
 ## Beta status
 
 Both readers are verified against files we generate with the same libraries that
-read them (`asammdf`, `python-can`) — real CANape/INCA/Vector-produced captures
+read them (`asammdf`, `python-can`): real CANape/INCA/Vector-produced captures
 haven't crossed our test bench yet. If you have one, trying Bagel on it and
 [reporting what happens](https://github.com/Extelligence-ai/bagel/issues) is the
 single most useful contribution.
@@ -50,7 +50,7 @@ single most useful contribution.
 ## Notes
 
 - Timestamps are exposed as **absolute epoch seconds** (the file's measurement
-  start time plus each sample's offset), consistent with every other Bagel source —
+  start time plus each sample's offset), consistent with every other Bagel source,
   so time windows and cross-source comparisons behave as expected.
 - Unnamed channel groups appear as `ChannelGroup_<index>`.
 - MDF4 files with DBC-referenced CAN raw frames inside are best decoded by your

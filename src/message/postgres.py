@@ -77,9 +77,7 @@ class MessageDataset(base.MessageDataset):
         ]
         # UNION ALL BY NAME lines up shared columns and fills missing structs with NULL.
         query = " UNION ALL BY NAME ".join(f"({select})" for select in selects)
-        return duckdb.sql(
-            f'{query} ORDER BY "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}"'
-        )
+        return duckdb.sql(f'{query} ORDER BY "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}"')
 
     def _messages(
         self,

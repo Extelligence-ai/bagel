@@ -93,9 +93,7 @@ class MessageDataset(base.MessageDataset):
             select = f'SELECT * FROM "{alias}"'  # noqa: S608
             combined = select if combined is None else f"{combined} UNION ALL BY NAME {select}"
 
-        return duckdb.sql(
-            f'{combined} ORDER BY "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}"'
-        )
+        return duckdb.sql(f'{combined} ORDER BY "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}"')
 
     def _messages(
         self,

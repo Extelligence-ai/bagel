@@ -99,9 +99,7 @@ def test_sink_decodes_sparkplug_topics_end_to_end(make_sink) -> None:  # noqa: A
 
 
 def test_sparkplug_disabled_falls_back_to_raw(make_sink) -> None:  # noqa: ANN001
-    sink = make_sink(
-        retained={SP_TOPIC: [_payload(temperature=85.0)]}, sparkplug_b=False
-    )
+    sink = make_sink(retained={SP_TOPIC: [_payload(temperature=85.0)]}, sparkplug_b=False)
     assert sink._type_name(SP_TOPIC) == "mqtt/json"
     struct = sink._struct(SP_TOPIC)
     assert "payload" in struct.names  # binary protobuf treated as opaque text
