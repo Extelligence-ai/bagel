@@ -9,13 +9,29 @@ The data source `path` is a standard connection URL, e.g.
 """
 
 import functools
+import re
 import uuid
 from typing import Any
+from urllib.parse import urlsplit
 
 import duckdb
 from pydantic import BaseModel, Field
 
 from src.di import module
+from src.source.redact import REDACTED, redact_url, scrub_secrets
+
+# Matches a `user:password@` fragment embedded anywhere in arbitrary text (e.g. an
+# underlying driver's own error message that re-embeds a raw connection string).
+# Used as a defense-in-depth fallback that doesn't require knowing the password
+# value ahead of time -- unlike `scrub_secrets`, it works even when the DSN is too
+# malformed for `urlsplit` to parse it out.
+_EMBEDDED_USERINFO_RE = re.compile(r"(://[^:@/\s]+:)([^@/\s]+)(@)")
+
+
+def _scrub_embedded_userinfo(text: str) -> str:
+    """Redact any `scheme://user:password@` fragment found within `text`."""
+    return _EMBEDDED_USERINFO_RE.sub(rf"\1{REDACTED}\3", text)
+
 
 EXCLUDED_SCHEMAS = (
     "pg_catalog",
@@ -55,9 +71,7 @@ def attach(url: str) -> str:
     duckdb.load_extension("postgres")
     name = attach_name(url)
     safe_url = url.replace("'", "''")
-    duckdb.execute(
-        f"ATTACH IF NOT EXISTS '{safe_url}' AS {name} (TYPE postgres, READ_ONLY)"
-    )
+    duckdb.execute(f"ATTACH IF NOT EXISTS '{safe_url}' AS {name} (TYPE postgres, READ_ONLY)")
     return name
 
 
@@ -152,7 +166,39 @@ class SourceFactory:
         try:
             attach(path)
         except duckdb.Error as error:
-            raise ConnectionError(f"Cannot connect to '{path}': {error}") from error
+            # DuckDB's postgres extension embeds the *raw* connection string (password
+            # included) in its own error message, so redacting `path` alone is not
+            # enough -- scrub the actual password out of the combined message too.
+            # `urlsplit` can itself raise `ValueError` on a malformed host (e.g. an
+            # unbalanced IPv6 bracket); if it did we'd be inside this `except` block,
+            # so Python would chain the original `error` -- password and all -- onto
+            # that new ValueError as `__context__`, leaking the password via the
+            # traceback even though this handler never raises `ConnectionError`
+            # normally. Guard the extraction so that can't happen: no password just
+            # means `scrub_secrets` below is a harmless no-op (the regex fallback
+            # below still catches it).
+            try:
+                password = urlsplit(path).password
+            except ValueError:
+                password = None
+            message = _scrub_embedded_userinfo(
+                scrub_secrets(
+                    f"Cannot connect to '{redact_url(path)}': {error}",
+                    password,
+                )
+            )
+            # `raise ... from error` chains the *original*, unmodified `error` into
+            # the traceback too, so scrub its own message in place -- otherwise the
+            # password survives in the "above exception" section of a full
+            # traceback dump regardless of how well `message` above is redacted.
+            if error.args:
+                error.args = tuple(
+                    _scrub_embedded_userinfo(scrub_secrets(arg, password))
+                    if isinstance(arg, str)
+                    else arg
+                    for arg in error.args
+                )
+            raise ConnectionError(message) from error
 
     @property
     def path(self) -> str:
@@ -187,7 +233,7 @@ class SourceFactory:
                     ],
                 }
             )
-        return {"url_host": self._url.split("@")[-1], "tables": tables}
+        return {"url": redact_url(self._url), "tables": tables}
 
 
 def register() -> None:

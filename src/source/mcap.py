@@ -36,9 +36,7 @@ def decompress(file: pathlib.Path) -> pathlib.Path:
     re-decompressed while repeat reads are free. The source file is never modified.
     """
     stat = file.stat()
-    key = str(
-        uuid.uuid5(uuid.NAMESPACE_OID, f"{file.resolve()}_{stat.st_size}_{stat.st_mtime_ns}")
-    )
+    key = str(uuid.uuid5(uuid.NAMESPACE_OID, f"{file.resolve()}_{stat.st_size}_{stat.st_mtime_ns}"))
     output = pathlib.Path(settings.CACHE_DIRECTORY) / "decompressed" / key / file.stem
     if output.exists():
         return output
@@ -64,8 +62,7 @@ class McapBag(BaseModel):
         else:
             candidates = sorted([*self.path.glob("*.mcap"), *self.path.glob("*.mcap.zstd")])
         return [
-            decompress(file) if file.name.endswith(".mcap.zstd") else file
-            for file in candidates
+            decompress(file) if file.name.endswith(".mcap.zstd") else file for file in candidates
         ]
 
     def __hash__(self) -> int:

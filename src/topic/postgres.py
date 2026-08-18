@@ -17,9 +17,7 @@ class TopicRegistry(base.TopicRegistry):
 
     def available_topics(self, data_source: PostgresDatabase) -> list[str]:
         """Return a list of available topic (table) names."""
-        return [
-            data_source.topic_of(schema, table) for schema, table in data_source.tables()
-        ]
+        return [data_source.topic_of(schema, table) for schema, table in data_source.tables()]
 
     def _require_topic(self, topic: str, data_source: PostgresDatabase) -> None:
         if topic not in self.available_topics(data_source):
@@ -51,9 +49,7 @@ class TopicRegistry(base.TopicRegistry):
         self._require_topic(topic, data_source)
         timestamp_column = data_source.timestamp_column(topic)
         lines = [f"table {topic} (timestamp column: {timestamp_column})"]
-        lines += [
-            f"  {name}: {type_}" for name, type_ in data_source.columns(topic)
-        ]
+        lines += [f"  {name}: {type_}" for name, type_ in data_source.columns(topic)]
         return "\n".join(lines)
 
 

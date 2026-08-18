@@ -186,8 +186,13 @@ INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 In a new terminal:
 
 ```bash
-claude mcp add --transport sse bagel http://0.0.0.0:8000/sse
+claude mcp add --transport sse bagel http://localhost:8000/sse
 ```
+
+> [!NOTE]
+> The MCP endpoint is bound to `localhost` only (not exposed to the LAN) for security.
+> To share it with other machines, drop the `127.0.0.1` prefix in `compose.yaml` and
+> put an authenticated proxy in front—see [SECURITY.md](./SECURITY.md).
 
 #### 3. Prompt
 
@@ -225,6 +230,21 @@ Bagel works with any MCP-enabled LLM. Setup runbooks for tested alternatives:
 Can’t find your LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues).
 
 </details>
+
+## 🔌 Claude Code plugin
+
+Bagel ships a Claude Code plugin: four skills that teach Claude when and how
+to drive the server (log triage, pipeline authoring, live sinks, visualization
+export) plus the MCP connection, wired automatically.
+
+```
+/plugin marketplace add Extelligence-ai/bagel
+/plugin install bagel@bagel
+```
+
+Then start the container for your data format (see Quickstart): the plugin
+connects to `http://localhost:8000/sse` by default. Any other MCP client can
+discover the same workflows server-side via the `list_agent_capabilities` tool.
 
 ## 🐶 Teach Bagel a New Trick
 

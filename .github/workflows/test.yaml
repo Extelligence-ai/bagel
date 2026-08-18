@@ -38,4 +38,66 @@ jobs:
       - name: Build ${{ matrix.service }}
         run: docker compose build ${{ matrix.service }} --build-arg DEV_MODE=true
       - name: Test ${{ matrix.service }}
-        run: docker compose run ${{ matrix.service }} uv run pytest -p no:warnings ./test
+        run: |
+          mkdir -p "${HOME}/.bagel/artifacts"
+          chmod 777 "${HOME}/.bagel/artifacts"
+          docker compose run --rm \
+            -e COVERAGE_FILE=/home/ubuntu/.bagel/artifacts/.coverage.${{ matrix.service }} \
+            ${{ matrix.service }} \
+            uv run pytest -p no:warnings --cov --cov-report= ./test
+          cp "${HOME}/.bagel/artifacts/.coverage.${{ matrix.service }}" \
+             "${{ github.workspace }}/.coverage.${{ matrix.service }}"
+      - name: Upload coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.service }}
+          path: .coverage.${{ matrix.service }}
+          include-hidden-files: true
+          if-no-files-found: warn
+
+  # Top-level test modules run on the host, not in the service images.
+  #
+  # The `docker` job runs pytest inside each image, and the Dockerfiles copy
+  # test paths in explicitly -- so anything at the root of test/ that isn't on
+  # those COPY lists never executes. That silently included the security guards
+  # for #158, which assert on files the images deliberately do not contain
+  # (compose.yaml, docker/Dockerfile.*, and a working directory with no .env),
+  # so copying them in was never an option. These modules are dependency-light
+  # and repo-shaped: the host is where they belong.
+  #
+  # The glob is non-recursive on purpose -- subdirectories of test/ need the
+  # per-service runtimes (ROS, PX4, ...) and stay with the `docker` job.
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.0"
+      - name: Install dependencies
+        run: uv sync
+      - name: Run top-level tests
+        run: uv run pytest -p no:warnings test/*.py
+
+  coverage-gate:
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install coverage
+        run: pip install "coverage>=7.0,<8.0"
+      - name: Download all coverage data
+        uses: actions/download-artifact@v4
+        with:
+          path: coverage-data
+          pattern: coverage-*
+          merge-multiple: true
+      - name: Combine and enforce floor
+        run: |
+          cp coverage-data/.coverage.* . 2>/dev/null || true
+          coverage combine
+          coverage report --fail-under=64

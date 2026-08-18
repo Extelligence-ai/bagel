@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Extelligence-ai/bagel",
+  "title": "Bagel",
+  "description": "Plain-English analysis of robotics, drone, and IoT data, with intelligent edge data reduction.",
+  "repository": {
+    "url": "https://github.com/Extelligence-ai/bagel",
+    "source": "github"
+  },
+  "version": "2.0.1",
+  "websiteUrl": "https://www.trybagel.com",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/extelligence-ai/bagel/ros2-kilted:2.0.1",
+      "transport": {
+        "type": "sse",
+        "url": "http://127.0.0.1:8000/sse"
+      }
+    }
+  ]
+}

@@ -68,7 +68,9 @@ class TopicRegistry(base.TopicRegistry):
         index = self._group_index(topic, data_source)
         fields = []
         for name in _channels(data_source, index):
-            signal = data_source.get(name, group=index, raw=False)
+            # One sample is enough for dtype/unit/comment; loading the full
+            # channel here made schema inference O(file) in memory (#134).
+            signal = data_source.get(name, group=index, raw=False, record_offset=0, record_count=1)
             fields.append(
                 pa.field(
                     name,

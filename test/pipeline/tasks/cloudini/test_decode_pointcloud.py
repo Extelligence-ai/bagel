@@ -17,7 +17,7 @@ def test_empty_topics_raises() -> None:
     with pytest.raises(ValueError, match="at least one"):
         DecodePointCloudTask(
             topics=[],
-            output_directory="/tmp/out",
+            output_directory="/tmp/out",  # noqa: S108
             wasm_path=WASM_PATH,
         )
 
@@ -55,7 +55,7 @@ def test_global_flag_enabled(mock_settings: MagicMock) -> None:
 def test_extract_raw_data_from_dict() -> None:
     task = DecodePointCloudTask(
         topics=["/lidar"],
-        output_directory="/tmp/out",
+        output_directory="/tmp/out",  # noqa: S108
         wasm_path=WASM_PATH,
     )
     assert task._extract_raw_data({"data": b"\x01\x02"}) == b"\x01\x02"
@@ -65,7 +65,7 @@ def test_extract_raw_data_from_dict() -> None:
 def test_extract_raw_data_from_object() -> None:
     task = DecodePointCloudTask(
         topics=["/lidar"],
-        output_directory="/tmp/out",
+        output_directory="/tmp/out",  # noqa: S108
         wasm_path=WASM_PATH,
     )
     msg = MagicMock()
@@ -76,7 +76,7 @@ def test_extract_raw_data_from_object() -> None:
 def test_extract_raw_data_from_list() -> None:
     task = DecodePointCloudTask(
         topics=["/lidar"],
-        output_directory="/tmp/out",
+        output_directory="/tmp/out",  # noqa: S108
         wasm_path=WASM_PATH,
     )
     msg = MagicMock()
