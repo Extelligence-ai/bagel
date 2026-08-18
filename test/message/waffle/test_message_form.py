@@ -1,5 +1,8 @@
 """Tests for the WaffleForm adapter family (hardware as code). EXPERIMENTAL BETA."""
 
+import os
+import pathlib
+
 import duckdb
 import pytest
 
@@ -88,3 +91,29 @@ def test_metadata_summarizes_the_form() -> None:
     assert metadata["robot"]["name"] == "warehouse-amr-07"
     assert metadata["categories"]["sensors"] == 2
     assert metadata["categories"]["software"] == 3
+
+
+def test_resnapped_form_is_a_new_snapshot(tmp_path: pathlib.Path) -> None:
+    # Same content re-snapped later must not reuse the older snapshot's cached
+    # rows: snap identity is content + snap time, not content alone.
+    sample = tmp_path / "robot.waffleform.yaml"
+    sample.write_text(pathlib.Path(SAMPLE).read_text(encoding="utf-8"), encoding="utf-8")
+    ds_type = resolve(str(sample))
+
+    def _snap() -> tuple[str, float]:
+        factory = module.provide(
+            f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": str(sample)}
+        )
+        registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", {})
+        dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+        timestamp, _ = dataset.to_duckdb(factory, registry, ["robot"]).fetchone()
+        return factory.uuid, timestamp
+
+    first_uuid, first_timestamp = _snap()
+    later = sample.stat().st_mtime + 3600
+    os.utime(sample, (later, later))
+    second_uuid, second_timestamp = _snap()
+
+    assert second_uuid != first_uuid
+    assert second_timestamp == pytest.approx(later)
+    assert first_timestamp != second_timestamp

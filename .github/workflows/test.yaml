@@ -92,6 +92,7 @@ jobs:
             test/pipeline \
             test/sink \
             test/message/automotive \
+            test/message/waffle \
             test/source/test_influxdb.py \
             test/source/test_postgres.py \
             test/logging/ros \

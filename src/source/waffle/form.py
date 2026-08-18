@@ -13,6 +13,7 @@ modification time as its timestamp. Accumulate snapshots (e.g. via a periodic
 """
 
 import pathlib
+import uuid
 from typing import Any
 
 import yaml
@@ -118,6 +119,16 @@ class SourceFactory(base.FileBasedSourceFactory):
         """
         super().__init__(path)
         self._form = WaffleForm(path, snap_seconds=self.path.stat().st_mtime)
+
+    @property
+    def uuid(self) -> str:
+        """Identify the snapshot by content and snap time.
+
+        The content hash alone is not enough: rows are stamped with the snap
+        time, so the same form re-snapped later is new data and must not hit
+        the previous snapshot's cached Arrow file.
+        """
+        return str(uuid.uuid5(uuid.NAMESPACE_OID, f"{super().uuid}_{self._form.snap_seconds}"))
 
     @property
     def metadata(self) -> dict[str, Any]:
