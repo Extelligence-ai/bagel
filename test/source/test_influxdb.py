@@ -29,10 +29,7 @@ requires_db = pytest.mark.skipif(
 
 
 def test_influxdb_urls_resolve() -> None:
-    assert (
-        data_source.resolve("influxdb://tok@h:8181/telemetry")
-        == data_source.DataSource.INFLUXDB
-    )
+    assert data_source.resolve("influxdb://tok@h:8181/telemetry") == data_source.DataSource.INFLUXDB
 
 
 def test_parse_url_with_token_and_port() -> None:

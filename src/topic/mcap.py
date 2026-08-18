@@ -174,9 +174,7 @@ class TopicRegistry(base.TopicRegistry):
                 )
                 for file_descriptor in file_descriptor_set.file:
                     pool.Add(file_descriptor)
-                descriptor = pool.FindMessageTypeByName(
-                    self.native_type_name(topic, data_source)
-                )
+                descriptor = pool.FindMessageTypeByName(self.native_type_name(topic, data_source))
                 return protobuf_schema.to_pa_struct(descriptor)
 
             case "jsonschema":

@@ -40,8 +40,30 @@ class Settings(BaseSettings):
     # Bytes per record batch in arrow files. Not always respected
     ARROW_RECORD_BATCH_SIZE_BYTES: int = 1 * GB
 
+    # Hard row-count ceiling per record batch. The byte target above is
+    # measured in Arrow bytes, but rows accumulate as Python objects (10-20x
+    # overhead) until a batch flushes; with small rows the byte target alone
+    # resolves to millions of buffered rows and can OOM the server (#134).
+    MAX_ARROW_RECORD_BATCH_SIZE_COUNT: int = 100_000
+
     # Bytes per topic buffer in a topic sink. Always respected
     JSONL_BUFFER_SIZE_PER_TOPIC_BYTES: int = 1 * GB
+
+    # Max total bytes of cached .arrow query results under
+    # <CACHE_DIRECTORY>/data/source_id=*/ . When a new cache file is about to
+    # be written and the total exceeds this, the oldest-by-access files are
+    # deleted first (cache entries are derived data and rebuild on demand).
+    # 0 disables eviction. Live sink buffers, repos, and ARTIFACT_DIRECTORY
+    # are never touched by eviction.
+    CACHE_MAX_BYTES: int = 20 * GB
+
+    # Max total nominal buffer bytes across all subscribed topics of one live
+    # sink. 0 = unbounded (the historical behavior). When set, subscribe()
+    # refuses new topics that would exceed it with BufferCapacityExceededError
+    # instead of silently growing; note on-disk usage can transiently reach 2x
+    # nominal because a rotated overflow file is retained until the next
+    # rotation.
+    SINK_TOTAL_BUFFER_BYTES: int = 0
 
     # Number of messages to buffer in rosbridge before sending over the WebSocket
     ROSBRIDGE_QUEUE_LENGTH: int = 1000

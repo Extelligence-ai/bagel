@@ -136,6 +136,11 @@ class TopicBufferWriter:
             )
 
     @property
+    def buffer_size_bytes(self) -> int | None:
+        """The configured maximum buffer size in bytes; None means unbounded."""
+        return self._buffer_size_bytes
+
+    @property
     def topic(self) -> str:
         """Topic name for the messages held by this buffer."""
         return self._topic

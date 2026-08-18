@@ -277,6 +277,8 @@ class TopicSink(base.TopicSink):
             TopicNotFoundError: If a wildcard matches no discovered topic.
             ValueError: If a pipeline is attached to a wildcard matching several topics
                 (a pipeline's cadence is defined over exactly one topic).
+            BufferCapacityExceededError: If SINK_TOTAL_BUFFER_BYTES is set and this
+                subscription would exceed it.
 
         """
         if extract_timestamp is None and self._timestamp_field is not None:
