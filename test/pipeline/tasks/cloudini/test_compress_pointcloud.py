@@ -58,8 +58,11 @@ def test_builds_correct_compress_command(
     monkeypatch.setattr(settings, "ARTIFACT_DIRECTORY", str(tmp_path / "artifacts"))
     task = _task(tmp_path)
 
-    with patch("subprocess.run") as run:
-        run.return_value = MagicMock(args=[], stdout="")
+    def write_output(command: list[str], **kwargs: object) -> MagicMock:
+        pathlib.Path(command[command.index("-o") + 1]).write_bytes(b"mcap")
+        return MagicMock(args=command, stdout="")
+
+    with patch("subprocess.run", side_effect=write_output) as run:
         result = task.execute(asof_seconds=1.0, lookback=None)
 
     assert run.call_count == 1
@@ -67,7 +70,7 @@ def test_builds_correct_compress_command(
     assert command[0] == CLOUDINI_CONVERTER
     assert command[1:3] == ["-f", task.path]
     assert command[3] == "-o"
-    assert command[-1] == "-c"  # compression mode
+    assert command[-2:] == ["-c", "-y"]  # compression mode, non-interactive overwrite
     assert command[4].endswith(".mcap")
     assert result == [pathlib.Path(command[4])]
 
@@ -78,3 +81,42 @@ def test_converter_available_true_when_enabled_and_present(
     monkeypatch.setattr(settings, "CLOUDINI_ENABLED", True)
     with patch("shutil.which", return_value="/usr/local/bin/cloudini_rosbag_converter"):
         assert _converter_available() is True
+
+
+@patch("shutil.which", return_value="/usr/bin/mcap_converter")
+def test_command_passes_yes_flag_for_deterministic_retries(
+    _which: MagicMock, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Copilot on #142: artifact_path is deterministic, so a retry finds the
+    previous output in place; without -y the converter prompts (and blocks a
+    non-interactive pipeline) instead of overwriting."""
+    monkeypatch.setattr(settings, "CLOUDINI_ENABLED", True)
+    monkeypatch.setattr(settings, "ARTIFACT_DIRECTORY", str(tmp_path / "artifacts"))
+    task = _task(tmp_path)
+
+    def write_output(command: list[str], **kwargs: object) -> MagicMock:
+        pathlib.Path(command[command.index("-o") + 1]).write_bytes(b"mcap")
+        return MagicMock(args=command, stdout="")
+
+    with patch("subprocess.run", side_effect=write_output) as run:
+        task.execute(asof_seconds=1.0, lookback=None)
+
+    assert "-y" in run.call_args.args[0]
+
+
+@patch("shutil.which", return_value="/usr/bin/mcap_converter")
+def test_missing_output_returns_no_artifact(
+    _which: MagicMock, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Copilot on #142: the converter exits 0 without writing anything when
+    the bag has no pointcloud topics; the task must not report a nonexistent
+    artifact (uploads would raise FileNotFoundError)."""
+    monkeypatch.setattr(settings, "CLOUDINI_ENABLED", True)
+    monkeypatch.setattr(settings, "ARTIFACT_DIRECTORY", str(tmp_path / "artifacts"))
+    task = _task(tmp_path)
+
+    with patch("subprocess.run") as run:
+        run.return_value = MagicMock(args=[], stdout="")
+        result = task.execute(asof_seconds=1.0, lookback=None)
+
+    assert result is None

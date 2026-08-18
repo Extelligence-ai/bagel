@@ -122,8 +122,9 @@ pointcloud field names.
 The reverse of decoding: shrink a bag's pointcloud topics for storage or transfer. The
 `compress_pointcloud` task wraps cloudini's `cloudini_rosbag_converter`, converting every
 `sensor_msgs/PointCloud2` topic in a ROS2 MCAP bag into the much smaller
-`point_cloud_interfaces/CompressedPointCloud2`. Other topics pass through unchanged, and
-Bagel can still read the result (it decodes cloudini on the way in).
+`point_cloud_interfaces/CompressedPointCloud2`. Other topics pass through unchanged. To
+analyze the compressed topics afterwards, run the `decode_pointcloud` task on the
+result (see above): Bagel does not decode cloudini transparently during ingestion.
 
 ### Requirements
 

@@ -34,8 +34,9 @@ class CompressPointCloud(base.ArtifactMixin, base.Task):
     Wraps cloudini's ``cloudini_rosbag_converter -f <in> -o <out> -c``, which rewrites
     every ``sensor_msgs/PointCloud2`` topic in an MCAP bag as the much smaller
     ``point_cloud_interfaces/CompressedPointCloud2`` encoding; all other topics pass
-    through unchanged. This is the inverse of the ``decode_pointcloud`` task, and the
-    compressed bag can still be read by Bagel, which decodes cloudini on the way in.
+    through unchanged. To analyze the compressed topics with Bagel afterwards, run the
+    ``decode_pointcloud`` task on the result (see the cloudini runbook): Bagel does not
+    decode cloudini transparently during ingestion.
 
     The source must be a ROS2 MCAP bag. The ``cloudini_rosbag_converter`` binary must be
     on PATH; if it is missing, or cloudini is disabled via ``CLOUDINI_ENABLED``, the task
@@ -67,7 +68,10 @@ class CompressPointCloud(base.ArtifactMixin, base.Task):
             return None
 
         output_file = self.artifact_path(asof_seconds, ".mcap")
-        command = [CLOUDINI_CONVERTER, "-f", str(self.path), "-o", str(output_file), "-c"]
+        # -y: artifact_path is deterministic, so a retry finds the previous
+        # output in place; without it the converter prompts and a
+        # non-interactive pipeline blocks (Copilot on #142).
+        command = [CLOUDINI_CONVERTER, "-f", str(self.path), "-o", str(output_file), "-c", "-y"]
 
         result = subprocess.run(  # noqa: S603
             command,
@@ -79,6 +83,12 @@ class CompressPointCloud(base.ArtifactMixin, base.Task):
         logging.debug(shlex.join(result.args))
         if result.stdout.strip():
             logging.debug(result.stdout.strip())
+        if not output_file.exists():
+            # The converter exits 0 without writing when the bag has no
+            # pointcloud topics; reporting a nonexistent artifact would make
+            # a downstream upload raise FileNotFoundError (Copilot on #142).
+            logging.info("No pointcloud topics in %s; nothing to compress.", self.path)
+            return None
         logging.info("Wrote %s", output_file)
 
         return [output_file]
