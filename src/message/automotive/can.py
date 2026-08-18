@@ -25,7 +25,7 @@ class MessageDataset(base.MessageDataset):
         end_seconds_inclusive: float | None,
     ) -> Iterator[tuple[str, float, dict[str, Any]]]:
         wanted = set(topics)
-        for timestamp, name, decoded in data_source.records(
+        for timestamp, name, decoded in data_source.iter_records(
             start_seconds_inclusive, end_seconds_inclusive
         ):
             if name not in wanted:

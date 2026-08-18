@@ -278,3 +278,42 @@ def test_record_batches_row_count_is_clamped() -> None:
     cap = settings.MAX_ARROW_RECORD_BATCH_SIZE_COUNT
     oversized = [batch.num_rows for batch in batches if batch.num_rows > cap]
     assert not oversized, f"batches exceed the row cap ({cap}): {oversized}"
+
+
+def test_can_iter_records_streams_in_order(valid_asc_and_dbc: tuple) -> None:
+    """Codex review on #156: the CAN path must stream into Arrow batching.
+
+    records() materializes the full decoded list, so the record-batch row
+    clamp cannot bound CAN captures. iter_records() streams with a bounded
+    reorder heap instead; on (near-)chronological captures its output equals
+    the fully sorted list.
+    """
+    import inspect
+
+    from src.source.automotive import can as can_source
+
+    capture, dbc = valid_asc_and_dbc
+    log = can_source.CanLog(path=str(capture), dbc=str(dbc))
+    assert inspect.isgenerator(log.iter_records())
+    assert list(log.iter_records()) == log.records()
+    everything = log.records()
+    mid = everything[len(everything) // 2][0]
+    assert list(log.iter_records(start_seconds=mid)) == log.records(start_seconds=mid)
+
+
+def test_can_message_layer_streams_not_materializes(
+    valid_asc_and_dbc: tuple, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_messages must consume the streaming iterator, never the full list."""
+    from src.message.automotive.can import MessageDataset as CanMessages
+    from src.source.automotive import can as can_source
+
+    capture, dbc = valid_asc_and_dbc
+    log = can_source.CanLog(path=str(capture), dbc=str(dbc))
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("_messages must not materialize via records()")
+
+    monkeypatch.setattr(log, "records", _boom)
+    messages = list(CanMessages()._messages(log, ["EngineData"], None, None))
+    assert messages, "expected streamed messages"

@@ -7,6 +7,7 @@ raw bus capture becomes queryable like any other source. Requires the optional
 """
 
 import functools
+import heapq
 import logging
 import math
 import pathlib
@@ -140,6 +141,35 @@ class CanLog:
     def topic_message_counts(self) -> dict[str, int]:
         """Decoded frame count per DBC message name, from the same pass as `stats` (#134)."""
         return self._frame_stats[3]
+
+    def iter_records(
+        self,
+        start_seconds: float | None = None,
+        end_seconds: float | None = None,
+        reorder_buffer: int = 10_000,
+    ) -> Iterator[tuple[float, str, dict[str, Any]]]:
+        """Stream windowed records in timestamp order with bounded memory.
+
+        CAN captures are written (near-)chronologically; a bounded min-heap
+        absorbs local interleave across channels. A frame more than
+        ``reorder_buffer`` positions out of order would be yielded late, but
+        captures that disordered are not produced by known tooling. Peak
+        memory is the heap, not the capture (Codex review on #156).
+        """
+        heap: list[tuple[float, int, tuple[float, str, dict[str, Any]]]] = []
+        counter = 0
+        for record in self._decoded_frames():
+            timestamp = record[0]
+            if start_seconds is not None and timestamp < start_seconds:
+                continue
+            if end_seconds is not None and timestamp > end_seconds:
+                continue
+            heapq.heappush(heap, (timestamp, counter, record))
+            counter += 1
+            if len(heap) > reorder_buffer:
+                yield heapq.heappop(heap)[2]
+        while heap:
+            yield heapq.heappop(heap)[2]
 
     def records(
         self, start_seconds: float | None = None, end_seconds: float | None = None
