@@ -30,6 +30,7 @@ class DataSource(Enum):
     ROS_LOG = "ros.log"
     MDF = "automotive.mf4"
     CAN = "automotive.can"
+    WAFFLE_FORM = "waffle.form"
 
 
 # URL schemes mapped to their data source types.
@@ -87,6 +88,8 @@ def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # n
     elif is_ros_log_file(path) or is_ros_log_directory(path):
         # Checked before JSON/CSV: free-form log lines can fool the CSV sniffer.
         return DataSource.ROS_LOG
+    elif is_waffleform_file(path):
+        return DataSource.WAFFLE_FORM
     elif is_json_file(path) or is_json_directory(path):
         return DataSource.PYARROW_JSON
     elif is_csv_file(path) or is_csv_directory(path):
@@ -330,6 +333,17 @@ def is_ros_log_directory(path: pathlib.Path) -> bool:
     if not path.is_dir():
         return False
     return any(is_ros_log_file(file) for file in sorted(path.glob("**/*.log")))
+
+
+def is_waffleform_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a waffle-iron WaffleForm (hardware-as-code) file."""
+    if not path.is_file() or not path.name.endswith(".waffleform.yaml"):
+        return False
+    try:
+        content = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return False
+    return isinstance(content, dict) and "robot" in content
 
 
 def is_json_file(path: pathlib.Path) -> bool:
