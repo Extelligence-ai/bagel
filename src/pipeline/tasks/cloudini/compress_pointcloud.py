@@ -38,6 +38,10 @@ class CompressPointCloud(base.ArtifactMixin, base.Task):
     ``decode_pointcloud`` task on the result (see the cloudini runbook): Bagel does not
     decode cloudini transparently during ingestion.
 
+    Compression uses cloudini's built-in default quantization: the converter
+    CLI exposes no resolution option (verified against cloudini_ros), so the
+    ``CLOUDINI_DEFAULT_RESOLUTION`` setting does not apply to this task.
+
     The source must be a ROS2 MCAP bag. The ``cloudini_rosbag_converter`` binary must be
     on PATH; if it is missing, or cloudini is disabled via ``CLOUDINI_ENABLED``, the task
     logs and skips rather than failing the pipeline.

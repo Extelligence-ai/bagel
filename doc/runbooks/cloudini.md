@@ -157,4 +157,4 @@ These settings are configured in `.env` or as environment variables:
 | Setting                      | Default | Description                                        |
 | ---------------------------- | ------- | -------------------------------------------------- |
 | `CLOUDINI_ENABLED`           | `true`  | Global toggle for cloudini decoding                |
-| `CLOUDINI_DEFAULT_RESOLUTION`| `0.001` | Default quantization resolution in meters (1 mm)   |
+| `CLOUDINI_DEFAULT_RESOLUTION`| `0.001` | Reserved: not currently applied by any task. The compress task uses the converter's built-in quantization (its CLI has no resolution option) |
