@@ -77,3 +77,23 @@ def run_server(server: Any, transport: str, host: str, port: int) -> None:  # no
         server.run(transport=transport, host=host, port=port)
     else:
         server.run(transport=transport)
+
+
+def tool_annotations(*, read_only: bool, idempotent: bool = True) -> Any:  # noqa: ANN401 -- SDK type varies by major version
+    """Behavior annotations for a tool, or None if the SDK predates them.
+
+    Bagel's toolset never deletes user data and never touches the open
+    internet (the server is localhost-only; the sole outbound integration,
+    Slack notify, is a pipeline task the user configures, not a tool), so
+    destructive and open-world are always false.
+    """
+    try:
+        from mcp.types import ToolAnnotations
+    except ImportError:  # pragma: no cover -- SDK without annotations
+        return None
+    return ToolAnnotations(
+        readOnlyHint=read_only,
+        destructiveHint=False,
+        idempotentHint=idempotent,
+        openWorldHint=False,
+    )

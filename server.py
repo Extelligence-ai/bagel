@@ -56,6 +56,7 @@ server = mcp_compat.create_server(
         "and a list of available topics. "
         "Excludes: detailed topic definitions or actual messages."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Generate a structured summary of a data source.
@@ -107,6 +108,7 @@ def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[
         "Includes: short summary, DuckDB schema, original IDL definition, and "
         "guidelines for SQL queries. Excludes: actual topic data."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def describe_topic(
     path: str, topic: str, args: dict[str, Any] | None = None
@@ -171,6 +173,7 @@ def describe_topic(
         "Use this tool to answer user questions about message data, "
         "including filtering, aggregation, and downsampling."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def query_messages(  # noqa: PLR0913
     path: str,
@@ -235,6 +238,7 @@ def query_messages(  # noqa: PLR0913
         "Extract INFO, WARN, and ERROR messages from a data source. "
         "Supports optional time filtering. Use for debugging or diagnostics."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def read_loggings(
     path: str,
@@ -290,6 +294,7 @@ def read_loggings(
         "Use this tool to inspect a live data stream and list the topics that "
         "can be subscribed to. Helpful before starting a subscription."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def list_live_topics(
     type_: str,
@@ -346,6 +351,7 @@ def list_live_topics(
         "pipeline config to create a STANDING pipeline that runs on incoming messages -- "
         "e.g. an on_event cadence that captures and uploads a window around every anomaly."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False),
 )
 def subscribe_live_topics(  # noqa: PLR0913
     type_: str,
@@ -418,6 +424,7 @@ def subscribe_live_topics(  # noqa: PLR0913
         "output formats. Optional context values can be injected to customize "
         "its behavior."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def run_poml_capability(
     poml_path: str,
@@ -469,6 +476,7 @@ def run_poml_capability(
         "`summary`. Use this to discover available capabilities instead of "
         "guessing file paths."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def list_agent_capabilities() -> list[dict[str, str]]:
     """List the POML capability files shipped under ``src/agent``.
@@ -500,6 +508,7 @@ def list_agent_capabilities() -> list[dict[str, str]]:
         "short summary. Use this before authoring a pipeline so the correct `module` "
         "and `args` are chosen instead of guessed."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def list_pipeline_capabilities(include_unavailable: bool = False) -> list[dict[str, Any]]:
     """List the tasks and gates that can be composed into a pipeline.
@@ -537,6 +546,7 @@ def list_pipeline_capabilities(include_unavailable: bool = False) -> list[dict[s
         "pre/post windows around them, merges overlaps, and reports how much data would "
         "be kept. Use this to audit a reduce/snippet pipeline before running it."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def preview_pipeline(  # noqa: PLR0913
     path: str,
@@ -615,6 +625,7 @@ def preview_pipeline(  # noqa: PLR0913
         "Persist a pipeline configuration to a YAML file so it can be reused, edited, or "
         "run later with `run.py`. Returns the path to the written file."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
 def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines") -> str:
     """Write a pipeline configuration to a YAML file.
@@ -658,6 +669,7 @@ def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines
         "produced. Prefer running `preview_pipeline` first for event-driven reductions so "
         "the effect is audited before anything is written."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
 def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
     """Build and run a pipeline, returning the artifacts it produced.
@@ -693,6 +705,7 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
         "source is reported but does not stop the batch. Returns per-source results and a "
         "summary. For an event reduction, preview a representative source first."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
 def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, Any]:
     """Run a pipeline config against every matching data source.
@@ -730,6 +743,7 @@ def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, An
         "already plotted and zoomed. Use after preview_pipeline to hand an event to a "
         "human for visual inspection."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
 def export_for_plotjuggler(  # noqa: PLR0913
     path: str,
@@ -801,6 +815,7 @@ def export_for_plotjuggler(  # noqa: PLR0913
         "Rerun viewer. Use after preview_pipeline to hand an event to a human for "
         "visual inspection. Needs the optional rerun-sdk dependency (uv sync --group viz)."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
 def export_for_rerun(  # noqa: PLR0913
     path: str,
@@ -871,6 +886,7 @@ def export_for_rerun(  # noqa: PLR0913
         "ranges pre-set. Works in Lichtblick (open source) and Foxglove, which share "
         "the layout format. Use after preview_pipeline to hand an event to a human."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
 def export_for_lichtblick(  # noqa: PLR0913
     path: str,
@@ -943,6 +959,7 @@ def export_for_lichtblick(  # noqa: PLR0913
         "Beta: load-tests clean with the lerobot package; awaiting validation by "
         "real training runs."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
 def export_for_lerobot(  # noqa: PLR0913
     path: str,
@@ -1019,6 +1036,7 @@ def export_for_lerobot(  # noqa: PLR0913
         "CLI on PATH (cargo install waffle-iron). The WaffleForm it writes is "
         "immediately queryable as a data source."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False),
 )
 def snap_hardware(directory: str = ".") -> dict[str, Any]:
     """Snapshot live hardware state via waffle-iron.
