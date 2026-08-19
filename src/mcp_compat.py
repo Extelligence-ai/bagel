@@ -79,13 +79,20 @@ def run_server(server: Any, transport: str, host: str, port: int) -> None:  # no
         server.run(transport=transport)
 
 
-def tool_annotations(*, read_only: bool, idempotent: bool = True) -> Any:  # noqa: ANN401 -- SDK type varies by major version
+def tool_annotations(
+    *,
+    read_only: bool,
+    idempotent: bool = True,
+    destructive: bool = False,
+    open_world: bool = False,
+) -> Any:  # noqa: ANN401 -- SDK type varies by major version
     """Behavior annotations for a tool, or None if the SDK predates them.
 
-    Bagel's toolset never deletes user data and never touches the open
-    internet (the server is localhost-only; the sole outbound integration,
-    Slack notify, is a pipeline task the user configures, not a tool), so
-    destructive and open-world are always false.
+    Most of the toolset reads local files or writes local artifacts, but a
+    tool that can reach caller-selected endpoints (live brokers, pipeline
+    notify tasks) is open-world, one that can unlink existing files
+    (subscribe overwrite) is destructive, and one whose retry can repeat an
+    externally visible action (pipeline notify) is not idempotent.
     """
     try:
         from mcp.types import ToolAnnotations
@@ -93,7 +100,7 @@ def tool_annotations(*, read_only: bool, idempotent: bool = True) -> Any:  # noq
         return None
     return ToolAnnotations(
         readOnlyHint=read_only,
-        destructiveHint=False,
+        destructiveHint=destructive,
         idempotentHint=idempotent,
-        openWorldHint=False,
+        openWorldHint=open_world,
     )

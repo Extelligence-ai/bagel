@@ -294,7 +294,7 @@ def read_loggings(
         "Use this tool to inspect a live data stream and list the topics that "
         "can be subscribed to. Helpful before starting a subscription."
     ),
-    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+    annotations=mcp_compat.tool_annotations(read_only=True, open_world=True),
 )
 def list_live_topics(
     type_: str,
@@ -351,7 +351,9 @@ def list_live_topics(
         "pipeline config to create a STANDING pipeline that runs on incoming messages -- "
         "e.g. an on_event cadence that captures and uploads a window around every anomaly."
     ),
-    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False),
+    annotations=mcp_compat.tool_annotations(
+        read_only=False, idempotent=False, destructive=True, open_world=True
+    ),
 )
 def subscribe_live_topics(  # noqa: PLR0913
     type_: str,
@@ -669,7 +671,7 @@ def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines
         "produced. Prefer running `preview_pipeline` first for event-driven reductions so "
         "the effect is audited before anything is written."
     ),
-    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False, open_world=True),
 )
 def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
     """Build and run a pipeline, returning the artifacts it produced.
@@ -705,7 +707,7 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
         "source is reported but does not stop the batch. Returns per-source results and a "
         "summary. For an event reduction, preview a representative source first."
     ),
-    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False, open_world=True),
 )
 def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, Any]:
     """Run a pipeline config against every matching data source.

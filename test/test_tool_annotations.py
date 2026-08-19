@@ -1,61 +1,53 @@
 """Every MCP tool must declare behavior annotations (OpenAI marketplace MCP checks).
 
-readOnlyHint separates the query/describe surface from the artifact writers;
-nothing in the toolset deletes user data or touches the open internet, so
-destructiveHint and openWorldHint are false across the board -- asserting that
-here keeps a future tool from shipping without making the claim consciously.
+The matrix below is the source of truth reviewers and clients rely on:
+read-only vs writer, whether a retry can repeat an externally visible action
+(idempotent), whether existing files can be unlinked (destructive), and
+whether caller-selected external endpoints can be reached (open-world).
+A new tool fails here until it classifies itself.
 """
 
 import server
 
-READ_ONLY_TOOLS = {
-    "describe_data_source",
-    "describe_topic",
-    "query_messages",
-    "read_loggings",
-    "list_live_topics",
-    "run_poml_capability",
-    "list_agent_capabilities",
-    "list_pipeline_capabilities",
-    "preview_pipeline",
-}
-
-WRITER_TOOLS = {
-    "subscribe_live_topics",
-    "save_pipeline",
-    "run_pipeline",
-    "run_pipeline_batch",
-    "export_for_plotjuggler",
-    "export_for_rerun",
-    "export_for_lichtblick",
-    "export_for_lerobot",
-    "snap_hardware",
+# name: (read_only, idempotent, destructive, open_world)
+EXPECTED = {
+    "describe_data_source": (True, True, False, False),
+    "describe_topic": (True, True, False, False),
+    "query_messages": (True, True, False, False),
+    "read_loggings": (True, True, False, False),
+    "list_live_topics": (True, True, False, True),
+    "subscribe_live_topics": (False, False, True, True),
+    "run_poml_capability": (True, True, False, False),
+    "list_agent_capabilities": (True, True, False, False),
+    "list_pipeline_capabilities": (True, True, False, False),
+    "preview_pipeline": (True, True, False, False),
+    "save_pipeline": (False, True, False, False),
+    "run_pipeline": (False, False, False, True),
+    "run_pipeline_batch": (False, False, False, True),
+    "export_for_plotjuggler": (False, True, False, False),
+    "export_for_rerun": (False, True, False, False),
+    "export_for_lichtblick": (False, True, False, False),
+    "export_for_lerobot": (False, True, False, False),
+    "snap_hardware": (False, False, False, False),
 }
 
 
 def _tools() -> dict:
-    return {name: tool for name, tool in server.server._tool_manager._tools.items()}
+    return dict(server.server._tool_manager._tools.items())
 
 
 def test_every_tool_is_classified() -> None:
-    assert set(_tools()) == READ_ONLY_TOOLS | WRITER_TOOLS
+    assert set(_tools()) == set(EXPECTED)
 
 
-def test_read_only_tools_are_annotated_read_only() -> None:
-    for name in READ_ONLY_TOOLS:
+def test_annotations_match_the_declared_matrix() -> None:
+    for name, (read_only, idempotent, destructive, open_world) in EXPECTED.items():
         annotations = _tools()[name].annotations
         assert annotations is not None, f"{name} has no annotations"
-        assert annotations.readOnlyHint is True, name
-
-
-def test_writer_tools_are_annotated_as_local_writers() -> None:
-    for name in WRITER_TOOLS:
-        annotations = _tools()[name].annotations
-        assert annotations is not None, f"{name} has no annotations"
-        assert annotations.readOnlyHint is False, name
-
-
-def test_no_tool_claims_destructive_or_open_world_behavior() -> None:
-    for name, tool in _tools().items():
-        assert tool.annotations.destructiveHint is False, name
-        assert tool.annotations.openWorldHint is False, name
+        got = (
+            annotations.readOnlyHint,
+            annotations.idempotentHint,
+            annotations.destructiveHint,
+            annotations.openWorldHint,
+        )
+        assert got == (read_only, idempotent, destructive, open_world), name
