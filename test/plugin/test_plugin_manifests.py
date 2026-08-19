@@ -14,7 +14,10 @@ def test_plugin_manifest_is_valid_json_with_required_fields() -> None:
 def test_bundled_mcp_config_points_at_default_local_server() -> None:
     config = json.loads(pathlib.Path("plugin/.mcp.json").read_text())
     bagel = config["mcpServers"]["bagel"]
-    assert bagel["url"] == "http://localhost:8000/sse"
+    # Streamable HTTP: natively supported by Claude Code AND Codex (#168);
+    # the default server serves it alongside legacy /sse.
+    assert bagel["url"] == "http://localhost:8000/mcp"
+    assert bagel["type"] == "http"
 
 
 def test_marketplace_lists_the_plugin() -> None:

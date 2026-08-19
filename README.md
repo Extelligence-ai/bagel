@@ -357,9 +357,6 @@ Rough edges we know about, so you don't find them the hard way:
   event-window duration over total duration: quiet recordings reduce dramatically,
   eventful ones much less. The figures in this README are illustrative demo output,
   not a measured benchmark.
-- **SSE is the documented transport.** Streamable HTTP is already wired
-  (`MCP_TRANSPORT=streamable-http`), but compose does not forward the setting and
-  no client runbook covers it yet, so SSE is the supported path today (#168).
 - **No authentication on the MCP endpoint.** By design it binds to localhost only;
   treat it like a database socket and see [SECURITY.md](./SECURITY.md) before
   sharing it beyond your machine.

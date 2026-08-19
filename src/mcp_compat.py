@@ -11,6 +11,7 @@ major version. Verified against `mcp==2.0.0b1` and the pinned 1.x release.
 See https://blog.modelcontextprotocol.io/posts/sdk-betas-2026-07-28/.
 """
 
+import inspect
 from typing import Any
 
 try:  # mcp >= 2.0
@@ -35,12 +36,43 @@ def create_server(name: str, host: str, port: int, instructions: str | None = No
     return _Server(name=name, instructions=instructions, host=host, port=port)
 
 
-def run_server(server: Any, transport: str, host: str, port: int) -> None:  # noqa: ANN401
-    """Run the server on the given transport ("sse" or "streamable-http").
+def combined_app(server: Any, host: str | None = None) -> Any:  # noqa: ANN401
+    """One ASGI app serving both transports: /sse (+ /messages/) and /mcp.
 
-    v2 accepts host/port as transport kwargs; v1 already received them at
-    construction and accepts only the transport name.
+    Codex's native MCP client speaks only streamable HTTP, while the setup
+    runbooks and existing user configs speak SSE. Route sets are disjoint, so
+    the streamable app (whose lifespan owns the session manager) absorbs the
+    SSE routes.
+
+    On SDK v2 the app factories take the host and use it for DNS-rebinding
+    validation; without it a non-loopback bind rejects LAN requests with 421.
+    v1 factories take no arguments (host arrived at construction).
     """
+
+    def _build(factory: Any) -> Any:  # noqa: ANN401
+        if host is not None and "host" in inspect.signature(factory).parameters:
+            return factory(host=host)
+        return factory()
+
+    http_app = _build(server.streamable_http_app)
+    http_app.router.routes.extend(_build(server.sse_app).routes)
+    return http_app
+
+
+def run_server(server: Any, transport: str, host: str, port: int) -> None:  # noqa: ANN401
+    """Run the server: "both" (default), "sse", or "streamable-http".
+
+    "both" composes the two transport apps onto one uvicorn (#168). A single
+    named transport falls through to the SDK's own runner: v2 accepts
+    host/port as transport kwargs; v1 already received them at construction.
+    """
+    if transport == "both" and hasattr(server, "streamable_http_app"):
+        import uvicorn
+
+        uvicorn.run(combined_app(server, host=host), host=host, port=port)
+        return
+    if transport == "both":  # SDK without app composition: closest single transport
+        transport = "streamable-http"
     if MCP_SDK_V2:
         server.run(transport=transport, host=host, port=port)
     else:

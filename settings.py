@@ -105,9 +105,11 @@ class Settings(BaseSettings):
     # Port of the MCP server
     MCP_SERVER_PORT: int = 8000
 
-    # MCP transport: "sse" (current default, matches the README quickstart) or
-    # "streamable-http" (the newer transport; both are supported by MCP SDK v1 and v2)
-    MCP_TRANSPORT: str = "sse"
+    # MCP transport: "both" (default) serves legacy SSE at /sse and streamable
+    # HTTP at /mcp on one port, so SSE-configured clients and streamable-only
+    # clients (Codex's native MCP client) connect without configuration (#168).
+    # Set "sse" or "streamable-http" to pin a single transport.
+    MCP_TRANSPORT: str = "both"
 
 
 settings = Settings()
