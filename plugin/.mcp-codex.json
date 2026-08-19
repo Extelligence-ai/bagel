@@ -1,7 +1,0 @@
-{
-  "mcp_servers": {
-    "bagel": {
-      "url": "http://localhost:8000/sse"
-    }
-  }
-}

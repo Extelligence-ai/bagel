@@ -34,14 +34,19 @@ def test_codex_manifest_mirrors_the_claude_plugin() -> None:
     assert (pathlib.Path("plugin") / codex["mcpServers"]).resolve().exists()
 
 
-def test_codex_mcp_config_points_at_default_local_server() -> None:
-    config = json.loads(pathlib.Path("plugin/.mcp-codex.json").read_text())
-    bagel = config["mcp_servers"]["bagel"]
-    assert bagel["url"] == "http://localhost:8000/sse"
+def test_codex_manifest_reuses_the_shared_mcp_config() -> None:
+    codex = json.loads(pathlib.Path("plugin/.codex-plugin/plugin.json").read_text())
+    assert codex["mcpServers"] == "./.mcp.json"
+    assert isinstance(codex["author"], dict) and codex["author"]["name"]
+    assert isinstance(codex["interface"]["capabilities"], list)
+    assert codex["interface"]["capabilities"]
 
 
-def test_codex_sideload_marketplace_lists_the_plugin() -> None:
+def test_codex_sideload_marketplace_entry_is_codex_shaped() -> None:
     marketplace = json.loads(pathlib.Path(".agents/plugins/marketplace.json").read_text())
-    sources = json.dumps(marketplace)
-    assert "bagel" in sources
-    assert "./plugin" in sources
+    (entry,) = marketplace["plugins"]
+    assert entry["name"] == "bagel"
+    assert entry["source"] == {"source": "local", "path": "./plugin"}
+    assert entry["policy"]["installation"] == "AVAILABLE"
+    assert entry["policy"]["authentication"]
+    assert entry["category"]
