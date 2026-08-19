@@ -8,6 +8,23 @@ JSON-encoded channels and jsonschema schemas, which Bagel's generic MCAP path
 ingests natively. One channel per task, fully typed columns, no ROS required
 (the `apache-arrow` container is enough).
 
+## Start Bagel (no ROS image needed)
+
+Copper's MCAP exports go through Bagel's generic Arrow path, so the lightest
+container is enough:
+
+```bash
+git clone https://github.com/Extelligence-ai/bagel.git && cd bagel
+docker compose run --service-ports apache-arrow
+```
+
+Connect your MCP client to `http://localhost:8000/sse` (for Claude Code:
+`claude mcp add --transport sse bagel http://localhost:8000/sse`; the bundled
+plugin wires this automatically). Then try the committed sample before your
+own logs:
+
+> Summarize ./data/sample/copper/imu_probe.mcap
+
 ## One-time setup in your Copper app
 
 Copper apps conventionally ship a log-extractor binary next to the app. Three
