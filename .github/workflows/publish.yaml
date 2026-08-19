@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+  # Manual re-run for dropped push events (2026-08-19: GitHub silently skipped
+  # all workflows for a merge commit; images for that version never built).
+  workflow_dispatch:
 
 jobs:
   docker:
