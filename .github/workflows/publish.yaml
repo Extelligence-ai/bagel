@@ -27,6 +27,11 @@ jobs:
           - service: px4
           - service: ardupilot
           - service: betaflight
+          # Non-ROS services: the compose image name differs from the service
+          # name for apache-arrow (image path "arrow").
+          - service: apache-arrow
+            image: arrow
+          - service: iot
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -41,7 +46,7 @@ jobs:
         run: docker compose build ${{ matrix.service }}
       - name: Push ${{ matrix.service }}
         run: |
-          IMAGE=ghcr.io/extelligence-ai/bagel/${{ matrix.service }}
+          IMAGE=ghcr.io/extelligence-ai/bagel/${{ matrix.image || matrix.service }}
           TAG=sha-${{ github.sha }}
           # Semver tag from pyproject: the MCP registry rejects "latest", so
           # server.json pins this tag (see server.json at the repo root).
