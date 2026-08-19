@@ -25,13 +25,15 @@
     "shortDescription": "Query robotics, drone, and IoT data in plain English via the Bagel MCP server.",
     "longDescription": "Bagel lets you ask questions about robotics, drone, and IoT data (ROS 1/2 bags, MCAP, PX4/ArduPilot/Betaflight logs, CAN/MF4, live MQTT) in plain English. Every answer is computed by DuckDB SQL over the actual messages and the query is shown for audit. Bagel also has an intelligent edge data reduction pipeline: describe an event once, preview what would be kept, then run it on the robot. The plugin bundles the MCP connection (localhost:8000/sse; server runs in Docker, data never leaves the machine) plus four skills that teach the agent the server's own workflows: triage, pipeline authoring, live sinks, and export to Rerun / Lichtblick / PlotJuggler / LeRobot.",
     "developerName": "Extelligence",
-    "category": "developer-tools",
+    "category": "Developer Tools",
     "defaultPrompt": "Summarize the metadata of ./data/sample/ros2/mcap",
     "capabilities": [
       "log-triage",
       "sql-over-messages",
       "data-reduction-pipelines",
       "visualization-export"
-    ]
+    ],
+    "logo": "./assets/logo.png",
+    "composerIcon": "./assets/composer-icon.png"
   }
 }
