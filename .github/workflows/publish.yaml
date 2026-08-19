@@ -50,11 +50,22 @@ jobs:
           # Bump the pyproject version to publish a new one.
           VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
           docker tag $IMAGE:latest $IMAGE:$TAG
-          docker push $IMAGE:latest
-          docker push $IMAGE:$TAG
+          # ghcr intermittently drops a blob mid-push ("unknown blob"); a
+          # short-backoff retry has cleared it on every occurrence to date
+          # (2.1.0, 2.1.1, 2.2.0 all needed manual reruns for this).
+          push_with_retry() {
+            for attempt in 1 2 3; do
+              docker push "$1" && return 0
+              echo "push $1 failed (attempt $attempt); retrying in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+            docker push "$1"
+          }
+          push_with_retry $IMAGE:latest
+          push_with_retry $IMAGE:$TAG
           if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
             echo "$IMAGE:$VERSION already published; leaving it untouched"
           else
             docker tag $IMAGE:latest $IMAGE:$VERSION
-            docker push $IMAGE:$VERSION
+            push_with_retry $IMAGE:$VERSION
           fi
