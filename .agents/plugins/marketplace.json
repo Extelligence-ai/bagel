@@ -1,0 +1,9 @@
+{
+  "name": "bagel-dev",
+  "plugins": [
+    {
+      "name": "bagel",
+      "source": "./plugin"
+    }
+  ]
+}

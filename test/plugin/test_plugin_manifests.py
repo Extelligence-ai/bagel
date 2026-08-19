@@ -22,3 +22,26 @@ def test_marketplace_lists_the_plugin() -> None:
     sources = json.dumps(marketplace)
     assert "bagel" in sources
     assert "./plugin" in sources
+
+
+def test_codex_manifest_mirrors_the_claude_plugin() -> None:
+    codex = json.loads(pathlib.Path("plugin/.codex-plugin/plugin.json").read_text())
+    claude = json.loads(pathlib.Path("plugin/.claude-plugin/plugin.json").read_text())
+    assert codex["name"] == claude["name"] == "bagel"
+    assert codex["version"] == claude["version"]
+    assert codex["skills"] == "./skills/"
+    # Manifest paths must resolve relative to the plugin root.
+    assert (pathlib.Path("plugin") / codex["mcpServers"]).resolve().exists()
+
+
+def test_codex_mcp_config_points_at_default_local_server() -> None:
+    config = json.loads(pathlib.Path("plugin/.mcp-codex.json").read_text())
+    bagel = config["mcp_servers"]["bagel"]
+    assert bagel["url"] == "http://localhost:8000/sse"
+
+
+def test_codex_sideload_marketplace_lists_the_plugin() -> None:
+    marketplace = json.loads(pathlib.Path(".agents/plugins/marketplace.json").read_text())
+    sources = json.dumps(marketplace)
+    assert "bagel" in sources
+    assert "./plugin" in sources
