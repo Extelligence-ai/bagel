@@ -156,16 +156,21 @@ Can’t find your LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/
 
 </details>
 
-## 🔌 Claude Code plugin
+## 🔌 Agent plugins (Claude Code and Codex)
 
-Bagel ships a Claude Code plugin: four skills that teach Claude when and how
+Bagel ships an agent plugin: four skills that teach the agent when and how
 to drive the server (log triage, pipeline authoring, live sinks, visualization
-export) plus the MCP connection, wired automatically.
+export) plus the MCP connection, wired automatically. The same `plugin/`
+directory serves both Claude Code and OpenAI Codex.
 
 ```
 /plugin marketplace add Extelligence-ai/bagel
 /plugin install bagel@bagel
 ```
+
+Codex users: clone the repo and add it as a plugin marketplace (the repo
+carries `.agents/plugins/marketplace.json`), then install `bagel` from
+`/plugins` in Codex.
 
 Then start the container for your data format (see Quickstart): the plugin
 connects to `http://localhost:8000/sse` by default. Any other MCP client can

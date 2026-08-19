@@ -1,0 +1,17 @@
+{
+  "name": "bagel-dev",
+  "plugins": [
+    {
+      "name": "bagel",
+      "source": {
+        "source": "local",
+        "path": "./plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_FIRST_USE"
+      },
+      "category": "Robotics"
+    }
+  ]
+}
