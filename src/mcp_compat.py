@@ -77,3 +77,30 @@ def run_server(server: Any, transport: str, host: str, port: int) -> None:  # no
         server.run(transport=transport, host=host, port=port)
     else:
         server.run(transport=transport)
+
+
+def tool_annotations(
+    *,
+    read_only: bool,
+    idempotent: bool = True,
+    destructive: bool = False,
+    open_world: bool = False,
+) -> Any:  # noqa: ANN401 -- SDK type varies by major version
+    """Behavior annotations for a tool, or None if the SDK predates them.
+
+    Most of the toolset reads local files or writes local artifacts, but a
+    tool that can reach caller-selected endpoints (live brokers, pipeline
+    notify tasks) is open-world, one that can unlink existing files
+    (subscribe overwrite) is destructive, and one whose retry can repeat an
+    externally visible action (pipeline notify) is not idempotent.
+    """
+    try:
+        from mcp.types import ToolAnnotations
+    except ImportError:  # pragma: no cover -- SDK without annotations
+        return None
+    return ToolAnnotations(
+        readOnlyHint=read_only,
+        destructiveHint=destructive,
+        idempotentHint=idempotent,
+        openWorldHint=open_world,
+    )
