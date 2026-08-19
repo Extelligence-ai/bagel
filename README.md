@@ -168,12 +168,21 @@ directory serves both Claude Code and OpenAI Codex.
 /plugin install bagel@bagel
 ```
 
-Codex users: clone the repo and add it as a plugin marketplace (the repo
-carries `.agents/plugins/marketplace.json`), then install `bagel` from
-`/plugins` in Codex.
+Codex and ChatGPT users: install bagel from the
+[OpenAI Plugins Directory](https://chatgpt.com/plugins/plugins_6a8623a0fe288191833ee0ca3fa883e7)
+(one click), or clone the repo and add it as a plugin marketplace (the repo
+carries `.agents/plugins/marketplace.json`). Directory installs bundle the
+skills only, so also connect the server once in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.bagel]
+url = "http://localhost:8000/mcp"
+```
+
+Repo-marketplace and Claude Code installs wire this connection automatically.
 
 Then start the container for your data format (see Quickstart): the plugin
-connects to `http://localhost:8000/sse` by default. Any other MCP client can
+connects to `http://localhost:8000/mcp` by default. Any other MCP client can
 discover the same workflows server-side via the `list_agent_capabilities` tool.
 
 ## Keep what matters, drop the rest
