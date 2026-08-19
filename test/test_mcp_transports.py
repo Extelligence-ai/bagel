@@ -64,3 +64,43 @@ def test_legacy_sse_endpoint_still_streams() -> None:
     finally:
         uv_server.should_exit = True
         thread.join(timeout=10)
+
+
+def test_combined_app_threads_host_into_factories_that_accept_it() -> None:
+    # On MCP SDK v2 the app factories take the host and use it for
+    # DNS-rebinding validation; a combined app built without it rejects
+    # non-localhost requests with 421. Factories without the parameter
+    # (SDK v1) must still be called plainly.
+    received = {}
+
+    class _V2Style:
+        def streamable_http_app(self, host: str | None = None):  # noqa: ANN202
+            received["http"] = host
+            return _stub_app()
+
+        def sse_app(self, host: str | None = None):  # noqa: ANN202
+            received["sse"] = host
+            return _stub_app()
+
+    class _V1Style:
+        def streamable_http_app(self):  # noqa: ANN202
+            return _stub_app()
+
+        def sse_app(self):  # noqa: ANN202
+            return _stub_app()
+
+    def _stub_app():  # noqa: ANN202
+        class _Router:
+            def __init__(self) -> None:
+                self.routes: list = []
+
+        class _App:
+            def __init__(self) -> None:
+                self.router = _Router()
+                self.routes: list = []
+
+        return _App()
+
+    mcp_compat.combined_app(_V2Style(), host="0.0.0.0")  # noqa: S104
+    assert received == {"http": "0.0.0.0", "sse": "0.0.0.0"}  # noqa: S104
+    mcp_compat.combined_app(_V1Style(), host="0.0.0.0")  # noqa: S104 -- must not raise
