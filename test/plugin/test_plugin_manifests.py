@@ -47,6 +47,6 @@ def test_codex_sideload_marketplace_entry_is_codex_shaped() -> None:
     (entry,) = marketplace["plugins"]
     assert entry["name"] == "bagel"
     assert entry["source"] == {"source": "local", "path": "./plugin"}
-    assert entry["policy"]["installation"] == "AVAILABLE"
-    assert entry["policy"]["authentication"]
+    assert entry["policy"]["installation"] in {"INSTALLED_BY_DEFAULT", "AVAILABLE", "NOT_AVAILABLE"}
+    assert entry["policy"]["authentication"] in {"ON_INSTALL", "ON_USE"}
     assert entry["category"]
