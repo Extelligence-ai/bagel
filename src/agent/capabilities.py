@@ -14,13 +14,15 @@ import pathlib
 import re
 import tempfile
 
+import filelock
+
 from settings import settings
 
 _AGENT_ROOT = pathlib.Path(__file__).parent
 
 _TASK_PATTERN = re.compile(r"<task>(.*?)</task>", re.DOTALL)
 _TAG_PATTERN = re.compile(r"<[^>]+>")
-_NAME_PATTERN = re.compile(r"^[a-z0-9_-]+(?:/[a-z0-9_-]+)?$")
+_NAME_PATTERN = re.compile(r"^[a-z0-9_-]+(?:/[a-z0-9_-]+)*$")
 
 
 class InvalidCapabilityError(Exception):
@@ -227,6 +229,19 @@ def _validate_poml_renders(content: str) -> None:
         temp_path.unlink(missing_ok=True)
 
 
+def _save_lock(user_root: pathlib.Path) -> filelock.FileLock:
+    """Return the cross-process lock serializing saves under ``user_root``."""
+    try:
+        user_root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise InvalidCapabilityError(
+            f"Could not create {user_root}: {exc}. On Linux, run "
+            "`mkdir -p ~/.bagel/capabilities` once before starting the container so "
+            "the mount is owned by you, not root."
+        ) from exc
+    return filelock.FileLock(str(user_root / ".save.lock"))
+
+
 def _write_capability_file(
     target: pathlib.Path, existing: list[pathlib.Path], content: str, user_root: pathlib.Path
 ) -> None:
@@ -295,7 +310,7 @@ def save_capability(name: str, content: str, overwrite: bool = False) -> dict[st
     if not _NAME_PATTERN.fullmatch(name):
         raise InvalidCapabilityError(
             f"Invalid capability name {name!r}: use lowercase letters, digits, '-' or '_', "
-            "with at most one '/' subdirectory level. The server chooses the file extension."
+            "optionally in '/'-separated subdirectories. The server chooses the file extension."
         )
     stripped = content.strip()
     if not stripped:
@@ -307,20 +322,23 @@ def save_capability(name: str, content: str, overwrite: bool = False) -> dict[st
     user_root = _user_root()
     target = user_root / f"{name}{'.poml' if is_poml else '.md'}"
     candidates = (user_root / f"{name}.poml", user_root / f"{name}.md")
-    for candidate in candidates:
-        if candidate.is_symlink():
+    # The existence check and the write happen under one lock so two overlapping
+    # saves of the same new name cannot both pass the overwrite=False guard.
+    with _save_lock(user_root):
+        for candidate in candidates:
+            if candidate.is_symlink():
+                raise InvalidCapabilityError(
+                    f"Refusing to save over {candidate}: it is a symlink. "
+                    "save_capability only writes plain files under the user-capabilities "
+                    "directory; remove the symlink first if this was intentional."
+                )
+        existing = [candidate for candidate in candidates if candidate.exists()]
+        if existing and not overwrite:
             raise InvalidCapabilityError(
-                f"Refusing to save over {candidate}: it is a symlink. "
-                "save_capability only writes plain files under the user-capabilities "
-                "directory; remove the symlink first if this was intentional."
+                f"Capability {name!r} already exists ({existing[0].name}); "
+                "pass overwrite=True to replace it."
             )
-    existing = [candidate for candidate in candidates if candidate.exists()]
-    if existing and not overwrite:
-        raise InvalidCapabilityError(
-            f"Capability {name!r} already exists ({existing[0].name}); "
-            "pass overwrite=True to replace it."
-        )
-    _write_capability_file(target, existing, content, user_root)
+        _write_capability_file(target, existing, content, user_root)
 
     summarize = _summary if is_poml else _markdown_summary
     relative = target.relative_to(user_root)

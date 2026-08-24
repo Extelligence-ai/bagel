@@ -108,7 +108,7 @@ def test_save_into_subdirectory(user_dir: pathlib.Path) -> None:
 
 @pytest.mark.parametrize(
     "bad_name",
-    ["../escape", "/absolute", "Upper", "a b", "a/b/c", "", "name.poml"],
+    ["../escape", "/absolute", "Upper", "a b", "a//b", "a/", "", "name.poml"],
 )
 def test_save_rejects_bad_names(user_dir: pathlib.Path, bad_name: str) -> None:
     with pytest.raises(capabilities.InvalidCapabilityError):
@@ -302,4 +302,33 @@ def test_failed_overwrite_preserves_previous_capability(
         capabilities.save_capability("keep-me", "# v2\n\nSecond version.", overwrite=True)
 
     assert target.read_text(encoding="utf-8").startswith("# v1")
-    assert [p.name for p in tmp_path.iterdir()] == ["keep-me.md"]
+    assert [p.name for p in tmp_path.iterdir() if not p.name.startswith(".")] == ["keep-me.md"]
+
+
+def test_deeply_nested_name_round_trips_through_discovery(user_dir: pathlib.Path) -> None:
+    """Any depth discovery can emit, save must accept (Codex review)."""
+    saved = capabilities.save_capability("fleet/ros2/check", "# Check\n\nNested.")
+    assert saved["name"] == "user/fleet/ros2/check"
+    assert (user_dir / "fleet" / "ros2" / "check.md").exists()
+    names = [entry["name"] for entry in capabilities.list_capabilities()]
+    assert "user/fleet/ros2/check" in names
+    again = capabilities.save_capability("user/fleet/ros2/check", "# Check 2", overwrite=True)
+    assert again["path"] == saved["path"]
+
+
+def test_concurrent_saves_of_new_name_honor_no_overwrite(user_dir: pathlib.Path) -> None:
+    """Only one of N overlapping overwrite=False saves may win (Codex review)."""
+    import concurrent.futures
+
+    def attempt(i: int) -> str:
+        try:
+            capabilities.save_capability("race", f"# v{i}\n\nbody")
+            return "ok"
+        except capabilities.InvalidCapabilityError:
+            return "exists"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(attempt, range(8)))
+    assert results.count("ok") == 1
+    assert results.count("exists") == 7
+    assert [p.name for p in user_dir.iterdir() if not p.name.startswith(".")] == ["race.md"]
