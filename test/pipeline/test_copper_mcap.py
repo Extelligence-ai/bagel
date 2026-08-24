@@ -79,3 +79,71 @@ def test_raw_copper_log_gets_actionable_error(tmp_path: pathlib.Path) -> None:
     raw.write_bytes(COPPER_MAGIC + b"\x00" * 64)
     with pytest.raises(ValueError, match="export-mcap"):
         data_source.resolve(str(raw))
+
+
+def test_json_newtype_scalars_wrap_into_single_field_structs(tmp_path: pathlib.Path) -> None:
+    """Copper's unit newtypes trace as ``{"value": number}`` while serde emits the bare number.
+
+    Bagel wraps such scalars into the single-field struct the schema declares
+    instead of failing the whole channel (found on copper-rs's flight controller).
+    """
+    import json
+
+    from mcap.writer import Writer
+
+    path = tmp_path / "newtype.mcap"
+    schema = {
+        "type": "object",
+        "properties": {
+            "payload": {
+                "type": "object",
+                "properties": {
+                    "altitude": {
+                        "type": "object",
+                        "properties": {"value": {"type": "number"}},
+                    },
+                    "pose": {
+                        "type": "object",
+                        "properties": {
+                            "roll": {"type": "object", "properties": {"value": {"type": "number"}}}
+                        },
+                    },
+                    "legs": {
+                        "type": "array",
+                        "items": {"type": "object", "properties": {"value": {"type": "number"}}},
+                    },
+                    "armed": {"type": "boolean"},
+                },
+            }
+        },
+    }
+    with path.open("wb") as stream:
+        writer = Writer(stream)
+        writer.start()
+        schema_id = writer.register_schema("copper.nav", "jsonschema", json.dumps(schema).encode())
+        channel_id = writer.register_channel("/navigation", "json", schema_id)
+        for i in range(3):
+            message = {
+                "payload": {
+                    "altitude": 212.0 + i,
+                    "pose": {"roll": -0.0},
+                    "legs": [1.5, 2.5],
+                    "armed": i > 0,
+                }
+            }
+            writer.add_message(
+                channel_id, i * 1_000_000, json.dumps(message).encode(), i * 1_000_000
+            )
+        writer.finish()
+
+    rows = server.query_messages(
+        path=str(path),
+        topic="/navigation",
+        sql_statement=(
+            'SELECT MAX("/navigation".payload.altitude.value) AS alt, '
+            'MIN("/navigation".payload.pose.roll.value) AS roll, '
+            'SUM(CASE WHEN "/navigation".payload.armed THEN 1 ELSE 0 END) AS armed '
+            'FROM "/navigation"'
+        ),
+    )
+    assert rows == [{"alt": 214.0, "roll": 0.0, "armed": 2}]

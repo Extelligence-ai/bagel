@@ -5,6 +5,7 @@ decoder factories (which parse the schema embedded in the file), and json-encode
 channels via plain ``json.loads`` -- no ROS installation needed for any of them.
 """
 
+import functools
 import json
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -87,8 +88,59 @@ class MessageDataset(base.MessageDataset):
     def _to_json(self, message: object, struct: pa.StructType) -> dict[str, Any]:
         """Cast a decoded message into a JSON-serializable dictionary."""
         if isinstance(message, dict):
-            return message  # json-encoded channels decode to dictionaries already
+            # json-encoded channels decode to dictionaries already; only walk
+            # them when the schema has newtype-shaped fields (see below).
+            if _has_newtype_struct(struct):
+                wrapped = _wrap_newtypes(message, struct)
+                return wrapped if isinstance(wrapped, dict) else message
+            return message
         return convert.to_json(message, struct)
+
+
+def _is_newtype_struct(data_type: pa.DataType) -> bool:
+    """Return whether ``data_type`` is a single-field struct.
+
+    That is how serde-transparent newtypes (e.g. unit wrappers) appear in a
+    jsonschema traced from the Rust type, while the JSON carries the bare scalar.
+    """
+    return pa.types.is_struct(data_type) and data_type.num_fields == 1
+
+
+@functools.lru_cache(maxsize=256)
+def _has_newtype_struct(data_type: pa.DataType) -> bool:
+    if pa.types.is_struct(data_type):
+        return _is_newtype_struct(data_type) or any(
+            _has_newtype_struct(data_type.field(i).type) for i in range(data_type.num_fields)
+        )
+    if pa.types.is_list(data_type) or pa.types.is_large_list(data_type):
+        return _has_newtype_struct(data_type.value_type)
+    return False
+
+
+def _wrap_newtypes(value: object, data_type: pa.DataType) -> object:
+    """Return ``value`` with bare scalars wrapped into single-field structs.
+
+    Applied recursively wherever ``data_type`` expects a newtype struct; values
+    that already match the schema pass through untouched.
+    """
+    if pa.types.is_struct(data_type):
+        if not isinstance(value, dict):
+            if value is None or not _is_newtype_struct(data_type):
+                return value
+            return {data_type.field(0).name: _wrap_newtypes(value, data_type.field(0).type)}
+        return {
+            key: (
+                _wrap_newtypes(item, data_type.field(key).type)
+                if data_type.get_field_index(key) != -1
+                else item
+            )
+            for key, item in value.items()
+        }
+    if (pa.types.is_list(data_type) or pa.types.is_large_list(data_type)) and isinstance(
+        value, list
+    ):
+        return [_wrap_newtypes(item, data_type.value_type) for item in value]
+    return value
 
 
 def register() -> None:
