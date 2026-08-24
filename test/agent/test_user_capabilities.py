@@ -7,6 +7,7 @@ accepting both .poml and .md files, with names prefixed "user/".
 """
 
 import pathlib
+from typing import NoReturn
 
 import pytest
 
@@ -282,3 +283,23 @@ def test_save_into_normal_subdirectory_still_works(user_dir: pathlib.Path) -> No
     saved = capabilities.save_capability("fleet/battery2", "Check cells again.\n")
     assert (user_dir / "fleet" / "battery2.md").exists()
     assert saved["name"] == "user/fleet/battery2"
+
+
+def test_failed_overwrite_preserves_previous_capability(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A write failure mid-overwrite must not lose the last valid capability."""
+    monkeypatch.setattr(settings, "USER_CAPABILITIES_DIRECTORY", str(tmp_path))
+    capabilities.save_capability("keep-me", "# v1\n\nFirst version.")
+    target = tmp_path / "keep-me.md"
+    assert target.read_text(encoding="utf-8").startswith("# v1")
+
+    def boom(*args: object, **kwargs: object) -> NoReturn:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(capabilities.os, "replace", boom)
+    with pytest.raises(capabilities.InvalidCapabilityError):
+        capabilities.save_capability("keep-me", "# v2\n\nSecond version.", overwrite=True)
+
+    assert target.read_text(encoding="utf-8").startswith("# v1")
+    assert [p.name for p in tmp_path.iterdir()] == ["keep-me.md"]

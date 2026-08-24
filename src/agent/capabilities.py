@@ -9,6 +9,7 @@ capabilities — .poml or .md files under ``settings.USER_CAPABILITIES_DIRECTORY
 — are discovered alongside the builtins with a ``user/`` name prefix.
 """
 
+import os
 import pathlib
 import re
 import tempfile
@@ -229,7 +230,7 @@ def _validate_poml_renders(content: str) -> None:
 def _write_capability_file(
     target: pathlib.Path, existing: list[pathlib.Path], content: str, user_root: pathlib.Path
 ) -> None:
-    """Create the target's parent dir, drop stale same-name siblings, and write it.
+    """Create the target's parent dir, write it atomically, then drop stale siblings.
 
     Raised OS errors (e.g. a non-writable directory on a fresh Linux bind mount)
     are translated to the module's typed error with a pointer to the likely fix.
@@ -242,10 +243,20 @@ def _write_capability_file(
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         _assert_confined(target.parent, user_root, action="save a capability under")
+        # Write to a sibling temp file and rename into place so a failed write
+        # (disk full, permissions) leaves the previous capability intact; only
+        # then drop stale same-name siblings of the other format.
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+        tmp = pathlib.Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            os.replace(tmp, target)
+        finally:
+            tmp.unlink(missing_ok=True)
         for stale in existing:
             if stale != target:
                 stale.unlink(missing_ok=True)
-        target.write_text(content, encoding="utf-8")
     except OSError as exc:
         raise InvalidCapabilityError(
             f"Could not write capability to {target.parent}: {exc}. On Linux, run "

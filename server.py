@@ -526,7 +526,7 @@ def list_agent_capabilities() -> list[dict[str, str]]:
         "context parameterization) or plain markdown instructions. Writes only to "
         "the user-capabilities directory; builtin capabilities cannot be modified."
     ),
-    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
 )
 def save_agent_capability(name: str, content: str, overwrite: bool = False) -> dict[str, str]:
     r"""Save a user-authored capability into the user-capabilities directory.
