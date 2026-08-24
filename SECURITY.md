@@ -44,6 +44,13 @@ the product working as intended:
   socket. Bind it to localhost (`MCP_SERVER_HOST=127.0.0.1`) or keep it inside a
   trusted network; never expose the port to the public internet. The compose files
   publish it on the local host only for the documented single-machine setup.
+- The `save_agent_capability` tool is the endpoint's first tool whose writes are
+  driven by LLM-authored content rather than caller-specified paths or configuration.
+  Its writes are confined to `.poml`/`.md` files under the configured
+  `USER_CAPABILITIES_DIRECTORY` (name slugs are validated; path traversal and
+  absolute paths are rejected), and builtin capabilities are immutable through
+  it. As with every tool on this endpoint, it is intended for trusted-network
+  deployment.
 - Treat pipeline configs and startup manifests as sensitive: they can contain
   broker credentials, DSNs, and webhook URLs.
 - Cloud upload tasks use your ambient credentials (AWS/GCS/Azure SDK chains);

@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # Directory for caching intermediate artifacts
     CACHE_DIRECTORY: str = str(pathlib.Path.home() / ".cache" / "bagel")
 
+    # Directory of user-authored capabilities (.poml or .md files) discovered by
+    # list_agent_capabilities alongside the builtins and writable via the
+    # save_agent_capability tool. Mounted from the host in compose.yaml so
+    # capabilities survive container restarts. Missing directory = builtins only.
+    USER_CAPABILITIES_DIRECTORY: str = str(pathlib.Path.home() / ".bagel" / "capabilities")
+
     # YAML manifest of live subscriptions (and their standing pipelines) to
     # establish when the server starts, so they survive container restarts.
     # If unset or missing, no startup subscriptions are made.
