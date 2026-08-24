@@ -424,7 +424,7 @@ def subscribe_live_topics(  # noqa: PLR0913
         "Discover available capabilities and their paths with "
         "`list_agent_capabilities`. The file specifies task instructions and "
         "output formats. Optional context values can be injected to customize "
-        "its behavior."
+        "its behavior. Capabilities may be POML (parameterizable via context) or markdown (static)."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
@@ -432,24 +432,29 @@ def run_poml_capability(
     poml_path: str,
     poml_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Execute a structured capability from a POML file.
+    """Execute a structured capability from a POML or markdown file.
 
     Loads a `.poml` file containing instructions written in the POML
-    (Prompt-Oriented Markup Language) format. The file defines the task the
-    LLM should perform and how the output should be structured. This tool
-    produces a ready-to-use prompt for LLM execution.
+    (Prompt-Oriented Markup Language) format, or a `.md` file containing
+    static markdown instructions. The file defines the task the LLM should
+    perform and how the output should be structured. This tool produces a
+    ready-to-use prompt for LLM execution.
 
     Optionally, a context dictionary can be passed to substitute values in
-    the POML template, enabling dynamic parameterization.
+    the POML template, enabling dynamic parameterization. Markdown
+    capabilities have no template engine, so `poml_context` is rejected for
+    them rather than silently ignored.
 
     Args:
-        poml_path (str): Filesystem path to the `.poml` file containing the
-            capability definition.
+        poml_path (str): Filesystem path to the `.poml` or `.md` file
+            containing the capability definition.
         poml_context (dict[str, Any] | None, optional): Key-value pairs injected
             into the POML file to customize behavior. Defaults to None.
 
     Raises:
-        FileNotFoundError: If the `.poml` file cannot be found.
+        FileNotFoundError: If the file cannot be found.
+        InvalidCapabilityError: If `poml_context` is passed for a markdown
+            (`.md`) capability, which has no template engine to apply it to.
 
     Returns:
         list[dict[str, Any]]: A structured prompt representation, typically in the format:
@@ -467,16 +472,26 @@ def run_poml_capability(
     poml_file = pathlib.Path(poml_path)
     if not poml_file.exists():
         raise FileNotFoundError(poml_file)
+    if poml_file.suffix == ".md":
+        # Markdown capabilities are static instructions: no template engine,
+        # so parameterization is impossible rather than silently ignored.
+        if poml_context:
+            raise agent_capabilities.InvalidCapabilityError(
+                f"{poml_file} is a markdown capability; poml_context requires a POML file."
+            )
+        return [{"speaker": "human", "content": poml_file.read_text(encoding="utf-8")}]
     return poml(poml_file, context=poml_context)
 
 
 @server.tool(
     title="List agent capabilities",
     description=(
-        "List the predefined POML capabilities shipped with Bagel: each entry has "
-        "a `name`, a `path` to pass to `run_poml_capability`, and a one-line "
-        "`summary`. Use this to discover available capabilities instead of "
-        "guessing file paths."
+        "List every capability available to run: the predefined `.poml` capabilities "
+        "shipped with Bagel, plus any user-saved capabilities (`.poml` or `.md`, "
+        "named with a `user/` prefix) discovered under the user-capabilities "
+        "directory. Each entry has a `name`, a `path` to pass to "
+        "`run_poml_capability`, and a one-line `summary`. Use this to discover "
+        "available capabilities instead of guessing file paths."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
@@ -500,6 +515,49 @@ def list_agent_capabilities() -> list[dict[str, str]]:
 
     """
     return agent_capabilities.list_capabilities()
+
+
+@server.tool(
+    title="Save a user capability",
+    description=(
+        "Save a reusable workflow as a named capability so it can be discovered "
+        "with `list_agent_capabilities` and run with `run_poml_capability` in any "
+        "future session. Content may be POML (validated before saving; supports "
+        "context parameterization) or plain markdown instructions. Writes only to "
+        "the user-capabilities directory; builtin capabilities cannot be modified."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
+)
+def save_agent_capability(name: str, content: str, overwrite: bool = False) -> dict[str, str]:
+    r"""Save a user-authored capability into the user-capabilities directory.
+
+    Args:
+        name (str): Capability slug (lowercase letters, digits, ``-``/``_``,
+            at most one ``/`` subdirectory level), e.g. ``fleet/battery-triage``.
+            The server chooses the file extension from the content.
+        content (str): The capability body — POML markup (starts with
+            ``<poml``) or markdown instructions.
+        overwrite (bool, optional): Replace an existing capability of the same
+            name. Defaults to False.
+
+    Returns:
+        dict[str, str]: The saved capability's ``name`` (``user/``-prefixed),
+            ``path``, and one-line ``summary`` — the same shape
+            ``list_agent_capabilities`` reports.
+
+    Raises:
+        InvalidCapabilityError: On an invalid name, empty content,
+            non-rendering POML, or a name collision without ``overwrite=True``.
+
+    Examples:
+        As an LLM prompt:
+            Save that workflow as a capability called battery-triage.
+
+        As a Python call:
+            >>> save_agent_capability("battery-triage", "# Battery triage\n\nSteps...")
+
+    """
+    return agent_capabilities.save_capability(name=name, content=content, overwrite=overwrite)
 
 
 @server.tool(

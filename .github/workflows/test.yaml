@@ -41,6 +41,8 @@ jobs:
         run: |
           mkdir -p "${HOME}/.bagel/artifacts"
           chmod 777 "${HOME}/.bagel/artifacts"
+          mkdir -p "${HOME}/.bagel/capabilities"
+          chmod 777 "${HOME}/.bagel/capabilities"
           docker compose run --rm \
             -e COVERAGE_FILE=/home/ubuntu/.bagel/artifacts/.coverage.${{ matrix.service }} \
             ${{ matrix.service }} \

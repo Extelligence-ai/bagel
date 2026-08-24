@@ -19,6 +19,7 @@ EXPECTED = {
     "subscribe_live_topics": (False, False, True, True),
     "run_poml_capability": (True, True, False, False),
     "list_agent_capabilities": (True, True, False, False),
+    "save_agent_capability": (False, True, True, False),
     "list_pipeline_capabilities": (True, True, False, False),
     "preview_pipeline": (True, True, False, False),
     "save_pipeline": (False, True, False, False),
