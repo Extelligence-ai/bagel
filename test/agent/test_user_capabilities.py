@@ -108,7 +108,7 @@ def test_save_into_subdirectory(user_dir: pathlib.Path) -> None:
 
 @pytest.mark.parametrize(
     "bad_name",
-    ["../escape", "/absolute", "Upper", "a b", "a//b", "a/", "", "name.poml"],
+    ["../escape", "/absolute", "a//b", "a/", ".hidden", "a/.dot", "", "name.poml", "Name.MD"],
 )
 def test_save_rejects_bad_names(user_dir: pathlib.Path, bad_name: str) -> None:
     with pytest.raises(capabilities.InvalidCapabilityError):
@@ -247,8 +247,12 @@ def test_symlinked_capability_not_discovered(
 def test_save_wraps_permission_error(
     user_dir: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    real_mkdir = pathlib.Path.mkdir
+
     def _raise_permission_error(self: pathlib.Path, *args: object, **kwargs: object) -> None:
-        raise PermissionError("Permission denied")
+        if self.is_relative_to(user_dir):
+            raise PermissionError("Permission denied")
+        real_mkdir(self, *args, **kwargs)
 
     monkeypatch.setattr(pathlib.Path, "mkdir", _raise_permission_error)
     with pytest.raises(capabilities.InvalidCapabilityError, match="mkdir -p"):
@@ -332,3 +336,34 @@ def test_concurrent_saves_of_new_name_honor_no_overwrite(user_dir: pathlib.Path)
     assert results.count("ok") == 1
     assert results.count("exists") == 7
     assert [p.name for p in user_dir.iterdir() if not p.name.startswith(".")] == ["race.md"]
+
+
+def test_discovered_file_name_with_spaces_round_trips(user_dir: pathlib.Path) -> None:
+    """Discovery emits whatever the file is called; save must accept it (Codex review)."""
+    (user_dir / "Flight Checks.md").write_text("# Flight\n\nManual.", encoding="utf-8")
+    names = [entry["name"] for entry in capabilities.list_capabilities()]
+    assert "user/Flight Checks" in names
+    saved = capabilities.save_capability("user/Flight Checks", "# Flight 2", overwrite=True)
+    assert saved["path"] == str((user_dir / "Flight Checks.md").resolve())
+
+
+def test_parameterized_poml_saves_without_context(user_dir: pathlib.Path) -> None:
+    """A template with {{variables}} is valid POML; context arrives at run time."""
+    doc = "<poml><task>Investigate {{topic_name}} over {{window_s}} seconds</task></poml>"
+    saved = capabilities.save_capability("param-check", doc)
+    assert saved["path"].endswith("param-check.poml")
+
+
+def test_save_lock_is_not_inside_user_directory(
+    user_dir: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A planted .save.lock symlink in the (git-synced) user dir must be inert."""
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(cache))
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious", encoding="utf-8")
+    (user_dir / ".save.lock").symlink_to(victim)
+    capabilities.save_capability("safe", "# Safe\n\nbody")
+    assert victim.read_text(encoding="utf-8") == "precious"
+    assert (user_dir / "safe.md").exists()
+    assert list((cache / "locks").glob("capabilities-*.lock"))

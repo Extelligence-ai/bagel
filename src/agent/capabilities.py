@@ -9,6 +9,7 @@ capabilities — .poml or .md files under ``settings.USER_CAPABILITIES_DIRECTORY
 — are discovered alongside the builtins with a ``user/`` name prefix.
 """
 
+import hashlib
 import os
 import pathlib
 import re
@@ -22,7 +23,12 @@ _AGENT_ROOT = pathlib.Path(__file__).parent
 
 _TASK_PATTERN = re.compile(r"<task>(.*?)</task>", re.DOTALL)
 _TAG_PATTERN = re.compile(r"<[^>]+>")
-_NAME_PATTERN = re.compile(r"^[a-z0-9_-]+(?:/[a-z0-9_-]+)*$")
+# One path segment: anything discovery can emit from a real file name, minus
+# leading dots (hides files, blocks "." / "..") and separators.
+_SEGMENT = r"[A-Za-z0-9_-][A-Za-z0-9 _.-]*"
+_NAME_PATTERN = re.compile(rf"^{_SEGMENT}(?:/{_SEGMENT})*$")
+_RESERVED_SUFFIXES = (".poml", ".md")
+_CONTEXT_VARIABLE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)")
 
 
 class InvalidCapabilityError(Exception):
@@ -198,8 +204,11 @@ def _validate_poml_renders(content: str) -> None:
     with tempfile.NamedTemporaryFile("w", suffix=".poml", encoding="utf-8", delete=False) as handle:
         handle.write(content)
         temp_path = pathlib.Path(handle.name)
+    # Parameterized templates reference caller-supplied variables; validate
+    # with a placeholder for each so only malformed markup is rejected.
+    placeholders = {name: f"<{name}>" for name in _CONTEXT_VARIABLE.findall(content)}
     try:
-        poml(str(temp_path))
+        poml(str(temp_path), context=placeholders or None)
     except Exception as exc:
         # poml's renderer raises implementation-defined exceptions for bad
         # markup; translate to the layer's typed error (#154 idiom).
@@ -230,16 +239,24 @@ def _validate_poml_renders(content: str) -> None:
 
 
 def _save_lock(user_root: pathlib.Path) -> filelock.FileLock:
-    """Return the cross-process lock serializing saves under ``user_root``."""
+    """Return the cross-process lock serializing saves under ``user_root``.
+
+    The lock file lives under ``CACHE_DIRECTORY``, never inside the user
+    directory: that directory is user-controlled (and often a synced git
+    repo), so a planted ``.save.lock`` symlink there could otherwise be
+    followed and truncated by the lock implementation before any capability
+    path check runs.
+    """
+    locks = pathlib.Path(settings.CACHE_DIRECTORY) / "locks"
     try:
-        user_root.mkdir(parents=True, exist_ok=True)
+        locks.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise InvalidCapabilityError(
-            f"Could not create {user_root}: {exc}. On Linux, run "
-            "`mkdir -p ~/.bagel/capabilities` once before starting the container so "
-            "the mount is owned by you, not root."
+            f"Could not create the save lock directory {locks}: {exc}. "
+            "CACHE_DIRECTORY must be writable by the server."
         ) from exc
-    return filelock.FileLock(str(user_root / ".save.lock"))
+    digest = hashlib.sha256(str(user_root.resolve()).encode("utf-8")).hexdigest()[:16]
+    return filelock.FileLock(str(locks / f"capabilities-{digest}.lock"))
 
 
 def _write_capability_file(
@@ -307,10 +324,11 @@ def save_capability(name: str, content: str, overwrite: bool = False) -> dict[st
     """
     if name.startswith("user/"):
         name = name[len("user/") :]
-    if not _NAME_PATTERN.fullmatch(name):
+    if not _NAME_PATTERN.fullmatch(name) or name.lower().endswith(_RESERVED_SUFFIXES):
         raise InvalidCapabilityError(
-            f"Invalid capability name {name!r}: use lowercase letters, digits, '-' or '_', "
-            "optionally in '/'-separated subdirectories. The server chooses the file extension."
+            f"Invalid capability name {name!r}: letters, digits, spaces, '-', '_' or '.', "
+            "optionally in '/'-separated subdirectories; segments cannot start with '.' "
+            "and the name must not end in .poml or .md (the server chooses the extension)."
         )
     stripped = content.strip()
     if not stripped:
