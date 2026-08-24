@@ -147,3 +147,26 @@ def test_json_newtype_scalars_wrap_into_single_field_structs(tmp_path: pathlib.P
         ),
     )
     assert rows == [{"alt": 214.0, "roll": 0.0, "armed": 2}]
+
+
+def test_newtype_wrapping_is_limited_to_copper_schemas(tmp_path: pathlib.Path) -> None:
+    """A non-Copper JSON channel with a scalar where the schema has an object stays an error."""
+    import json
+
+    from mcap.writer import Writer
+
+    path = tmp_path / "foxglove_like.mcap"
+    schema = {
+        "type": "object",
+        "properties": {"position": {"type": "object", "properties": {"x": {"type": "number"}}}},
+    }
+    with path.open("wb") as stream:
+        writer = Writer(stream)
+        writer.start()
+        schema_id = writer.register_schema("custom.Pose", "jsonschema", json.dumps(schema).encode())
+        channel_id = writer.register_channel("/pose", "json", schema_id)
+        writer.add_message(channel_id, 0, json.dumps({"position": 1.5}).encode(), 0)
+        writer.finish()
+
+    with pytest.raises(Exception, match="struct"):
+        server.query_messages(path=str(path), topic="/pose", sql_statement='SELECT * FROM "/pose"')

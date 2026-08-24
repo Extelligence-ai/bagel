@@ -41,6 +41,8 @@ def decoder_for(schema: Schema | None, channel: Channel) -> Callable[[bytes], ob
 
     """
     if channel.message_encoding == "json":
+        if _is_copper_schema(schema):
+            return _copper_json_decoder(schema)
         return json.loads
     for factory in DECODER_FACTORIES:
         decoder = factory.decoder_for(channel.message_encoding, schema)
@@ -88,13 +90,40 @@ class MessageDataset(base.MessageDataset):
     def _to_json(self, message: object, struct: pa.StructType) -> dict[str, Any]:
         """Cast a decoded message into a JSON-serializable dictionary."""
         if isinstance(message, dict):
-            # json-encoded channels decode to dictionaries already; only walk
-            # them when the schema has newtype-shaped fields (see below).
-            if _has_newtype_struct(struct):
-                wrapped = _wrap_newtypes(message, struct)
-                return wrapped if isinstance(wrapped, dict) else message
-            return message
+            return message  # json-encoded channels decode to dictionaries already
         return convert.to_json(message, struct)
+
+
+COPPER_SCHEMA_PREFIX = "copper."
+
+
+def _is_copper_schema(schema: Schema | None) -> bool:
+    """Return whether a channel was written by Copper's ``export-mcap``.
+
+    Copper names every schema ``copper.<task>``; its exporter traces
+    serde-transparent unit newtypes (``Length``, ``Velocity``, angles) as
+    ``{"value": number}`` objects while serializing them as bare numbers, so
+    only these channels get the newtype-wrapping decoder below.
+    """
+    return (
+        schema is not None
+        and schema.encoding == "jsonschema"
+        and schema.name.startswith(COPPER_SCHEMA_PREFIX)
+    )
+
+
+def _copper_json_decoder(schema: Schema) -> Callable[[bytes], object]:
+    """Return ``json.loads`` plus newtype wrapping for a Copper channel."""
+    from src.topic.mcap import jsonschema_to_struct  # local: avoid a module import cycle
+
+    struct = jsonschema_to_struct(schema.data)
+    if not _has_newtype_struct(struct):
+        return json.loads
+
+    def decode(data: bytes) -> object:
+        return _wrap_newtypes(json.loads(data), struct)
+
+    return decode
 
 
 def _is_newtype_struct(data_type: pa.DataType) -> bool:
