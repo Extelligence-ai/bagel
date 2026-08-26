@@ -83,3 +83,13 @@ def test_topic_registry() -> None:
     # `registry.struct()` and `registry.describe()` are NOT tested here
     # because they require network access to download .xml files.
     # This will make them very flaky in CI/CD environment.
+
+
+def test_char_array_fields_are_strings() -> None:
+    """Format char 'Z' (char[64], e.g. MSG.Message) must map to a string column so
+    queries return text, not bytearray reprs (issue #199)."""
+    import pyarrow as pa
+
+    from src.topic.ardupilot import schema
+
+    assert schema.FORMAT_CHARACTER_TO_PYARROW_TYPE["Z"] == pa.string()
