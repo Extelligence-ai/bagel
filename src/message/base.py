@@ -1,6 +1,7 @@
 """An abstract base class for topic message datasets."""
 
 import abc
+import hashlib
 import os
 from collections.abc import Iterator
 from typing import Any
@@ -50,6 +51,11 @@ class AccessPath(BaseModel):
             pa.large_binary(): "BLOB",
         }
         return mapping[self.pa_type]
+
+
+def _schema_fingerprint(schema: pa.Schema) -> str:
+    """Return a short stable digest of an Arrow schema (names, types, nesting)."""
+    return hashlib.sha256(schema.serialize().to_pybytes()).hexdigest()[:16]
 
 
 class MessageDataset(abc.ABC):
@@ -151,7 +157,19 @@ class MessageDataset(abc.ABC):
             schema = self._schema(factory, registry, topics)
             return duckdb.from_arrow(schema.empty_table())
 
-        seeds = [*(topics or [str(None)]), str(start_seconds), str(end_seconds), str(ffill)]
+        # The schema is part of the cache key: a change in how a source maps
+        # its types to Arrow must not keep serving files written under the old
+        # mapping (they are refreshed on every hit, so LRU never retires them).
+        schema = self._schema(
+            factory, registry, topics or registry.available_topics(factory.build())
+        )
+        seeds = [
+            *(topics or [str(None)]),
+            str(start_seconds),
+            str(end_seconds),
+            str(ffill),
+            _schema_fingerprint(schema),
+        ]
         arrow_file = artifacts.arrow_file(factory.uuid, seeds, "topics")
         if arrow_file.exists() and self._use_cache:
             try:
@@ -169,7 +187,6 @@ class MessageDataset(abc.ABC):
         data_source = factory.build()
         topics = topics or registry.available_topics(data_source)
         messages = self._messages(data_source, topics, start_seconds, end_seconds)
-        schema = self._schema(factory, registry, topics)
 
         try:
             with (
