@@ -80,6 +80,10 @@ class Settings(BaseSettings):
     # Whether to use cloudini for pointcloud compression/decompression by default
     CLOUDINI_ENABLED: bool = True
 
+    # Fleet streaming (beta). False makes the whole publish subsystem inert
+    # regardless of configuration: nothing connects, nothing leaves the box.
+    FLEET_ENABLED: bool = True
+
     # Default quantization resolution in meters for cloudini lossy compression
     CLOUDINI_DEFAULT_RESOLUTION: float = 0.001
     ###############################################

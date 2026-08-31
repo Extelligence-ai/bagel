@@ -8,11 +8,14 @@ services:
         ROS_DISTRO: kilted
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -46,11 +49,14 @@ services:
         ROS_DISTRO: jazzy
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -84,11 +90,14 @@ services:
         ROS_DISTRO: iron
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -122,11 +131,14 @@ services:
         ROS_DISTRO: humble
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -165,6 +177,8 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -201,6 +215,8 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -236,6 +252,8 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -271,6 +289,8 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -306,6 +326,8 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -341,6 +363,8 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -371,11 +395,14 @@ services:
       args:
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.

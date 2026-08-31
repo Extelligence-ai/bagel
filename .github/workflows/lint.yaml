@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - "beta/**"
     types:
       - opened
       - synchronize
@@ -21,6 +22,8 @@ jobs:
       - uses: astral-sh/ruff-action@v3
         with:
           version-file: pyproject.toml
+      - name: Boundary rule (no vendor names in Bagel)
+        run: scripts/check_boundary.sh
 
   hadolint:
     runs-on: ubuntu-latest

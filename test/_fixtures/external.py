@@ -1,4 +1,4 @@
-"""Locate optional external log fixtures (e.g. matcha-ext recordings).
+"""Locate optional external log fixtures (recordings kept outside this repo).
 
 Tests reach external recordings via ``BAGEL_EXTERNAL_FIXTURES`` and skip
 cleanly when it is unset or the path is missing — present locally, absent in CI.

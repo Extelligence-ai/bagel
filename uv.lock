@@ -222,7 +222,7 @@ wheels = [
 
 [[package]]
 name = "bagel"
-version = "2.2.3"
+version = "2.3.0"
 source = { virtual = "." }
 dependencies = [
     { name = "boto3" },
@@ -278,6 +278,9 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+]
+fleet = [
+    { name = "paho-mqtt" },
 ]
 iot = [
     { name = "influxdb3-python" },
@@ -357,6 +360,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=5.0.0,<7.0.0" },
     { name = "ruff", specifier = "==0.12.4" },
 ]
+fleet = [{ name = "paho-mqtt", specifier = ">=2.1.0,<3.0.0" }]
 iot = [
     { name = "influxdb3-python", specifier = ">=0.10.0" },
     { name = "paho-mqtt", specifier = ">=2.1.0,<3.0.0" },

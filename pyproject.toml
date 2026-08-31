@@ -1,6 +1,6 @@
 [project]
 name = "bagel"
-version = "2.2.3"
+version = "2.3.0"
 description = "Bagel MCP Server"
 authors = []
 requires-python = ">=3.10,<3.13"
@@ -62,6 +62,9 @@ betaflight = ["orangebox >=0.4.0,<1.0.0"]
 cloudini = ["wasmtime >=26.0.0", "numpy >=1.24.0,<3.0.0"]
 iot = [
     "influxdb3-python>=0.10.0",
+    "paho-mqtt>=2.1.0,<3.0.0",
+]
+fleet = [
     "paho-mqtt>=2.1.0,<3.0.0",
 ]
 upload = [
