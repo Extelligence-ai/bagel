@@ -46,3 +46,44 @@ jobs:
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
       - name: Build ${{ matrix.service }}
         run: docker compose build ${{ matrix.service }}
+
+  # Fleet streaming is opt-in per image (BAGEL_FLEET build arg). Build the
+  # opt-out variant of one image per Dockerfile and probe the gate inside the
+  # container, so the opt-out path cannot regress silently: the iot image must
+  # keep its MQTT client (the iot group ships it), while a ros2 image built
+  # without the fleet group must fail the gate with the typed error.
+  build-fleet-optout:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: iot
+            image: ghcr.io/extelligence-ai/bagel/iot:latest
+            paho: PAHO-PRESENT
+            gate: GATE-OPEN
+          - service: ros2-kilted
+            image: ghcr.io/extelligence-ai/bagel/ros2-kilted:latest
+            paho: PAHO-ABSENT
+            gate: FleetNotInstalledError
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
+      - name: Build ${{ matrix.service }} with BAGEL_FLEET=false
+        run: BAGEL_FLEET=false docker compose build ${{ matrix.service }}
+      - name: Probe MQTT client presence
+        run: |
+          out=$(docker run --rm --entrypoint uv "${{ matrix.image }}" run python -c \
+            "import importlib.util; print('PAHO-PRESENT' if importlib.util.find_spec('paho') else 'PAHO-ABSENT')")
+          echo "$out"
+          echo "$out" | grep -q "${{ matrix.paho }}"
+      - name: Probe the fleet gate
+        run: |
+          set +e
+          out=$(docker run --rm --entrypoint uv "${{ matrix.image }}" run python -c \
+            "from src.sink.publish import require_fleet; require_fleet(); print('GATE-OPEN')" 2>&1)
+          set -e
+          echo "$out"
+          echo "$out" | grep -q "${{ matrix.gate }}"
