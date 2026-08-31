@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - "beta/**"
     types:
       - opened
       - synchronize
@@ -82,7 +83,7 @@ jobs:
       - name: Install dependencies
         # iot/automotive: hard imports in sink and message tests.
         # upload/viz: optional-dep tests skip without them; install so they run.
-        run: uv sync --group iot --group automotive --group upload --group viz
+        run: uv sync --group iot --group automotive --group upload --group viz --group fleet
       - name: Run host-side tests
         env:
           COVERAGE_FILE: .coverage.host

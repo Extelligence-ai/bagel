@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - "beta/**"
   # Manual re-run for dropped push events (2026-08-19: GitHub silently skipped
   # all workflows for a merge commit; images for that version never built).
   workflow_dispatch:
@@ -66,11 +67,20 @@ jobs:
             done
             docker push "$1"
           }
-          push_with_retry $IMAGE:latest
-          push_with_retry $IMAGE:$TAG
-          if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
-            echo "$IMAGE:$VERSION already published; leaving it untouched"
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            push_with_retry $IMAGE:latest
+            push_with_retry $IMAGE:$TAG
+            if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+              echo "$IMAGE:$VERSION already published; leaving it untouched"
+            else
+              docker tag $IMAGE:latest $IMAGE:$VERSION
+              push_with_retry $IMAGE:$VERSION
+            fi
           else
-            docker tag $IMAGE:latest $IMAGE:$VERSION
-            push_with_retry $IMAGE:$VERSION
+            # Beta branches: pre-release tags only. Never touch latest or the
+            # immutable semver tag; each run gets its own beta number.
+            BETA="$IMAGE:${VERSION}-beta.${GITHUB_RUN_NUMBER}"
+            docker tag $IMAGE:latest "$BETA"
+            push_with_retry "$BETA"
+            push_with_retry $IMAGE:$TAG
           fi
