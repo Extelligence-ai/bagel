@@ -33,10 +33,14 @@ RUN /bin/bash -c "curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh 
 COPY --chown=${USERNAME}:${USERNAME} pyproject.toml ./
 COPY --chown=${USERNAME}:${USERNAME} uv.lock ./
 ARG DEV_MODE
-RUN if [ "_${DEV_MODE}" = "_true" ]; then \
-    uv sync --group iot; \
+# Fleet streaming (beta) is opt-in per image: BAGEL_FLEET=false drops the
+# MQTT client from the container entirely.
+ARG BAGEL_FLEET=true
+RUN FLEET_GROUP=""; if [ "_${BAGEL_FLEET}" = "_true" ]; then FLEET_GROUP="--group fleet"; fi; \
+    if [ "_${DEV_MODE}" = "_true" ]; then \
+    uv sync --group iot ${FLEET_GROUP}; \
     else \
-    uv sync --no-dev --group iot; \
+    uv sync --no-dev --group iot ${FLEET_GROUP}; \
     fi
 
 # Pre-install the DuckDB postgres extension so TimescaleDB/Postgres sources

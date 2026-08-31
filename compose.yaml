@@ -8,6 +8,7 @@ services:
         ROS_DISTRO: kilted
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
@@ -46,6 +47,7 @@ services:
         ROS_DISTRO: jazzy
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
@@ -84,6 +86,7 @@ services:
         ROS_DISTRO: iron
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
@@ -122,6 +125,7 @@ services:
         ROS_DISTRO: humble
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
@@ -371,6 +375,7 @@ services:
       args:
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}

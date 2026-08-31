@@ -19,3 +19,5 @@ Defined in `settings.py`; set via the container environment or `.env`.
 | `MIN_ARROW_RECORD_BATCH_SIZE_COUNT` | 500 | Minimum records per arrow batch |
 | `ROSBRIDGE_QUEUE_LENGTH` | 1000 | Messages buffered in rosbridge before sending |
 | `CLOUDINI_ENABLED` | true | Cloudini pointcloud decompression in pipelines |
+| `FLEET_ENABLED` | 1 | Kill switch for fleet streaming (beta). `0` makes the publish subsystem inert: nothing connects, nothing leaves the box |
+| `BAGEL_FLEET` (build arg) | true | Compose build arg; `false` omits the MQTT client from the iot/ros2 images entirely |
