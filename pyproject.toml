@@ -62,6 +62,7 @@ betaflight = ["orangebox >=0.4.0,<1.0.0"]
 cloudini = ["wasmtime >=26.0.0", "numpy >=1.24.0,<3.0.0"]
 iot = [
     "influxdb3-python>=0.10.0",
+    "paho-mqtt>=2.1.0,<3.0.0",
 ]
 fleet = [
     "paho-mqtt>=2.1.0,<3.0.0",

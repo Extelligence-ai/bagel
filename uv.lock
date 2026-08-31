@@ -284,6 +284,7 @@ fleet = [
 ]
 iot = [
     { name = "influxdb3-python" },
+    { name = "paho-mqtt" },
 ]
 px4 = [
     { name = "gitpython" },
@@ -360,7 +361,10 @@ dev = [
     { name = "ruff", specifier = "==0.12.4" },
 ]
 fleet = [{ name = "paho-mqtt", specifier = ">=2.1.0,<3.0.0" }]
-iot = [{ name = "influxdb3-python", specifier = ">=0.10.0" }]
+iot = [
+    { name = "influxdb3-python", specifier = ">=0.10.0" },
+    { name = "paho-mqtt", specifier = ">=2.1.0,<3.0.0" },
+]
 px4 = [
     { name = "gitpython", specifier = ">=3.1.0,<4.0.0" },
     { name = "pyulog", specifier = ">=1.2.0,<2.0.0" },
