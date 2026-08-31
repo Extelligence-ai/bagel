@@ -52,6 +52,9 @@ control loop.
 - **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, and more.
 - **Dockerized environments**: No local dependencies required.
 - **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
+- **Fleet streaming (beta)**: publish live channels, events, and heartbeats from the
+  edge to your own fleet broker. Landing incrementally on the `2.3.0-beta` image line;
+  opt out at build time with `BAGEL_FLEET=false`, or at runtime with `FLEET_ENABLED=0`.
 - **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues).
 
 ## ⚡️ Quickstart
