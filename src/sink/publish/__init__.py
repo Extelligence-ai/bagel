@@ -22,6 +22,16 @@ class FleetDisabledError(Exception):
     """Raised when FLEET_ENABLED=0 has switched the publish subsystem off."""
 
 
+class StreamConfigError(Exception):
+    """Raised when the manifest's `streams:` section fails load-time validation."""
+
+    def __init__(self, field: str, reason: str) -> None:
+        """Initialize StreamConfigError with field and reason."""
+        self.field = field
+        self.reason = reason
+        super().__init__(f"streams config: {field}: {reason}")
+
+
 def require_fleet() -> None:
     """Check the kill switch, then that the MQTT client is importable.
 
