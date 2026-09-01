@@ -28,6 +28,7 @@ import pathlib
 import queue
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -250,6 +251,16 @@ class _ChaosBroker:
         self.name = f"bagel-mosq-chaos-{uuid.uuid4().hex[:8]}"
 
     def start(self) -> None:
+        """Start the container; self-cleaning if it never becomes reachable.
+
+        `docker run -d` succeeding only means the container process was
+        created, not that mosquitto is actually listening yet -- if the
+        readiness wait below fails (slow image pull, port contention), the
+        container would otherwise leak: `docker run` already succeeded, so
+        nothing else would ever `docker rm` it. Catch, clean up the
+        container THIS call just created, and re-raise so the failure is
+        still visible to the caller.
+        """
         _docker(
             [
                 "docker",
@@ -266,9 +277,13 @@ class _ChaosBroker:
             ],
             check=True,
         )
-        assert _wait_tcp("localhost", self.port, timeout_s=15.0), (
-            "chaos broker never became reachable"
-        )
+        try:
+            assert _wait_tcp("localhost", self.port, timeout_s=15.0), (
+                "chaos broker never became reachable"
+            )
+        except BaseException:
+            self.cleanup()
+            raise
 
     def kill(self) -> None:
         _docker(["docker", "kill", self.name], check=True)
@@ -279,6 +294,34 @@ class _ChaosBroker:
 
     def cleanup(self) -> None:
         _docker(["docker", "rm", "-f", self.name], check=False)
+
+
+@requires_managed_broker
+def test_chaos_broker_start_cleans_up_on_unreachable_broker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """start() must not leak a container when readiness never arrives.
+
+    Real `docker run`/`docker ps`/`docker rm` -- that's the actual leak this
+    guards against -- with only `_wait_tcp` faked, so the "broker never
+    becomes reachable" path (slow image pull, port contention -- the
+    scenario in the review finding) is forced deterministically and fast
+    without needing a real slow pull or a real port conflict.
+    """
+    monkeypatch.setattr(sys.modules[__name__], "_wait_tcp", lambda *a, **kw: False)
+    broker = _ChaosBroker(CHAOS_PORT)
+    try:
+        with pytest.raises(AssertionError, match="never became reachable"):
+            broker.start()
+        result = _docker(
+            ["docker", "ps", "-a", "--filter", f"name={broker.name}", "--format", "{{.Names}}"],
+            check=True,
+        )
+        assert result.stdout.decode().strip() == "", (
+            f"container {broker.name} leaked after a failed start()"
+        )
+    finally:
+        broker.cleanup()  # belt-and-braces: start() should already have removed it
 
 
 def _build_service(  # noqa: PLR0913 -- test helper collecting one scenario's full config
@@ -384,11 +427,7 @@ def _assert_live_schema_and_heartbeat(
 
     heartbeat = _drain(sub.inbox, heartbeat_topic, timeout_s=15.0)
     assert heartbeat is not None, "heartbeat never arrived"
-    hb = json.loads(heartbeat[1])
-    assert hb["online"] is True
-    assert set(hb) == EXPECTED_HEARTBEAT_KEYS
-    assert hb["cert_expires_at"] is None
-    assert set(hb["spool"]) == {"bytes", "pending", "evicted"}
+    assert json.loads(heartbeat[1])["online"] is True
 
 
 def _assert_retained_for_late_subscriber(
@@ -397,6 +436,11 @@ def _assert_retained_for_late_subscriber(
     """A subscriber joining AFTER schema/heartbeat were published gets them
     immediately, with retain=1 -- step 3's own retained-delivery pattern.
     `late` must already be connected (subscribed AFTER those publishes).
+
+    The §3 heartbeat key-set/shape checks live here rather than on the live
+    tick: this is the durable, retained copy a late-joining reader (a real
+    MCP tool included) actually sees, so it's the more meaningful place to
+    pin the wire shape down.
     """
     late_schema = _drain(late.inbox, schema_topic)
     assert late_schema is not None and late_schema[2] is True
@@ -404,7 +448,11 @@ def _assert_retained_for_late_subscriber(
 
     late_heartbeat = _drain(late.inbox, heartbeat_topic)
     assert late_heartbeat is not None and late_heartbeat[2] is True
-    assert json.loads(late_heartbeat[1])["online"] is True
+    hb = json.loads(late_heartbeat[1])
+    assert hb["online"] is True
+    assert set(hb) == EXPECTED_HEARTBEAT_KEYS
+    assert hb["cert_expires_at"] is None
+    assert set(hb["spool"]) == {"bytes", "pending", "evicted"}
 
 
 # Each wait below is paced by a real flush_interval_s (2s) wall-clock cycle
