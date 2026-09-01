@@ -223,6 +223,57 @@ class TestClose:
         p.close()  # must not raise
 
 
+class TestReconnectCounter:
+    def test_on_disconnect_is_registered_at_connect(self, fake: dict[str, FakeFleetPaho]) -> None:
+        p = _publisher()
+        p.connect()
+        assert fake["client"].on_disconnect is not None
+
+    def test_disconnect_callback_increments_reconnects(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        assert p.reconnects == 0
+        client = fake["client"]
+        # Simulate paho VERSION2 firing the callback (client, userdata, flags, rc, props).
+        client.on_disconnect(client, None, object(), object(), None)
+        assert p.reconnects == 1
+        client.on_disconnect(client, None, object(), object(), None)
+        assert p.reconnects == 2
+
+    def test_clean_close_does_not_double_count_as_reconnect(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        # close() drives the fake client to a disconnected state; since our fake
+        # doesn't synchronously invoke on_disconnect (paho's real client does,
+        # once the network thread is stopped), simulate that here.
+        client = fake["client"]
+
+        def fake_disconnect() -> None:
+            client.calls.append(("disconnect",))
+            client._connected = False
+            client.on_disconnect(client, None, object(), object(), None)
+
+        client.disconnect = fake_disconnect  # type: ignore[method-assign]
+        p.close()
+        assert p.reconnects == 0
+
+    def test_handler_exceptions_are_swallowed(self, fake: dict[str, FakeFleetPaho]) -> None:
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+
+        class Boom:
+            def __add__(self, other: object) -> "Boom":
+                raise RuntimeError("boom")
+
+        p.reconnects = Boom()  # force the increment inside the handler to raise
+        client.on_disconnect(client, None, object(), object(), None)  # must not raise
+
+
 def test_mqtt_module_does_not_import_paho_eagerly(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in [m for m in sys.modules if m == "paho" or m.startswith("paho.")]:
         monkeypatch.delitem(sys.modules, name)

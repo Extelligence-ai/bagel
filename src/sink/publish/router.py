@@ -6,9 +6,14 @@ spools and publishes. Spec §2/§4.
 """
 
 import queue as queue_mod
+import random
+import threading
+import time
 from collections.abc import Callable
 
 from src.sink.publish.config import ResolvedChannel
+from src.sink.publish.publisher import Publisher, PublishError
+from src.sink.publish.spool import Spool
 
 Sample = tuple[str, float, dict]
 
@@ -169,3 +174,117 @@ class RouterCore:
     def pending_count(self) -> int:
         """Number of stored slot-winners awaiting the next flush."""
         return len(self._pending)
+
+
+class StreamRouter(threading.Thread):
+    """Drains the sample queue into RouterCore, spools batches, and publishes.
+
+    Replay-then-live is emergent, not a separate code path: `_pump` always
+    starts from `spool.pending("channels")`, and a freshly-flushed live
+    batch is appended to the spool (with its seq) before `_pump` runs in the
+    same tick. So a batch built from this tick's live samples is published
+    only after every older, still-unacked spooled batch -- the spool is the
+    single source of publish order, whether its records arrived from a prior
+    offline period or from this tick.
+    """
+
+    INITIAL_BACKOFF_S = 1.0
+    MAX_BACKOFF_S = 60.0
+
+    def __init__(
+        self,
+        core: RouterCore,
+        queue: SampleQueue,
+        spool: Spool,
+        publisher: Publisher,
+        schema_payload: dict,
+    ) -> None:
+        """Wire the core, queue, spool and publisher together; does not start the thread."""
+        super().__init__(daemon=True)
+        self._core = core
+        self._queue = queue
+        self._spool = spool
+        self._publisher = publisher
+        self._schema_payload = schema_payload
+        # Named _stop_event (not _stop) because threading.Thread already owns
+        # a private _stop() method; shadowing it breaks Thread's own join().
+        self._stop_event = threading.Event()
+        self._online = False
+        self._backoff = self.INITIAL_BACKOFF_S
+        self._next_attempt = 0.0
+
+    def run(self) -> None:
+        """Thin loop: tick until stop() is called. All logic lives in `_tick`."""
+        while not self._stop_event.is_set():
+            self._tick(time.time())
+
+    def _tick(self, now: float) -> None:
+        """One iteration: drain+offer+maybe-flush-to-spool, then publish.
+
+        Unit tests drive this directly with controlled `now` values instead
+        of sleeping; `queue.drain`'s bounded timeout is what paces the real
+        thread loop in `run()`.
+        """
+        timeout_s = min(0.2, self._core.flush_interval_s)
+        samples = self._queue.drain(max_items=500, timeout_s=timeout_s)
+        for topic, t, msg in samples:
+            self._core.offer(topic, t, msg)
+        if self._core.should_flush(now, self._core.pending_count):
+            batch = self._core.flush(now)
+            if batch is not None:
+                seq = self._spool.next_seq("channels")
+                batch["seq"] = seq
+                self._spool.append("channels", seq, batch)
+        self._pump(now)
+
+    def _pump(self, now: float) -> None:
+        """Publish the spool's backlog in seq order; go offline on the first failure.
+
+        Always starts from `spool.pending("channels")` -- see class
+        docstring for why that alone makes replay-then-live emergent.
+        """
+        if not self._online:
+            if now < self._next_attempt:
+                return
+            self._reconnect(now)
+            if not self._online:
+                return
+        for seq, payload in self._spool.pending("channels"):
+            try:
+                self._publisher.publish_channels(payload)
+            except PublishError:
+                self._online = False
+                self._schedule_retry(now)
+                return
+            self._spool.ack("channels", seq)
+
+    def _reconnect(self, now: float) -> None:
+        """Attempt one (re)connect + schema republish; stay offline on failure."""
+        try:
+            self._publisher.connect()
+            self._publisher.publish_schema(self._schema_payload)
+        except Exception:  # connect()/publish_schema() may raise broadly (transport, TLS, ...)
+            self._schedule_retry(now)
+            return
+        self._backoff = self.INITIAL_BACKOFF_S
+        self._online = True
+
+    def _schedule_retry(self, now: float) -> None:
+        """Double (capped) the backoff, then pick the next attempt with full jitter."""
+        self._backoff = min(self.MAX_BACKOFF_S, self._backoff * 2)
+        self._next_attempt = now + random.uniform(0, self._backoff)  # noqa: S311 -- jitter, not crypto
+
+    def stop(self) -> None:
+        """Signal the loop to stop and join with a bounded timeout."""
+        self._stop_event.set()
+        self.join(timeout=5)
+
+    @property
+    def online(self) -> bool:
+        """Whether the router currently believes it has a live publisher session."""
+        return self._online
+
+    @property
+    def backoff(self) -> float:
+        """Current backoff ceiling (seconds) used for the next reconnect's full jitter."""
+        return self._backoff
