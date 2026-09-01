@@ -280,6 +280,7 @@ dev = [
     { name = "ruff" },
 ]
 fleet = [
+    { name = "cryptography" },
     { name = "paho-mqtt" },
 ]
 iot = [
@@ -360,7 +361,10 @@ dev = [
     { name = "pytest-cov", specifier = ">=5.0.0,<7.0.0" },
     { name = "ruff", specifier = "==0.12.4" },
 ]
-fleet = [{ name = "paho-mqtt", specifier = ">=2.1.0,<3.0.0" }]
+fleet = [
+    { name = "cryptography", specifier = ">=43.0.0,<47.0.0" },
+    { name = "paho-mqtt", specifier = ">=2.1.0,<3.0.0" },
+]
 iot = [
     { name = "influxdb3-python", specifier = ">=0.10.0" },
     { name = "paho-mqtt", specifier = ">=2.1.0,<3.0.0" },

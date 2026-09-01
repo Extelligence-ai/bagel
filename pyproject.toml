@@ -66,6 +66,7 @@ iot = [
 ]
 fleet = [
     "paho-mqtt>=2.1.0,<3.0.0",
+    "cryptography>=43.0.0,<47.0.0",
 ]
 upload = [
     "azure-storage-blob>=12.24.0,<13.0.0",
