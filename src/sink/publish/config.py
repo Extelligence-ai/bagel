@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import pyarrow as pa
 import pyarrow.types as pat
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from src.message.base import AccessPath
 from src.sink.publish import StreamConfigError
@@ -164,6 +164,67 @@ class EventRule(BaseModel):
         )
 
 
+class ResolvedChannel(BaseModel):
+    """A channel rule bound to a topic's Arrow schema — schema-payload-ready."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    name: str
+    type: str
+    unit: str | None = None
+    source_topic: str
+    source_field: str
+    paths: dict[str, AccessPath]
+
+
+def _stem(topic: str) -> str:
+    return topic.rsplit("/", 1)[-1]
+
+
+def _resolve_channel_rule(
+    rule: ChannelRule, struct: pa.StructType, label: str
+) -> list[ResolvedChannel]:
+    resolved: list[ResolvedChannel] = []
+    if rule.fields is not None:
+        for field_path in rule.fields:
+            ap = resolve_path(struct, field_path, field_label=f"{label}.fields")
+            try:
+                type_name = classify(ap.pa_type)
+            except ValueError as exc:
+                raise StreamConfigError(f"{label}.fields", str(exc)) from exc
+            name = rule.renames.get(field_path, f"{_stem(rule.topic)}.{field_path}")
+            resolved.append(
+                ResolvedChannel(
+                    name=name,
+                    type=type_name,
+                    source_topic=rule.topic,
+                    source_field=field_path,
+                    paths={"value": ap},
+                )
+            )
+    else:
+        paths: dict[str, AccessPath] = {}
+        for key, dotted in rule.geo.items():
+            ap = resolve_path(struct, dotted, field_label=f"{label}.geo.{key}")
+            try:
+                if classify(ap.pa_type) != "number":
+                    raise ValueError(f"geo '{key}' must resolve to a number, got {ap.pa_type}")
+            except ValueError as exc:
+                raise StreamConfigError(f"{label}.geo.{key}", str(exc)) from exc
+            paths[key] = ap
+        name = rule.renames.get("geo", f"{_stem(rule.topic)}.geo")
+        resolved.append(
+            ResolvedChannel(
+                name=name,
+                type="geo",
+                source_topic=rule.topic,
+                source_field=",".join(f"{k}={v}" for k, v in sorted(rule.geo.items())),
+                paths=paths,
+            )
+        )
+    return resolved
+
+
 class StreamsConfig(BaseModel):
     """The whole `streams:` manifest section, shape-validated."""
 
@@ -201,3 +262,25 @@ class StreamsConfig(BaseModel):
             channels=channels,
             events=events,
         )
+
+    def resolve(self, structs: dict[str, pa.StructType]) -> list[ResolvedChannel]:
+        """Resolve channel rules against topic schemas."""
+        out: list[ResolvedChannel] = []
+        for i, rule in enumerate(self.channels):
+            label = f"channels[{i}]"
+            if rule.topic not in structs:
+                raise StreamConfigError(f"{label}.topic", f"unknown topic '{rule.topic}'")
+            out.extend(_resolve_channel_rule(rule, structs[rule.topic], label))
+        seen: set[str] = set()
+        for channel in out:
+            if channel.name in seen:
+                raise StreamConfigError("channels", f"duplicate channel name '{channel.name}'")
+            seen.add(channel.name)
+        return out
+
+
+def load_streams(manifest: dict) -> StreamsConfig | None:
+    """Parse the `streams:` section of the startup manifest, if present."""
+    if not isinstance(manifest, dict) or "streams" not in manifest:
+        return None
+    return StreamsConfig.build(manifest["streams"])

@@ -22,6 +22,21 @@ IMU = pa.struct(
     ]
 )
 
+ODOM = pa.struct(
+    [
+        pa.field(
+            "pose",
+            pa.struct(
+                [
+                    pa.field("x", pa.float64()),
+                    pa.field("y", pa.float64()),
+                    pa.field("z", pa.float64()),
+                ]
+            ),
+        )
+    ]
+)
+
 
 class TestStreamConfigError:
     def test_carries_field_and_reason(self) -> None:
@@ -216,3 +231,130 @@ class TestStreamsConfigBuild:
                     ]
                 }
             )
+
+    def test_event_error_labels_carry_list_index(self) -> None:
+        with pytest.raises(StreamConfigError, match=r"events\[1\]"):
+            config.StreamsConfig.build(
+                {
+                    "channels": [],
+                    "events": [
+                        {"name": "a", "topic": "/t", "predicate": "true"},
+                        {"name": "b", "topic": "/t", "predicate": "true", "pre_seconds": -1},
+                    ],
+                }
+            )
+
+
+class TestResolve:
+    def _cfg(self, channels: list) -> config.StreamsConfig:
+        return config.StreamsConfig.build({"channels": channels})
+
+    def test_scalar_channels_resolve_with_default_names(self) -> None:
+        cfg = self._cfg(
+            [{"topic": "/imu", "fields": ["linear_acceleration.x", "frame_id"], "rate_hz": 5}]
+        )
+        out = cfg.resolve({"/imu": IMU})
+        assert [(c.name, c.type) for c in out] == [
+            ("imu.linear_acceleration.x", "number"),
+            ("imu.frame_id", "string"),
+        ]
+        assert out[0].source_topic == "/imu"
+        assert out[0].source_field == "linear_acceleration.x"
+        assert out[0].paths["value"].path == ["linear_acceleration", "x"]
+
+    def test_rename_overrides_default(self) -> None:
+        cfg = self._cfg(
+            [
+                {
+                    "topic": "/imu",
+                    "fields": ["linear_acceleration.x"],
+                    "rate_hz": 5,
+                    "as": {"linear_acceleration.x": "accel.x"},
+                }
+            ]
+        )
+        assert cfg.resolve({"/imu": IMU})[0].name == "accel.x"
+
+    def test_geo_channel_resolves(self) -> None:
+        cfg = self._cfg(
+            [{"topic": "/nav/odom", "geo": {"lat": "pose.x", "lon": "pose.y"}, "rate_hz": 1}]
+        )
+        (c,) = cfg.resolve({"/nav/odom": ODOM})
+        assert c.name == "odom.geo" and c.type == "geo"
+        assert set(c.paths) == {"lat", "lon"}
+
+    def test_geo_path_to_non_number_raises(self) -> None:
+        cfg = self._cfg(
+            [{"topic": "/imu", "geo": {"lat": "frame_id", "lon": "calibrated"}, "rate_hz": 1}]
+        )
+        with pytest.raises(StreamConfigError, match="geo.*number|number"):
+            cfg.resolve({"/imu": IMU})
+
+    def test_non_scalar_field_raises(self) -> None:
+        cfg = self._cfg([{"topic": "/imu", "fields": ["readings"], "rate_hz": 1}])
+        with pytest.raises(StreamConfigError, match="not a streamable scalar"):
+            cfg.resolve({"/imu": IMU})
+
+    def test_unknown_topic_raises(self) -> None:
+        cfg = self._cfg([{"topic": "/nope", "fields": ["a"], "rate_hz": 1}])
+        with pytest.raises(StreamConfigError, match="unknown topic"):
+            cfg.resolve({"/imu": IMU})
+
+    def test_duplicate_channel_names_raise(self) -> None:
+        cfg = self._cfg(
+            [
+                {"topic": "/imu", "fields": ["frame_id"], "rate_hz": 1},
+                {
+                    "topic": "/imu",
+                    "fields": ["linear_acceleration.x"],
+                    "rate_hz": 1,
+                    "as": {"linear_acceleration.x": "imu.frame_id"},
+                },
+            ]
+        )
+        with pytest.raises(StreamConfigError, match="duplicate channel name"):
+            cfg.resolve({"/imu": IMU})
+
+
+class TestLoadStreams:
+    def test_manifest_without_streams_returns_none(self) -> None:
+        assert config.load_streams({"subscriptions": []}) is None
+
+    def test_manifest_with_streams_builds(self) -> None:
+        manifest = {
+            "subscriptions": [],
+            "streams": {"channels": [{"topic": "/imu", "fields": ["frame_id"], "rate_hz": 1}]},
+        }
+        cfg = config.load_streams(manifest)
+        assert isinstance(cfg, config.StreamsConfig) and len(cfg.channels) == 1
+
+    def test_yaml_round_trip(self, tmp_path: object) -> None:
+        import yaml
+
+        text = """
+streams:
+  broker: mqtts://fleet.example.com:8883
+  flush_interval_s: 1
+  channels:
+    - topic: /imu
+      fields: [linear_acceleration.x, linear_acceleration.y]
+      rate_hz: 5
+  events:
+    - name: hard_decel
+      topic: /imu
+      predicate: '"/imu"[''linear_acceleration''][''x''] < -10'
+      pre_seconds: 10
+      post_seconds: 10
+      debounce_seconds: 2
+      artifact: mcap
+"""
+        f = tmp_path / "startup.yaml"
+        f.write_text(text)
+        cfg = config.load_streams(yaml.safe_load(f.read_text()))
+        assert cfg.broker.startswith("mqtts://")
+        assert cfg.channels[0].rate_hz == 5.0
+        assert cfg.events[0].name == "hard_decel"
+
+    def test_invalid_streams_raises_not_swallows(self) -> None:
+        with pytest.raises(StreamConfigError):
+            config.load_streams({"streams": {"channels": [{"topic": "/t", "rate_hz": 1}]}})
