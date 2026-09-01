@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     # (~4 MB) is possible while rotating.
     FLEET_SPOOL_MAX_BYTES: int = 268_435_456
 
+    # Max samples held in the router's bounded queue between the buffer tap
+    # and the router thread. On overflow the oldest sample is dropped to make
+    # room for the newest; the queue never blocks the tap.
+    FLEET_QUEUE_MAX_SAMPLES: int = 10_000
+
     # Default quantization resolution in meters for cloudini lossy compression
     CLOUDINI_DEFAULT_RESOLUTION: float = 0.001
     ###############################################
