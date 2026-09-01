@@ -1,0 +1,62 @@
+name: codex-gate
+
+# Codex review is mandatory: this check passes only once the Codex cloud
+# reviewer has reviewed the PR's *current head commit*. When it hasn't, the
+# job posts the "@codex review" trigger (once per commit) and fails; Codex
+# submitting its review re-runs the gate via pull_request_review.
+#
+# Note: the auto-trigger comment is posted by github-actions[bot]; if the
+# Codex app ignores bot-authored triggers, comment "@codex review" manually
+# and the gate turns green when the review lands.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  codex-review-gate:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a Codex review of the head commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          reviewed_shas() {
+            {
+              gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body' || true
+              gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body' || true
+            } | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \
+              | grep -oE '[a-f0-9]{7,40}$' || true
+          }
+          for sha in $(reviewed_shas); do
+            case "$HEAD_SHA" in
+              "$sha"*)
+                echo "Codex reviewed the head commit ($sha)."
+                exit 0
+                ;;
+            esac
+          done
+          marker="<!-- codex-gate:$HEAD_SHA -->"
+          if gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[].body' \
+               | grep -qF "$marker"; then
+            echo "Codex review already requested for $HEAD_SHA; waiting for it to land."
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" \
+              -f body="$(printf '@codex review\n\n%s' "$marker")" >/dev/null
+            echo "Requested a Codex review of $HEAD_SHA."
+          fi
+          echo "::error::Codex has not yet reviewed head commit $HEAD_SHA. The gate re-runs when its review is submitted."
+          exit 1
