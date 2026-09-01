@@ -12,10 +12,10 @@
                     guess topic names; read them from this call.
                 </item>
                 <item>
-                    Match the topics that exist to the check categories below by name and
-                    type - do not assume a fixed schema. Topic names differ per ecosystem;
-                    treat these as hints, not requirements, and adapt to whatever the log
-                    actually contains:
+                    Match the topics that exist to the check categories below by name first -
+                    `describe_data_source` returns topic names only, not types. Topic names
+                    differ per ecosystem; treat these as hints, not requirements, and adapt to
+                    whatever the log actually contains:
                     <list>
                         <item>
                             <b>PX4 (.ulg)</b>: `battery_status_*` (power),
@@ -40,8 +40,14 @@
                             topic (status).
                         </item>
                     </list>
-                    A check with no matching topic is SKIPPED, not failed - never fabricate
-                    a reading for a topic that doesn't exist.
+                    If a check's expected topics aren't found by name, don't rule it out yet:
+                    call `describe_topic` on any plausibly-relevant or ambiguous topic to
+                    check its fields before declaring the check skipped - type only becomes
+                    available from `describe_topic`, in the next step (e.g. a ROS topic named
+                    `/foo`, with no obvious semantics, may still carry `BatteryState` fields).
+                    Only once no topic - by name or by checked fields - matches is a check
+                    SKIPPED, not failed; never fabricate a reading for a topic that doesn't
+                    exist.
                 </item>
                 <item>
                     For each applicable check, call `describe_topic` once to confirm the
@@ -53,9 +59,10 @@
                         <item>
                             <b>Power</b>: min, max, and end-of-log voltage, plus the largest
                             single-sample drop (e.g.
-                            `voltage - LAG(voltage) OVER (ORDER BY timestamp_seconds)`).
-                            Flag sustained sag toward the pack's empty voltage, or a sudden
-                            drop out of proportion to the rest of the log.
+                            `LAG(voltage) OVER (ORDER BY timestamp_seconds) - voltage`, so
+                            MAX() surfaces the largest drop). Flag sustained sag toward the
+                            pack's empty voltage, or a sudden drop out of proportion to the
+                            rest of the log.
                         </item>
                         <item>
                             <b>IMU / vibration</b>: variance and max absolute value of linear
@@ -77,9 +84,12 @@
                         </item>
                         <item>
                             <b>Errors / status</b>: call `read_loggings` for the log's time
-                            range. If it returns nothing, look for a status/text topic
-                            instead (ArduPilot `MSG`, ROS `/rosout`) and query it with
-                            `query_messages`. Flag any ERROR; flag WARN only if numerous.
+                            range. If it returns nothing, or errors as unsupported for this
+                            format (e.g. Betaflight, which has no logging-message support),
+                            fall back to a status/text topic instead (ArduPilot `MSG`, ROS
+                            `/rosout`) and query it with `query_messages`. Flag any ERROR;
+                            flag WARN only if numerous. If neither `read_loggings` nor a
+                            status/text topic is available, this check is SKIPPED - say why.
                         </item>
                     </list>
                 </item>
