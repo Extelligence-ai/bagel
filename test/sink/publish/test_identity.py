@@ -12,6 +12,7 @@ import http.server
 import importlib
 import json
 import logging
+import pathlib
 import ssl
 import stat
 import sys
@@ -116,16 +117,23 @@ class _FakeEnrollHandler(http.server.BaseHTTPRequestHandler):
         robot_cert_pem, ca_cert_pem = _build_ca_and_robot_cert(
             "forced-cn-by-server", csr.public_key()
         )
-        body = json.dumps(
-            {
-                "cert_pem": robot_cert_pem.decode(),
-                "ca_pem": ca_cert_pem.decode(),
-                "broker_url": "mqtts://fleet.example.com:8883",
-                "tenant": "acme",
-                "robot_id": "robot-42",
-                "expires_at": "2027-01-01T00:00:00Z",
-            }
-        ).encode()
+        response_fields = {
+            "cert_pem": robot_cert_pem.decode(),
+            "ca_pem": ca_cert_pem.decode(),
+            "broker_url": "mqtts://fleet.example.com:8883",
+            "tenant": "acme",
+            "robot_id": "robot-42",
+            "expires_at": "2027-01-01T00:00:00Z",
+        }
+        # A "renew-url:<base>" token asks the fake server to additionally
+        # return that as `renew_url` -- proves enroll() stores an OPTIONAL,
+        # server-supplied renew endpoint distinct from its own base (see
+        # TestRenewUrl, which points this at a fake renew server on a
+        # different port than the enroll server, mirroring the real
+        # split-host topology).
+        if token is not None and token.startswith("renew-url:"):
+            response_fields["renew_url"] = token[len("renew-url:") :]
+        body = json.dumps(response_fields).encode()
         self._respond(200, body)
 
     def _respond(self, status: int, body: bytes) -> None:
@@ -301,6 +309,11 @@ class TestEnrollHappyPath:
             "broker_url": "mqtts://fleet.example.com:8883",
             "enroll_url": fake_server,
             "expires_at": "2027-01-01T00:00:00Z",
+            # Pointer fields (see the module docstring): enroll() always
+            # writes them explicitly, equal to load_identity's own defaults.
+            "key_file": "robot.key",
+            "cert_file": "robot.crt",
+            "ca_file": "ca.crt",
         }
         assert result.tenant == on_disk["tenant"]
 
@@ -451,6 +464,51 @@ class TestLoadIdentity:
         loaded = identity_mod.load_identity(directory)
         assert loaded.tenant == "acme"
 
+    def test_legacy_identity_yaml_without_pointer_fields_still_loads(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        # Simulates an identity.yaml written before the key_file/cert_file/
+        # ca_file pointer scheme existed: enroll() always writes them now
+        # (see TestEnrollHappyPath.test_identity_yaml_round_trips), so this
+        # strips them back out to exercise load_identity's fallback defaults.
+        directory = tmp_path / "identity"
+        enrolled = identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        for key in ("key_file", "cert_file", "ca_file", "renew_url"):
+            doc.pop(key, None)
+        (directory / "identity.yaml").write_text(yaml.safe_dump(doc))
+
+        loaded = identity_mod.load_identity(directory)
+
+        assert loaded.key_path == directory / "robot.key"
+        assert loaded.cert_path == directory / "robot.crt"
+        assert loaded.ca_path == directory / "ca.crt"
+        assert loaded.renew_url is None
+        assert loaded.tenant == enrolled.tenant
+        assert loaded.expires_at == enrolled.expires_at
+
+    def test_legacy_identity_without_pointer_fields_is_still_renewable(
+        self, fake_server: str, fake_renew_server: str, tmp_path: object
+    ) -> None:
+        # A legacy identity must not just load -- it must also be usable as
+        # the input to a real renewal (mTLS context built from its resolved
+        # fixed-name paths, then rotated onto the new pointer scheme).
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        for key in ("key_file", "cert_file", "ca_file"):
+            doc.pop(key, None)
+        doc["enroll_url"] = fake_renew_server
+        doc["robot_id"] = "renew-ok"
+        (directory / "identity.yaml").write_text(yaml.safe_dump(doc))
+        legacy = identity_mod.load_identity(directory)
+
+        result = identity_mod.renew(legacy)
+
+        assert result is not None
+        assert result.key_path != legacy.key_path  # rotated onto the pointer scheme
+        assert not legacy.key_path.exists()  # old fixed-name file unlinked
+
 
 class TestIsEnrolled:
     def test_true_after_enroll(self, fake_server: str, tmp_path: object) -> None:
@@ -460,6 +518,107 @@ class TestIsEnrolled:
 
     def test_false_on_empty_dir(self, tmp_path: object) -> None:
         assert identity_mod.is_enrolled(tmp_path / "nope") is False
+
+
+class TestRenewUrl:
+    """enroll_url and renew_url are separate BASES -- enroll (path-routed HTTPS)
+    and renew (an mTLS listener on the broker) commonly live on different
+    hosts entirely. See the module docstring.
+    """
+
+    def test_enroll_stores_renew_url_when_response_carries_one(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        token = "renew-url:https://renew.example.com:9443"  # noqa: S105 -- test token, not a secret
+        result = identity_mod.enroll(token, fake_server, directory)
+
+        assert result.renew_url == "https://renew.example.com:9443"
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        assert doc["renew_url"] == "https://renew.example.com:9443"
+
+    def test_enroll_leaves_renew_url_absent_when_response_omits_it(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        result = identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+
+        assert result.renew_url is None
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        assert "renew_url" not in doc
+
+    def test_load_identity_round_trips_renew_url(self, fake_server: str, tmp_path: object) -> None:
+        directory = tmp_path / "identity"
+        token = "renew-url:https://renew.example.com:9443"  # noqa: S105
+        identity_mod.enroll(token, fake_server, directory)
+
+        loaded = identity_mod.load_identity(directory)
+
+        assert loaded.renew_url == "https://renew.example.com:9443"
+
+    def test_load_identity_defaults_renew_url_to_none_when_field_absent(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+
+        loaded = identity_mod.load_identity(directory)
+
+        assert loaded.renew_url is None
+
+    def test_renew_targets_renew_url_not_enroll_url_when_present(
+        self, fake_server: str, fake_renew_server: str, tmp_path: object
+    ) -> None:
+        # The split-host topology proof: the enroll server and the renew
+        # server are two independent fake HTTP servers on two independent
+        # ephemeral ports. enroll_url is deliberately left pointing at a
+        # dead port (nothing listens there) -- if renew() derived its
+        # target from enroll_url instead of renew_url, this would fail with
+        # a connection-refused EnrollmentError-shaped None, not a success.
+        import socket
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        dead_port = sock.getsockname()[1]
+        sock.close()
+        dead_enroll_url = f"http://127.0.0.1:{dead_port}"
+
+        directory = tmp_path / "identity"
+        token = f"renew-url:{fake_renew_server}"
+        enrolled = identity_mod.enroll(token, fake_server, directory)
+        identity = dataclasses.replace(enrolled, robot_id="renew-ok", enroll_url=dead_enroll_url)
+        assert identity.renew_url == fake_renew_server
+
+        result = identity_mod.renew(identity)
+
+        assert result is not None  # reached the renew server, not the dead enroll_url
+
+    def test_renew_falls_back_to_enroll_url_when_renew_url_absent(
+        self, fake_server: str, fake_renew_server: str, tmp_path: object
+    ) -> None:
+        # Today's behavior, preserved: no renew_url on the identity means
+        # renew() must still target enroll_url/v1/renew.
+        identity = _identity_for_renew(fake_server, fake_renew_server, tmp_path, "renew-ok")
+        assert identity.renew_url is None
+
+        result = identity_mod.renew(identity)
+
+        assert result is not None
+
+    def test_renew_url_survives_a_renewal_rewrite(
+        self, fake_server: str, fake_renew_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        token = f"renew-url:{fake_renew_server}"
+        enrolled = identity_mod.enroll(token, fake_server, directory)
+        identity = dataclasses.replace(enrolled, robot_id="renew-ok")
+
+        result = identity_mod.renew(identity)
+
+        assert result is not None
+        assert result.renew_url == fake_renew_server
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        assert doc["renew_url"] == fake_renew_server
 
 
 def test_identity_module_does_not_import_paho_or_cryptography_eagerly(
@@ -544,44 +703,91 @@ class TestShouldAttemptRenewal:
 
 
 class TestRenewHappyPath:
-    def test_replaces_key_and_cert_and_updates_identity_yaml(
+    def test_writes_new_files_under_fresh_basenames_and_repoints_identity_yaml(
         self, fake_server: str, fake_renew_server: str, tmp_path: object
     ) -> None:
         identity = _identity_for_renew(fake_server, fake_renew_server, tmp_path, "renew-ok")
         old_key_bytes = identity.key_path.read_bytes()
         old_cert_bytes = identity.cert_path.read_bytes()
+        old_key_path, old_cert_path = identity.key_path, identity.cert_path
 
         result = identity_mod.renew(identity)
 
         assert result is not None
         assert result.expires_at == "2028-01-01T00:00:00Z"
-        assert result.key_path == identity.key_path
-        assert result.cert_path == identity.cert_path
-        assert result.ca_path == identity.ca_path
         assert result.tenant == identity.tenant
         assert result.broker_url == identity.broker_url
 
-        # New key bytes on disk differ from the old ones -- a fresh key was
-        # generated, not the old one re-used (spec §6, read strictly).
-        assert identity.key_path.read_bytes() != old_key_bytes
-        assert identity.cert_path.read_bytes() != old_cert_bytes
+        # The pointer scheme: renew() never overwrites the old paths in
+        # place -- the new files live under fresh basenames.
+        assert result.key_path != old_key_path
+        assert result.cert_path != old_cert_path
+        assert result.key_path.parent == old_key_path.parent
 
-        mode = stat.S_IMODE(identity.key_path.stat().st_mode)
+        # New key/cert bytes differ from the old ones -- a fresh key was
+        # generated, not the old one re-used (spec §6, read strictly).
+        assert result.key_path.read_bytes() != old_key_bytes
+        assert result.cert_path.read_bytes() != old_cert_bytes
+
+        mode = stat.S_IMODE(result.key_path.stat().st_mode)
         assert mode == 0o600
 
-        doc = yaml.safe_load((identity.key_path.parent / "identity.yaml").read_text())
+        # The old files are unlinked (best-effort cleanup) once the pointer
+        # swap has committed.
+        assert not old_key_path.exists()
+        assert not old_cert_path.exists()
+
+        doc = yaml.safe_load((result.key_path.parent / "identity.yaml").read_text())
         assert doc["expires_at"] == "2028-01-01T00:00:00Z"
+        assert doc["key_file"] == result.key_path.name
+        assert doc["cert_file"] == result.cert_path.name
+        assert doc["ca_file"] == result.ca_path.name
         assert "last_renewal_attempt_at" in doc
 
-    def test_ca_replaced_when_response_includes_ca_pem(
+    def test_ca_replaced_under_a_fresh_basename_when_response_includes_ca_pem(
         self, fake_server: str, fake_renew_server: str, tmp_path: object
     ) -> None:
         identity = _identity_for_renew(fake_server, fake_renew_server, tmp_path, "renew-ok")
         old_ca_bytes = identity.ca_path.read_bytes()
+        old_ca_path = identity.ca_path
 
-        identity_mod.renew(identity)
+        result = identity_mod.renew(identity)
 
-        assert identity.ca_path.read_bytes() != old_ca_bytes
+        assert result is not None
+        assert result.ca_path != old_ca_path
+        assert result.ca_path.read_bytes() != old_ca_bytes
+        assert not old_ca_path.exists()  # unlinked once the swap committed
+
+    def test_ca_pointer_unchanged_when_response_omits_ca_pem(
+        self,
+        fake_server: str,
+        fake_renew_server: str,
+        tmp_path: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The default "renew-ok" scenario's response always carries ca_pem;
+        # this drives the "server didn't re-issue the CA" branch by
+        # stripping it out of the parsed response before renew() inspects it.
+        identity = _identity_for_renew(fake_server, fake_renew_server, tmp_path, "renew-ok")
+        old_ca_path = identity.ca_path
+        old_ca_bytes = old_ca_path.read_bytes()
+
+        real_loads = json.loads
+
+        def strip_ca_pem(raw: object) -> object:
+            payload = real_loads(raw)
+            if isinstance(payload, dict):
+                payload.pop("ca_pem", None)
+            return payload
+
+        monkeypatch.setattr(identity_mod.json, "loads", strip_ca_pem)
+
+        result = identity_mod.renew(identity)
+
+        assert result is not None
+        assert result.ca_path == old_ca_path  # pointer untouched
+        assert result.ca_path.read_bytes() == old_ca_bytes  # never rewritten
+        assert old_ca_path.exists()  # never unlinked either
 
     def test_new_key_is_a_valid_matching_pair_with_new_cert(
         self, fake_server: str, fake_renew_server: str, tmp_path: object
@@ -607,6 +813,137 @@ class TestRenewHappyPath:
         assert result is not None
         loaded = identity_mod.load_identity(identity.key_path.parent)
         assert loaded.expires_at == result.expires_at
+
+
+class TestRenewPointerCommitCrashSemantics:
+    """CRITICAL fix: identity.yaml is the single atomic commit point.
+
+    A crash anywhere before the identity.yaml swap must leave the pointer
+    resolving to the old, complete, matched, USABLE pair (new files are
+    orphans); a crash at/after the swap means the pointer already names a
+    complete new pair (all its files were fully written before the swap).
+    There is no reachable state where the pointer names a mismatched pair.
+    """
+
+    def test_crash_before_the_yaml_swap_leaves_the_old_pair_pointed_at_and_usable(
+        self,
+        fake_server: str,
+        fake_renew_server: str,
+        tmp_path: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        identity = _identity_for_renew(fake_server, fake_renew_server, tmp_path, "renew-ok")
+        directory = identity.key_path.parent
+        old_key_path, old_cert_path, old_ca_path = (
+            identity.key_path,
+            identity.cert_path,
+            identity.ca_path,
+        )
+        files_before = {p.name for p in directory.iterdir()}
+
+        real_write_identity_yaml = identity_mod._write_identity_yaml
+
+        def crash_on_pointer_swap(
+            renewed_identity: "identity_mod.Identity", *, key_file: str, **kwargs: object
+        ) -> None:
+            if key_file != renewed_identity.key_path.name:
+                # This IS the success-path pointer swap (a fresh, "robot-"
+                # versioned basename, never the identity's current one) --
+                # simulate a crash exactly here, before os.replace commits it.
+                raise RuntimeError("simulated crash during the identity.yaml swap")
+            # Otherwise it's the failure-path _record_renewal_attempt call
+            # (identity's own CURRENT basenames) -- let that one through so
+            # the attempt still gets recorded, same as a real process would
+            # manage on its next tick.
+            return real_write_identity_yaml(renewed_identity, key_file=key_file, **kwargs)
+
+        monkeypatch.setattr(identity_mod, "_write_identity_yaml", crash_on_pointer_swap)
+
+        result = identity_mod.renew(identity)
+
+        assert result is None  # renew() caught the simulated crash; never raised
+
+        # New versioned files WERE written before the simulated crash (step
+        # 1 of the pointer-commit scheme) -- they exist on disk as orphans,
+        # but nothing points at them yet.
+        files_after = {p.name for p in directory.iterdir()}
+        new_orphans = files_after - files_before
+        assert new_orphans  # step 1's writes landed
+
+        # The old pointer is untouched: load_identity still resolves to the
+        # OLD, complete pair.
+        loaded = identity_mod.load_identity(directory)
+        assert loaded.key_path == old_key_path
+        assert loaded.cert_path == old_cert_path
+        assert loaded.ca_path == old_ca_path
+        assert old_key_path.exists()
+        assert old_cert_path.exists()
+        assert old_ca_path.exists()
+
+        # And that old pair is still genuinely USABLE -- building the mTLS
+        # context over it (load_cert_chain/load_verify_locations) succeeds,
+        # proving it's a matched pair, not the mismatched hazard this scheme
+        # exists to make unreachable.
+        identity_mod._build_mtls_context(loaded)  # must not raise
+
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        assert "last_renewal_attempt_at" in doc  # the fallback attempt-record got through
+        assert doc["key_file"] == old_key_path.name  # pointer never moved
+
+    def test_crash_after_the_yaml_swap_the_new_pair_is_complete_and_usable(
+        self, fake_server: str, fake_renew_server: str, tmp_path: object
+    ) -> None:
+        # There's no code between the yaml swap and the return that can
+        # meaningfully "crash" (best-effort unlinks swallow their own
+        # errors) -- so this documents the postcondition directly: once the
+        # swap has happened at all, everything it points at was already
+        # fully written by step 1, so the new pair is immediately complete
+        # and independently usable, exactly like the old pair was pre-swap.
+        identity = _identity_for_renew(fake_server, fake_renew_server, tmp_path, "renew-ok")
+        directory = identity.key_path.parent
+
+        result = identity_mod.renew(identity)
+
+        assert result is not None
+        loaded = identity_mod.load_identity(directory)
+        assert loaded.key_path == result.key_path
+        assert loaded.cert_path == result.cert_path
+        assert loaded.ca_path == result.ca_path
+        identity_mod._build_mtls_context(loaded)  # must not raise: a matched pair
+
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        assert doc["key_file"] == result.key_path.name
+        assert doc["cert_file"] == result.cert_path.name
+        assert doc["ca_file"] == result.ca_path.name
+
+    def test_unlink_failure_during_cleanup_does_not_fail_the_renewal(
+        self,
+        fake_server: str,
+        fake_renew_server: str,
+        tmp_path: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Step 3 (best-effort cleanup) is disk hygiene, not correctness: the
+        # swap already committed in step 2, so a failure removing the
+        # now-orphaned old files must not turn a successful renewal into a
+        # failed one.
+        identity = _identity_for_renew(fake_server, fake_renew_server, tmp_path, "renew-ok")
+        old_key_path = identity.key_path
+
+        real_unlink = pathlib.Path.unlink
+
+        def flaky_unlink(self: pathlib.Path, *args: object, **kwargs: object) -> None:
+            if self == old_key_path:
+                raise OSError("simulated permission denied")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "unlink", flaky_unlink)
+
+        result = identity_mod.renew(identity)
+
+        assert result is not None  # the swap succeeded; cleanup failure is swallowed
+        assert result.key_path.exists()
+        assert old_key_path.exists()  # the failed-to-unlink orphan is simply left behind
 
 
 class TestRenewMtlsContext:

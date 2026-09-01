@@ -499,7 +499,21 @@ class TestIdentityWiring:
         # call this same closure through the real thread) immediately and
         # asynchronously, racing this test's own explicit call.
         old_identity = _fake_identity(tmp_path, expires_at="2026-09-05T00:00:00Z")  # soon
-        new_identity = dataclasses.replace(old_identity, expires_at="2027-09-05T00:00:00Z")
+        # The real identity.renew() returns a new Identity pointing at fresh,
+        # versioned file basenames (the pointer-commit scheme -- see
+        # identity.py's TestRenewPointerCommitCrashSemantics), not the same
+        # key_path/cert_path/ca_path as before. This fake mirrors that shape
+        # rather than only changing expires_at, so this test would catch a
+        # bug where the service's wiring somehow held onto stale paths
+        # instead of the whole new Identity renew() hands back.
+        directory = tmp_path / "identity"
+        new_identity = dataclasses.replace(
+            old_identity,
+            expires_at="2027-09-05T00:00:00Z",
+            key_path=directory / "robot-999.key",
+            cert_path=directory / "robot-999.crt",
+            ca_path=directory / "ca-999.crt",
+        )
         renew_calls: list[Identity] = []
 
         monkeypatch.setattr(service_mod, "should_attempt_renewal", lambda *a, **kw: True)
@@ -522,6 +536,8 @@ class TestIdentityWiring:
 
         assert renew_calls == [old_identity]
         assert service._identity is new_identity
+        assert service._identity.key_path == directory / "robot-999.key"
+        assert service._identity.key_path != old_identity.key_path
         assert service.status()["cert_expires_at"] == "2027-09-05T00:00:00Z"
         assert service._last_renewal_attempt_at is not None
 

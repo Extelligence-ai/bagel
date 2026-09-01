@@ -6,18 +6,36 @@ is imported lazily (inside functions) so importing this module never trips
 the package's no-eager-import invariant alongside paho.
 
 Identity is stored as four files under a directory (default
-``~/.bagel/identity``, see ``settings.FLEET_IDENTITY_DIRECTORY``):
-``robot.key`` (mode 0600), ``robot.crt``, ``ca.crt``, and ``identity.yaml``
-(tenant, robot_id, broker_url, enroll_url, expires_at). All writes are
-atomic (sibling tempfile + os.replace).
+``~/.bagel/identity``, see ``settings.FLEET_IDENTITY_DIRECTORY``): a key
+(mode 0600), a cert, a CA cert, and ``identity.yaml``, which carries
+``tenant``, ``robot_id``, ``broker_url``, ``enroll_url``, ``expires_at``,
+and -- a pointer scheme -- the OPTIONAL ``key_file``/``cert_file``/
+``ca_file`` basenames naming the other three files. ``enroll()`` always
+writes them (as ``robot.key``/``robot.crt``/``ca.crt``, the historical fixed
+names) so every identity this module writes carries an explicit pointer;
+``load_identity`` defaults each to its historical fixed name when absent, so
+an identity.yaml written before this scheme existed still loads unchanged.
+``renew()`` is the reason the pointer is optional/overridable in the first
+place: each successful renewal writes its new key/cert (and CA, if the
+server issued one) under fresh, never-before-used basenames rather than
+overwriting the files identity.yaml currently points at -- see its
+docstring for why. All writes are atomic (sibling tempfile + os.replace).
+
+``enroll_url`` and the OPTIONAL ``renew_url`` are both BASE urls (no
+trailing path) -- the client appends ``/v1/enroll`` and ``/v1/renew``
+itself. They commonly point at different hosts entirely: enroll is a
+path-routed HTTPS endpoint (e.g. an ALB), while renew is an mTLS listener on
+the broker itself, which is a separate host:port -- so ``renew()`` targets
+``identity.renew_url`` when the enroll response carried one, falling back to
+``identity.enroll_url`` (today's behavior) when it didn't.
 
 The enrollment token appears in the POST body only. It is never logged,
 never stored, and never embedded in an ``EnrollmentError`` reason.
 
 ``renew()`` (see below) refreshes an existing identity's certificate ahead
 of expiry: ``should_attempt_renewal`` decides when it is due, and ``renew``
-does the mTLS POST + atomic file replacement. See ``renew()``'s docstring
-for the ordering guarantees and what it does NOT do (force a live publisher
+does the mTLS POST + atomic pointer swap. See ``renew()``'s docstring for
+the ordering guarantees and what it does NOT do (force a live publisher
 reconnect).
 """
 
@@ -55,7 +73,15 @@ _RENEWAL_NOT_OFFERED_STATUSES = (404, 501)
 
 @dataclasses.dataclass
 class Identity:
-    """A robot's enrolled fleet identity: certs on disk plus broker metadata."""
+    """A robot's enrolled fleet identity: certs on disk plus broker metadata.
+
+    ``renew_url``, when set, is where ``renew()`` targets its POST instead of
+    ``enroll_url`` -- see the module docstring for why enroll and renew can
+    live on different hosts. Defaults to ``None`` (no renew endpoint known:
+    ``renew()`` falls back to ``enroll_url``) so every existing construction
+    of this dataclass -- and every identity.yaml written before this field
+    existed -- keeps working unchanged.
+    """
 
     tenant: str
     robot_id: str
@@ -65,6 +91,7 @@ class Identity:
     key_path: pathlib.Path
     cert_path: pathlib.Path
     ca_path: pathlib.Path
+    renew_url: str | None = None
 
     @property
     def robot(self) -> str:
@@ -133,7 +160,11 @@ def enroll(token: str, enroll_url: str, directory: pathlib.Path) -> Identity:
     POSTs ``{"token": token, "csr_pem": ...}`` to ``{enroll_url}/v1/enroll``. On a
     200 response, writes ``robot.key`` (0600), ``robot.crt``, ``ca.crt``, and
     ``identity.yaml`` atomically under ``directory`` and returns the resulting
-    Identity. The token is sent in the request body only -- it is never logged
+    Identity. If the response carries an OPTIONAL ``renew_url`` (see the
+    module docstring: renew commonly lives on a different host than enroll),
+    it is stored too and ``renew()`` targets it instead of ``enroll_url``;
+    absent, ``renew()`` falls back to ``enroll_url``. The token is sent in
+    the request body only -- it is never logged
     and never appears in a raised error's message: an other-status HTTPError
     body is echoed as a snippet for diagnostics, but the literal token is
     redacted from it first (defense against a debug-mode server, a reflecting
@@ -206,13 +237,30 @@ def enroll(token: str, enroll_url: str, directory: pathlib.Path) -> Identity:
     _atomic_write(cert_path, payload["cert_pem"].encode())
     _atomic_write(ca_path, payload["ca_pem"].encode())
 
+    # renew_url is OPTIONAL in the response (see the module docstring): a
+    # server that doesn't send one means "renew from the same base as
+    # enroll" -- so the key is only written when the response actually
+    # carried it, keeping "absent" and "explicitly the same as enroll_url"
+    # distinguishable on disk.
+    renew_url = payload.get("renew_url")
+
     doc = {
         "tenant": payload["tenant"],
         "robot_id": payload["robot_id"],
         "broker_url": payload["broker_url"],
         "enroll_url": enroll_url,
         "expires_at": payload["expires_at"],
+        # Pointer fields, written explicitly even though they equal
+        # load_identity's own defaults -- see the module docstring: every
+        # identity this module writes carries an explicit pointer, so the
+        # pointer scheme is the one mechanism rather than "implicit legacy
+        # fixed names vs. explicit renewed names".
+        "key_file": key_path.name,
+        "cert_file": cert_path.name,
+        "ca_file": ca_path.name,
     }
+    if renew_url is not None:
+        doc["renew_url"] = renew_url
     _atomic_write(identity_path, yaml.safe_dump(doc).encode())
 
     return Identity(
@@ -224,11 +272,19 @@ def enroll(token: str, enroll_url: str, directory: pathlib.Path) -> Identity:
         key_path=key_path,
         cert_path=cert_path,
         ca_path=ca_path,
+        renew_url=renew_url,
     )
 
 
 def load_identity(directory: pathlib.Path) -> Identity:
     """Load a previously stored Identity from ``directory``.
+
+    The key/cert/CA basenames come from identity.yaml's optional
+    ``key_file``/``cert_file``/``ca_file`` pointer fields (see the module
+    docstring), defaulting to the historical fixed names
+    (``robot.key``/``robot.crt``/``ca.crt``) when a field is absent -- so an
+    identity.yaml from before the pointer scheme, or one hand-written
+    without it, still loads correctly.
 
     Raises:
         FleetNotEnrolledError: if identity.yaml is missing, unparsable, missing a
@@ -237,9 +293,6 @@ def load_identity(directory: pathlib.Path) -> Identity:
     """
     directory = pathlib.Path(directory)
     identity_path = directory / "identity.yaml"
-    key_path = directory / "robot.key"
-    cert_path = directory / "robot.crt"
-    ca_path = directory / "ca.crt"
 
     try:
         text = identity_path.read_text()
@@ -276,6 +329,11 @@ def load_identity(directory: pathlib.Path) -> Identity:
     if missing:
         raise FleetNotEnrolledError(f"identity.yaml at {identity_path} missing: {missing}")
 
+    key_path = directory / data.get("key_file", "robot.key")
+    cert_path = directory / data.get("cert_file", "robot.crt")
+    ca_path = directory / data.get("ca_file", "ca.crt")
+    renew_url = data.get("renew_url")  # optional -- absent means "fall back to enroll_url"
+
     for path in (key_path, cert_path, ca_path):
         if not path.is_file():
             raise FleetNotEnrolledError(f"missing identity file: {path}")
@@ -289,6 +347,7 @@ def load_identity(directory: pathlib.Path) -> Identity:
         key_path=key_path,
         cert_path=cert_path,
         ca_path=ca_path,
+        renew_url=renew_url,
     )
 
 
@@ -352,19 +411,33 @@ def _build_mtls_context(identity: Identity) -> ssl.SSLContext:
     return context
 
 
-def _write_identity_yaml(
-    identity: Identity, *, expires_at: str, last_renewal_attempt_at: float
+def _write_identity_yaml(  # noqa: PLR0913 -- one field per identity.yaml key; splitting hides the pointer's atomicity
+    identity: Identity,
+    *,
+    expires_at: str,
+    last_renewal_attempt_at: float,
+    key_file: str,
+    cert_file: str,
+    ca_file: str,
 ) -> None:
-    """Atomically (re)write ``identity.yaml`` alongside ``identity``'s key file.
+    """Atomically (re)write ``identity.yaml`` -- THE commit point for a renewal.
 
-    Used by both the success and failure paths of ``renew()``: on failure
-    only ``last_renewal_attempt_at`` changes (``expires_at`` is echoed back
-    unchanged); on success both are the new values. Like ``enroll()``, this
-    rewrites the whole document from ``identity``'s known fields rather than
-    reading-modifying-writing the file on disk, so any unknown key a future
-    version added to it (other than the five ``load_identity`` requires plus
-    this one) is not preserved across a renewal -- same tradeoff `enroll()`
-    already makes.
+    This is a single ``_atomic_write`` (sibling tempfile + ``os.replace``, so
+    it is itself atomic: readers only ever see the fully-old or fully-new
+    document, never a partial one). ``renew()`` relies on that: it always
+    finishes writing a COMPLETE, self-consistent key/cert/ca file set under
+    fresh basenames *before* calling this, so this call is the one moment a
+    renewal actually takes effect -- see ``_renew_inner``'s success path and
+    ``renew()``'s docstring for the full crash-safety argument.
+
+    Used by both the success and failure paths of ``renew()``: on failure,
+    ``key_file``/``cert_file``/``ca_file``/``expires_at`` are ``identity``'s
+    CURRENT (unchanged) pointer/expiry -- only ``last_renewal_attempt_at``
+    moves; on success they are the new pointer and the new expiry. Like
+    ``enroll()``, this rewrites the whole document from known fields rather
+    than reading-modifying-writing the file on disk, so any unknown key a
+    future version added to it is not preserved across a renewal -- same
+    tradeoff ``enroll()`` already makes.
     """
     directory = identity.key_path.parent
     doc = {
@@ -374,14 +447,114 @@ def _write_identity_yaml(
         "enroll_url": identity.enroll_url,
         "expires_at": expires_at,
         "last_renewal_attempt_at": last_renewal_attempt_at,
+        "key_file": key_file,
+        "cert_file": cert_file,
+        "ca_file": ca_file,
     }
+    if identity.renew_url is not None:
+        doc["renew_url"] = identity.renew_url
     _atomic_write(directory / "identity.yaml", yaml.safe_dump(doc).encode())
 
 
 def _record_renewal_attempt(identity: Identity, attempt_at: float) -> None:
-    """Persist ``last_renewal_attempt_at`` with ``expires_at`` unchanged (a failed attempt)."""
+    """Persist ``last_renewal_attempt_at``; pointer and ``expires_at`` unchanged (a failed attempt).
+
+    Passes ``identity``'s CURRENT file basenames straight through -- a
+    failed attempt never moves the pointer, so this can't be the thing that
+    turns a matched pair into a mismatched one (see ``renew()``'s
+    docstring).
+    """
     _write_identity_yaml(
-        identity, expires_at=identity.expires_at, last_renewal_attempt_at=attempt_at
+        identity,
+        expires_at=identity.expires_at,
+        last_renewal_attempt_at=attempt_at,
+        key_file=identity.key_path.name,
+        cert_file=identity.cert_path.name,
+        ca_file=identity.ca_path.name,
+    )
+
+
+def _commit_renewed_files(
+    identity: Identity, new_key_pem: bytes, payload: dict, now: float
+) -> Identity:
+    """Commit a renewal via the pointer scheme: write, then swap, then clean up.
+
+    NOT an in-place overwrite of ``identity.key_path``/``cert_path``/
+    ``ca_path`` -- overwriting those in place is exactly what let a crash
+    between the key and cert writes leave identity.yaml's fixed pointer
+    resolving to a mismatched new-key/old-cert pair, permanently:
+    ``is_enrolled()`` still blesses it, and every subsequent renewal's
+    ``_build_mtls_context`` fails the same way forever, since it's the same
+    broken pair being loaded and re-authenticated with each time.
+
+    Instead:
+      1. Write the COMPLETE new file set under fresh, never-before-used
+         basenames. identity.yaml still names the OLD files, which this step
+         never touches -- so a crash anywhere in this step leaves the old
+         pointer resolving to the old, complete, matched, USABLE pair; these
+         new files are just inert orphans until step 2 commits.
+      2. ONE atomic identity.yaml write (``_write_identity_yaml``, itself a
+         single tempfile+os.replace) repoints
+         ``key_file``/``cert_file``/``ca_file`` at the new basenames. This is
+         the only moment the renewal takes effect: a crash before it leaves
+         the old pointer untouched; a crash during/after it means
+         ``os.replace`` either didn't happen (old pointer survives) or fully
+         happened (new pointer, already fully written by step 1) -- never a
+         mix. There is no reachable state where the pointer names a
+         mismatched key/cert pair.
+      3. Best-effort cleanup of the now-superseded old files. Step 2 already
+         committed, so this is pure disk hygiene, not correctness: if it's
+         skipped (a crash) or fails (permissions), the old files are just
+         harmless, unreferenced orphans -- nothing in identity.yaml points at
+         them anymore.
+
+    ``payload`` must already be validated to carry ``cert_pem``/``expires_at``
+    -- this function assumes a well-formed 200 response.
+    """
+    directory = identity.key_path.parent
+    # Nanosecond-precision version tag: guarantees the new basenames never
+    # collide with identity's current ones, or a prior renewal's run
+    # back-to-back -- a collision would mean this renewal's step-1 writes
+    # land on the file identity.yaml CURRENTLY points at, before the step-2
+    # swap, which would recreate exactly the in-place-overwrite hazard this
+    # scheme exists to avoid.
+    version = time.time_ns()
+    new_key_file = f"robot-{version}.key"
+    new_cert_file = f"robot-{version}.crt"
+    write_new_ca = "ca_pem" in payload
+    new_ca_file = f"ca-{version}.crt" if write_new_ca else identity.ca_path.name
+
+    _atomic_write(directory / new_key_file, new_key_pem, mode=0o600)
+    _atomic_write(directory / new_cert_file, payload["cert_pem"].encode())
+    if write_new_ca:
+        _atomic_write(directory / new_ca_file, payload["ca_pem"].encode())
+
+    _write_identity_yaml(
+        identity,
+        expires_at=payload["expires_at"],
+        last_renewal_attempt_at=now,
+        key_file=new_key_file,
+        cert_file=new_cert_file,
+        ca_file=new_ca_file,
+    )
+
+    for old_path in (identity.key_path, identity.cert_path):
+        try:
+            old_path.unlink()
+        except OSError:
+            pass  # orphan is inert -- identity.yaml no longer points at it
+    if write_new_ca:
+        try:
+            identity.ca_path.unlink()
+        except OSError:
+            pass
+
+    return dataclasses.replace(
+        identity,
+        expires_at=payload["expires_at"],
+        key_path=directory / new_key_file,
+        cert_path=directory / new_cert_file,
+        ca_path=directory / new_ca_file,
     )
 
 
@@ -389,8 +562,14 @@ def _renew_inner(  # noqa: PLR0911 -- one early return per distinct failure bran
     identity: Identity, now: float, logger: logging.Logger
 ) -> Identity | None:
     """Attempt the actual renewal; ``renew()`` wraps this in a catch-all safety net."""
-    if not identity.enroll_url.startswith(("https://", "http://")):
-        logger.warning("renewal skipped: enroll_url is not http(s): %s", identity.enroll_url)
+    # renew_url, when the enroll response carried one, else fall back to
+    # enroll_url (today's behavior) -- see the module docstring: enroll and
+    # renew commonly live on different hosts (enroll: path-routed HTTPS;
+    # renew: an mTLS listener on the broker itself), so deriving the renew
+    # target from enroll_url alone would 404 against a real cloud deployment.
+    target_base = identity.renew_url or identity.enroll_url
+    if not target_base.startswith(("https://", "http://")):
+        logger.warning("renewal skipped: renew target is not http(s): %s", target_base)
         _record_renewal_attempt(identity, now)
         return None
 
@@ -398,7 +577,7 @@ def _renew_inner(  # noqa: PLR0911 -- one early return per distinct failure bran
 
     body = json.dumps({"csr_pem": new_csr_pem.decode()}).encode()
     request = urllib.request.Request(  # noqa: S310 -- scheme enforced to http(s) above
-        f"{identity.enroll_url}/v1/renew",
+        f"{target_base}/v1/renew",
         data=body,
         headers={"Content-Type": "application/json"},
     )
@@ -406,7 +585,7 @@ def _renew_inner(  # noqa: PLR0911 -- one early return per distinct failure bran
     try:
         # urlopen raises HTTPError on non-2xx; context= is a no-op for the
         # http:// scheme a test's fake server uses, exercised for real only
-        # against an https:// enroll_url in production.
+        # against an https:// renew target in production.
         with urllib.request.urlopen(request, context=context, timeout=30) as response:  # noqa: S310
             raw = response.read()
     except urllib.error.HTTPError as exc:
@@ -442,38 +621,39 @@ def _renew_inner(  # noqa: PLR0911 -- one early return per distinct failure bran
         _record_renewal_attempt(identity, now)
         return None
 
-    # Key first (0600), then the cert, then (if offered) the CA, then the
-    # yaml pointer document last -- same crash-safety ordering as enroll():
-    # a crash mid-sequence never leaves a readable key with a stale cert
-    # alongside it plus an identity.yaml that still claims the old expiry.
-    _atomic_write(identity.key_path, new_key_pem, mode=0o600)
-    _atomic_write(identity.cert_path, payload["cert_pem"].encode())
-    if "ca_pem" in payload:
-        _atomic_write(identity.ca_path, payload["ca_pem"].encode())
-    _write_identity_yaml(identity, expires_at=payload["expires_at"], last_renewal_attempt_at=now)
-
-    return dataclasses.replace(identity, expires_at=payload["expires_at"])
+    return _commit_renewed_files(identity, new_key_pem, payload, now)
 
 
 def renew(identity: Identity) -> Identity | None:
     """Renew ``identity``'s certificate: a NEW key + CSR, POSTed over mTLS.
 
     Generates a brand new private key and CSR -- not a re-use of the current
-    key -- and POSTs it to ``{identity.enroll_url}/v1/renew`` authenticated
-    with the CURRENT cert/key pair over mTLS (``ssl.SSLContext`` +
-    ``load_cert_chain``/``load_verify_locations``, see
+    key -- and POSTs it to ``{identity.renew_url or identity.enroll_url}/v1/renew``
+    (see the module docstring: enroll and renew commonly live on different
+    hosts) authenticated with the CURRENT cert/key pair over mTLS
+    (``ssl.SSLContext`` + ``load_cert_chain``/``load_verify_locations``, see
     ``_build_mtls_context``). Per spec §6, renewal happens "with a new CSR";
     read strictly, a new CSR implies a new key backing it, so a compromised
     old key is never perpetuated across a renewal.
 
-    On a 200 response, ``robot.key`` (0600), ``robot.crt``, ``ca.crt`` (only
-    if the response carries a ``ca_pem`` -- the server need not re-issue the
-    CA on every renewal), and ``identity.yaml`` (updated ``expires_at`` and
-    ``last_renewal_attempt_at``) are all replaced atomically, and the
-    returned ``Identity`` reflects the new files. On any failure below --
-    including a 501/404 meaning the server does not offer renewal on this
-    deployment yet -- NOTHING is written except ``last_renewal_attempt_at``
-    in ``identity.yaml``: the old key/cert/ca and ``expires_at`` are left
+    On a 200 response, this uses identity.yaml's pointer scheme (see the
+    module docstring) rather than overwriting the current key/cert/ca files
+    in place: the new key (0600), cert, and (only if the response carries a
+    ``ca_pem``) CA are all written under fresh, never-before-used basenames
+    first; THEN one atomic identity.yaml write repoints
+    ``key_file``/``cert_file``/``ca_file`` at them (with the new
+    ``expires_at`` and ``last_renewal_attempt_at``) -- the single moment the
+    renewal takes effect; THEN the now-superseded old files are unlinked,
+    best-effort. An in-place overwrite instead would let a crash between the
+    key and cert writes leave the pointer resolving to a mismatched
+    new-key/old-cert pair FOREVER (``is_enrolled()`` still blesses it, and
+    every subsequent renewal's ``_build_mtls_context`` fails the same way
+    against the same broken pair) -- the pointer scheme makes that state
+    unreachable: identity.yaml always names either the complete old pair or
+    the complete new one, never a mix. On any failure below -- including a
+    501/404 meaning the server does not offer renewal on this deployment yet
+    -- the pointer is NEVER moved: only ``last_renewal_attempt_at`` changes
+    in ``identity.yaml``, and the old key/cert/ca/``expires_at`` are left
     completely untouched, so a failed renewal never leaves the robot with a
     broken or missing identity.
 
