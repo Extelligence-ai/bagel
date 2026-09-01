@@ -273,6 +273,78 @@ class TestHeartbeatThread:
         assert warnings
         assert any("heartbeat" in r.getMessage() for r in warnings)
 
+    def test_factory_failure_skips_beat_logs_warning_and_stays_alive(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        pub = FakePublisher()
+
+        def boom() -> dict:
+            raise RuntimeError("spool corrupt")
+
+        thread = HeartbeatThread(pub, boom, interval_s=0.01)
+
+        with caplog.at_level(logging.WARNING):
+            thread.start()
+            deadline = time.monotonic() + 2.0
+            while thread.last_error is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert thread.alive is True  # the factory failure never escaped run()'s loop
+            thread.stop()
+
+        assert pub.heartbeat_calls == []
+        assert thread.alive is False  # stopped and joined
+        assert thread.last_error is not None
+        assert "spool corrupt" in thread.last_error
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warnings
+        assert any("payload factory" in r.getMessage() for r in warnings)
+
+    def test_factory_failure_synchronous_tick_skips_and_sets_last_error(self) -> None:
+        pub = FakePublisher()
+
+        def boom() -> dict:
+            raise RuntimeError("spool corrupt")
+
+        thread = HeartbeatThread(pub, boom, interval_s=HEARTBEAT_INTERVAL_S)
+
+        thread._tick()  # drive synchronously; no sleeping needed
+
+        assert pub.heartbeat_calls == []
+        assert thread.last_error is not None
+        assert "spool corrupt" in thread.last_error
+
+    def test_factory_recovery_clears_last_error(self) -> None:
+        pub = FakePublisher()
+        calls = {"n": 0}
+
+        def flaky() -> dict:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("disk missing")
+            return {"v": 1}
+
+        thread = HeartbeatThread(pub, flaky, interval_s=HEARTBEAT_INTERVAL_S)
+
+        thread._tick()
+        assert thread.last_error is not None
+
+        thread._tick()
+        assert thread.last_error is None
+        assert pub.heartbeat_calls == [{"v": 1}]
+
+    def test_thread_alive_running(self) -> None:
+        pub = FakePublisher()
+        thread = HeartbeatThread(pub, lambda: {"v": 1}, interval_s=0.01)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 2.0
+            while not thread.alive and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert thread.alive is True
+        finally:
+            thread.stop()
+        assert thread.alive is False
+
     def test_stop_joins_promptly(self) -> None:
         pub = FakePublisher()
         thread = HeartbeatThread(pub, lambda: {"v": 1}, interval_s=HEARTBEAT_INTERVAL_S)

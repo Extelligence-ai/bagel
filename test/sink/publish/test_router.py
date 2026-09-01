@@ -356,6 +356,25 @@ class TestStreamRouterTick:
         # The loop broke before seq 3: unacked, still spooled, correct watermark.
         assert [seq for seq, _ in spool.pending("channels")] == [3, 4, 5]
 
+    def test_pump_returns_immediately_when_stop_event_already_set(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        # Narrows the stop/reconnect race: if stop() lands while a blocked
+        # connect() is in flight, _pump must not fall through into a full
+        # publish pass once that connect() finally resolves and _online
+        # flips true -- it should bail out before ever calling _reconnect()
+        # or publishing anything.
+        router, _q, spool, pub = _router(tmp_path)
+        spool.append("channels", 1, {"seq": 1, "v": 1, "samples": []})
+        router._stop_event.set()
+
+        router._pump(now=0.0)
+
+        assert pub.connect_calls == 0
+        assert pub.channel_calls == []
+        assert not router.online
+        assert [seq for seq, _ in spool.pending("channels")] == [1]
+
 
 class TestStreamRouterThread:
     def test_stop_joins_promptly(self, tmp_path: pathlib.Path) -> None:

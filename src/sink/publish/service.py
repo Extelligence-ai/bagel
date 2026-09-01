@@ -66,6 +66,9 @@ class FleetService:
         """Resolve channels against the sink's subscribed buffers, then run.
 
         Raises:
+            RuntimeError: `start()` called while already started -- a
+                double start is a programming error, not something to
+                silently ignore or silently restart.
             FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
             StreamConfigError: a configured `channels[].topic` is not
                 currently subscribed on the sink (reused from
@@ -74,6 +77,8 @@ class FleetService:
                 subscribed on the sink is simply absent from it here).
 
         """
+        if self._started:
+            raise RuntimeError("FleetService already started")
         require_fleet()
         configured_topics = {rule.topic for rule in self._streams.channels}
         # TopicSink exposes no public per-topic buffer accessor (only the
@@ -187,6 +192,8 @@ class FleetService:
             "heartbeat_spool_failures": (
                 self._heartbeat.spool_failures if self._heartbeat is not None else 0
             ),
+            "heartbeat_alive": self._heartbeat.alive if self._heartbeat is not None else False,
+            "heartbeat_error": self._heartbeat.last_error if self._heartbeat is not None else None,
         }
 
     # -- internals ---------------------------------------------------------------

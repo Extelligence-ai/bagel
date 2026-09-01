@@ -174,6 +174,24 @@ class TestStart:
         finally:
             service.stop()
 
+    def test_double_start_raises_runtime_error(self, tmp_path: pathlib.Path) -> None:
+        # A double start is a programming error -- raise, don't silently
+        # no-op or silently restart the runtime out from under the caller.
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            with pytest.raises(RuntimeError, match="already started"):
+                service.start()
+        finally:
+            service.stop()
+
 
 class TestStop:
     def test_idempotent_and_clears_taps(self, tmp_path: pathlib.Path) -> None:
@@ -312,6 +330,8 @@ class TestStatus:
                 "router_alive",
                 "router_error",
                 "heartbeat_spool_failures",
+                "heartbeat_alive",
+                "heartbeat_error",
             }
             assert status["subscriptions"] == ["/imu"]
             assert status["channels_active"] == 1
@@ -320,6 +340,8 @@ class TestStatus:
             assert status["router_alive"] is True
             assert status["router_error"] is None
             assert status["heartbeat_spool_failures"] == 0
+            assert status["heartbeat_alive"] is True
+            assert status["heartbeat_error"] is None
         finally:
             service.stop()
 
@@ -335,6 +357,8 @@ class TestStatus:
         json.dumps(status)
         assert status["online"] is False
         assert status["router_alive"] is False
+        assert status["heartbeat_alive"] is False
+        assert status["heartbeat_error"] is None
 
     def test_dead_router_is_visible(self, tmp_path: pathlib.Path) -> None:
         writer = FakeWriter(_imu_struct())

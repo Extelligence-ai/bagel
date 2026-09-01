@@ -264,7 +264,16 @@ class StreamRouter(threading.Thread):
         bound. Breaking early leaves the remaining records spooled and
         unacked, which is correct -- they replay on the next start, in the
         same seq order, exactly like any other still-unacked backlog.
+
+        Also checks `self._stop_event` first thing: without this, a
+        `stop()` landing while `_reconnect()`'s blocking `connect()` call is
+        in flight could still let this call fall through into a full
+        publish pass on a connection that only just came up, past
+        `join(5)`'s deadline -- this closes that stop/reconnect race at its
+        narrowest point.
         """
+        if self._stop_event.is_set():
+            return
         if not self._online:
             if now < self._next_attempt:
                 return

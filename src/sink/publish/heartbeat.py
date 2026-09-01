@@ -129,6 +129,7 @@ class HeartbeatThread(threading.Thread):
         self._spool = spool
         self._stop_event = threading.Event()
         self._spool_failures = 0
+        self._last_error: str | None = None
 
     def run(self) -> None:
         """Tick immediately on start, then every `interval_s`, until stop() is called."""
@@ -138,6 +139,17 @@ class HeartbeatThread(threading.Thread):
 
     def _tick(self) -> None:
         """One heartbeat: build the payload, publish it, spool it on failure.
+
+        The `payload_factory()` call is its own try/except: it can raise
+        (e.g. `Spool.stats()` -> `SpoolCorruptError`, `disk_free()` on a
+        missing directory) and an uncaught exception here would unwind
+        `run()`'s loop and silently kill the liveness thread with no
+        visibility anywhere. So a factory exception logs at WARNING (with
+        the error) and skips this beat entirely -- `last_error` is set and
+        the thread lives to try again next interval. `last_error` is
+        cleared as soon as a beat's payload is built successfully; it does
+        not track publish failures, which are the separate, normal
+        offline path below.
 
         A `PublishError` (the broker is unreachable) is normal, expected
         offline behavior -- logged at DEBUG. A failure spooling the payload
@@ -149,7 +161,15 @@ class HeartbeatThread(threading.Thread):
         `FleetService.status()`, instead of vanishing at DEBUG. Either way
         the thread never dies and no exception escapes this method.
         """
-        payload = self._payload_factory()
+        try:
+            payload = self._payload_factory()
+        except Exception as exc:
+            self._last_error = f"heartbeat payload factory failed: {exc!r}"
+            logging.getLogger(__name__).warning(
+                "heartbeat payload factory failed; skipping this beat: %s", exc, exc_info=True
+            )
+            return
+        self._last_error = None
         try:
             self._publisher.publish_heartbeat(payload)
         except PublishError:
@@ -173,3 +193,25 @@ class HeartbeatThread(threading.Thread):
     def spool_failures(self) -> int:
         """Count of failed attempts to spool a heartbeat payload after a publish failure."""
         return self._spool_failures
+
+    @property
+    def alive(self) -> bool:
+        """Whether the thread is running and has hit no fatal state.
+
+        Mirrors `StreamRouter.alive`'s visibility pattern, but the payload
+        factory fix above means `_tick` has no remaining fatal path -- a
+        factory failure is now caught and skipped rather than escaping
+        `run()`'s loop -- so this is simply `is_alive()`.
+        """
+        return self.is_alive()
+
+    @property
+    def last_error(self) -> str | None:
+        """The most recent payload-factory failure, if the last beat skipped one.
+
+        Set when a beat's `payload_factory()` call raises (that beat is
+        skipped); cleared as soon as a later beat builds its payload
+        successfully. Independent of publish/spool outcomes -- those are
+        tracked separately (see `spool_failures`).
+        """
+        return self._last_error
