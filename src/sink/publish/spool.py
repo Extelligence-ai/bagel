@@ -37,8 +37,40 @@ def _first_seq_of(path: pathlib.Path) -> int:
     return int(path.stem.split("-", 1)[1])
 
 
+def _parse_lines(segment: pathlib.Path, *, tolerate_torn_tail: bool = False) -> Iterator[dict]:
+    """Parse JSONL lines from a segment, optionally tolerating a torn final line.
+
+    Args:
+        segment: Path to segment file.
+        tolerate_torn_tail: If True, ignore JSONDecodeError on the final line only.
+            Corruption in any non-final line still raises.
+
+    Yields:
+        Parsed JSON objects.
+
+    Raises:
+        JSONDecodeError: If any non-final line fails to parse, or if any line fails
+            and tolerate_torn_tail is False.
+
+    """
+    lines = segment.read_text(encoding="utf-8").splitlines()
+    for i, line in enumerate(lines):
+        is_final = i == len(lines) - 1
+        try:
+            yield json.loads(line)
+        except json.JSONDecodeError:
+            if is_final and tolerate_torn_tail:
+                # Skip the torn final line; preceding lines win
+                continue
+            raise
+
+
 class Spool:
-    """One robot's outbox: lanes of segments plus an acked watermark."""
+    """One robot's outbox: lanes of segments plus an acked watermark.
+
+    Callers must maintain the single-writer invariant per lane: only one thread/process
+    appends to a lane at a time. Concurrent producers will collide with ValueError.
+    """
 
     def __init__(self, root: pathlib.Path, capped_lanes: dict[str, int] | None = None) -> None:
         """Initialize spool at root with optional per-lane size caps.
@@ -82,8 +114,8 @@ class Spool:
         if not segments:
             return self._watermark(lane)
         last = 0
-        for line in segments[-1].read_text(encoding="utf-8").splitlines():
-            last = json.loads(line)["seq"]
+        for record in _parse_lines(segments[-1], tolerate_torn_tail=True):
+            last = record["seq"]
         return max(last, self._watermark(lane))
 
     def next_seq(self, lane: str) -> int:
@@ -151,8 +183,9 @@ class Spool:
 
         """
         watermark = self._watermark(lane)
-        for segment in self._segments(lane):
-            for line in segment.read_text(encoding="utf-8").splitlines():
-                record = json.loads(line)
+        segments = self._segments(lane)
+        for i, segment in enumerate(segments):
+            is_final = i == len(segments) - 1
+            for record in _parse_lines(segment, tolerate_torn_tail=is_final):
                 if record["seq"] > watermark:
                     yield record["seq"], record["payload"]
