@@ -260,3 +260,14 @@ class TestForRobot:
     def test_for_robot_rejects_dot_segment(self) -> None:
         with pytest.raises(ValueError, match="must be non-empty and not"):
             Spool.for_robot(".")
+
+
+def test_spool_module_does_not_import_paho_eagerly(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+    import sys
+
+    for name in [m for m in sys.modules if m == "paho" or m.startswith("paho.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.delitem(sys.modules, "src.sink.publish.spool", raising=False)
+    importlib.import_module("src.sink.publish.spool")
+    assert not any(m == "paho" or m.startswith("paho.") for m in sys.modules)
