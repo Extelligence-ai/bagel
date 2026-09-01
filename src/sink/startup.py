@@ -283,6 +283,23 @@ def _start_fleet(
                 "every one of these topics under one entry's 'topics:'",
             )
 
+        if _FLEET_SERVICE is not None:
+            # A second startup.start() in the same process is about to
+            # replace the holder: FleetService.start()'s double-start guard
+            # is per-instance, so nothing else would ever stop the PREVIOUS
+            # service's daemon threads, MQTT connection, or tap wiring once
+            # this reassigns it -- stop it first, before the new one is even
+            # built, so its taps are cleared before the new service (which
+            # may tap the very same sink/buffers) wires its own. Best-effort:
+            # a broken old service must not block the new one from starting.
+            try:
+                _FLEET_SERVICE.stop()
+            except Exception as stop_error:
+                logging.warning(
+                    "Failed to stop the previous FleetService before replacing it: %s",
+                    stop_error,
+                )
+
         directory = settings.FLEET_IDENTITY_DIRECTORY
         identity = (
             identity_mod.load_identity(directory) if identity_mod.is_enrolled(directory) else None

@@ -86,8 +86,10 @@ def _subscription_entry(host: str, topic: str) -> dict:
     }
 
 
-def _write_manifest(tmp_path: pathlib.Path, manifest: dict) -> pathlib.Path:
-    manifest_file = tmp_path / "startup.yaml"
+def _write_manifest(
+    tmp_path: pathlib.Path, manifest: dict, name: str = "startup.yaml"
+) -> pathlib.Path:
+    manifest_file = tmp_path / name
     manifest_file.write_text(yaml.safe_dump(manifest))
     return manifest_file
 
@@ -156,6 +158,83 @@ class TestFleetStartedReport:
         assert reports[-1] == {"fleet": "started"}
         assert startup._FLEET_SERVICE is not None
         assert startup._FLEET_SERVICE._identity is None
+
+
+class TestFleetServiceReplacement:
+    def test_second_start_stops_the_previous_fleet_service(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Reproduces a second `startup.start()` in the same process (e.g. a
+        # re-applied manifest): the previous FleetService must be stopped --
+        # not merely dropped -- before the holder is replaced.
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+        monkeypatch.setattr(startup.MqttPublisher, "connect", lambda self: None)
+
+        # Spy on close() (rather than trusting `.connected`, which is
+        # already False for a publisher whose connect() was no-op'd) to
+        # prove the orphaned service's publisher was actually torn down.
+        closed_publishers: list[object] = []
+        real_close = startup.MqttPublisher.close
+
+        def spy_close(self: object) -> None:
+            closed_publishers.append(self)
+            real_close(self)
+
+        monkeypatch.setattr(startup.MqttPublisher, "close", spy_close)
+
+        fake = FakePahoClient()
+        fake.retained = {
+            "robot/telemetry_1": [b'{"speed": 1.5, "t": 100.0}'],
+            "robot/telemetry_2": [b'{"speed": 2.5, "t": 100.0}'],
+        }
+        monkeypatch.setattr(sink_mqtt.paho, "Client", lambda **_: fake)
+
+        entry_1 = _subscription_entry("manifest.test", "robot/telemetry_1")
+        manifest_1 = {
+            "subscriptions": [entry_1],
+            "streams": {
+                "channels": [{"topic": "robot/telemetry_1", "fields": ["speed"], "rate_hz": 1}]
+            },
+        }
+        manifest_file_1 = _write_manifest(tmp_path, manifest_1, name="startup1.yaml")
+
+        reports_1 = startup.start(manifest_file_1)
+        assert reports_1[-1] == {"fleet": "started"}
+        service_1 = startup._FLEET_SERVICE
+        assert service_1 is not None
+        assert service_1._started is True
+        assert service_1._router is not None
+        assert service_1._router.alive is True
+        assert service_1._heartbeat is not None
+        assert service_1._heartbeat.alive is True
+
+        entry_2 = _subscription_entry("manifest.test", "robot/telemetry_2")
+        manifest_2 = {
+            "subscriptions": [entry_2],
+            "streams": {
+                "channels": [{"topic": "robot/telemetry_2", "fields": ["speed"], "rate_hz": 1}]
+            },
+        }
+        manifest_file_2 = _write_manifest(tmp_path, manifest_2, name="startup2.yaml")
+
+        reports_2 = startup.start(manifest_file_2)  # must not raise
+
+        assert reports_2[-1] == {"fleet": "started"}
+        service_2 = startup._FLEET_SERVICE
+        assert service_2 is not None
+        assert service_2 is not service_1
+
+        # The orphaned first service was actually stopped: not started,
+        # its threads dead, its publisher closed -- not just replaced in
+        # the holder and abandoned still running.
+        assert service_1._started is False
+        assert service_1._router.alive is False
+        assert service_1._heartbeat.alive is False
+        assert service_1._publisher.connected is False
+        assert service_1._publisher in closed_publishers
+
+        # The second service is the one actually live.
+        assert service_2._started is True
 
 
 class TestFleetDisabled:
