@@ -66,6 +66,29 @@ class TestResolvePath:
             config.resolve_path(IMU, "frame_id.sub", field_label="f")
 
 
+class TestFieldUnit:
+    def test_metadata_unit_is_returned(self) -> None:
+        struct = pa.struct([pa.field("temp", pa.float64(), metadata={"unit": "celsius"})])
+        assert config.field_unit(struct, "temp") == "celsius"
+
+    def test_nested_metadata_unit_is_returned(self) -> None:
+        struct = pa.struct(
+            [
+                pa.field(
+                    "outer",
+                    pa.struct([pa.field("temp", pa.float64(), metadata={"unit": "celsius"})]),
+                )
+            ]
+        )
+        assert config.field_unit(struct, "outer.temp") == "celsius"
+
+    def test_absent_metadata_is_none(self) -> None:
+        assert config.field_unit(IMU, "frame_id") is None
+
+    def test_unresolvable_path_is_none(self) -> None:
+        assert config.field_unit(IMU, "nope") is None
+
+
 class TestClassify:
     @pytest.mark.parametrize(
         ("pa_type", "expected"),
@@ -146,6 +169,18 @@ class TestChannelRule:
     def test_missing_topic_raises(self) -> None:
         with pytest.raises(StreamConfigError, match="topic"):
             config.ChannelRule.build({"fields": ["a"], "rate_hz": 1})
+
+    def test_non_string_geo_value_raises_typed(self) -> None:
+        with pytest.raises(StreamConfigError, match=r"channels\[\]\.geo"):
+            config.ChannelRule.build(
+                {"topic": "/odom", "geo": {"lat": 1, "lon": "pose.y"}, "rate_hz": 1}
+            )
+
+    def test_empty_string_geo_value_raises_typed(self) -> None:
+        with pytest.raises(StreamConfigError, match=r"channels\[\]\.geo"):
+            config.ChannelRule.build(
+                {"topic": "/odom", "geo": {"lat": "", "lon": "pose.y"}, "rate_hz": 1}
+            )
 
     def test_unknown_top_level_key_raises(self) -> None:
         with pytest.raises(StreamConfigError, match=r"unknown keys \['az'\]"):
@@ -312,6 +347,18 @@ class TestResolve:
         assert c.name == "odom.geo" and c.type == "geo"
         assert set(c.paths) == {"lat", "lon"}
         assert c.rate_hz == 1.0
+        assert c.unit is None
+
+    def test_scalar_channel_picks_up_arrow_unit_metadata(self) -> None:
+        struct = pa.struct([pa.field("temp", pa.float64(), metadata={"unit": "celsius"})])
+        cfg = self._cfg([{"topic": "/env", "fields": ["temp"], "rate_hz": 1}])
+        (c,) = cfg.resolve({"/env": struct})
+        assert c.unit == "celsius"
+
+    def test_scalar_channel_without_metadata_has_no_unit(self) -> None:
+        cfg = self._cfg([{"topic": "/imu", "fields": ["frame_id"], "rate_hz": 1}])
+        (c,) = cfg.resolve({"/imu": IMU})
+        assert c.unit is None
 
     def test_geo_channel_with_alt_resolves(self) -> None:
         cfg = self._cfg(

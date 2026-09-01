@@ -43,8 +43,50 @@ def resolve_path(struct: pa.StructType, dotted: str, *, field_label: str) -> Acc
     return AccessPath(path=walked, pa_type=current)
 
 
+def field_unit(struct: pa.StructType, dotted: str) -> str | None:
+    """Return the Arrow field metadata unit (key "unit") for a dotted path, if present.
+
+    Assumes ``dotted`` already resolves against ``struct`` (call after
+    ``resolve_path`` succeeds); an unresolvable path yields ``None`` rather
+    than raising, since unit metadata is decorative, not load-bearing.
+    """
+    current: pa.DataType = struct
+    field: pa.Field | None = None
+    for segment in dotted.split("."):
+        if not pat.is_struct(current):
+            return None
+        index = current.get_field_index(segment)
+        if index == -1:
+            return None
+        field = current.field(index)
+        current = field.type
+    if field is None or field.metadata is None:
+        return None
+    value = field.metadata.get(b"unit")
+    if value is None:
+        return None
+    return value.decode() if isinstance(value, bytes) else value
+
+
 MAX_RATE_HZ = 50.0
 ARTIFACT_KINDS = ("mcap",)
+
+
+def _validate_geo(geo: object, label: str) -> None:
+    """Validate a `geo:` mapping's keys and dotted-path string values."""
+    if not isinstance(geo, dict) or not {"lat", "lon"} <= set(geo):
+        raise StreamConfigError(
+            f"{label}.geo",
+            f"requires 'lat' and 'lon' dotted paths: {geo}",
+        )
+    unknown = set(geo) - {"lat", "lon", "alt"}
+    if unknown:
+        raise StreamConfigError(f"{label}.geo", f"unknown keys {sorted(unknown)}")
+    for key, value in geo.items():
+        if not isinstance(value, str) or not value:
+            raise StreamConfigError(
+                f"{label}.geo", f"path for '{key}' must be a dotted string: {value!r}"
+            )
 
 
 class ChannelRule(BaseModel):
@@ -78,14 +120,7 @@ class ChannelRule(BaseModel):
                 f"must be a non-empty list of strings: {fields}",
             )
         if geo is not None:
-            if not isinstance(geo, dict) or not {"lat", "lon"} <= set(geo):
-                raise StreamConfigError(
-                    f"{label}.geo",
-                    f"requires 'lat' and 'lon' dotted paths: {geo}",
-                )
-            unknown = set(geo) - {"lat", "lon", "alt"}
-            if unknown:
-                raise StreamConfigError(f"{label}.geo", f"unknown keys {sorted(unknown)}")
+            _validate_geo(geo, label)
         rate = rest.get("rate_hz")
         if (
             not isinstance(rate, int | float)
@@ -220,6 +255,7 @@ def _resolve_channel_rule(
                 ResolvedChannel(
                     name=name,
                     type=type_name,
+                    unit=field_unit(struct, field_path),
                     source_topic=rule.topic,
                     source_field=field_path,
                     rate_hz=rule.rate_hz,
