@@ -53,6 +53,7 @@ import urllib.request
 
 import yaml
 
+from settings import settings
 from src.sink.publish import EnrollmentError, FleetNotEnrolledError
 
 _REQUIRED_RESPONSE_FIELDS = (
@@ -693,3 +694,42 @@ def renew(identity: Identity) -> Identity | None:
         except Exception:  # best-effort; must not mask the original failure
             logger.warning("failed to record renewal attempt after unexpected error", exc_info=True)
         return None
+
+
+def maybe_enroll_on_first_boot() -> None:
+    """Enroll this robot at boot if a one-time token+URL are configured and it isn't yet.
+
+    Called from server.py's ``__main__`` block, BEFORE ``startup.start()``, so
+    a fresh enrollment's identity is already on disk by the time the
+    manifest's ``streams:`` wiring looks for one (see ``src/sink/startup.py``).
+
+    A no-op unless both ``settings.FLEET_ENROLL_TOKEN`` and
+    ``settings.FLEET_ENROLL_URL`` are set AND ``settings.FLEET_IDENTITY_DIRECTORY``
+    is not already enrolled (``is_enrolled()``) -- an already-enrolled robot,
+    or one with no token configured at all, does nothing here.
+
+    Never raises: enrollment failing at boot (bad token, unreachable server,
+    ...) must not brick the container -- it is logged at ERROR (the reason
+    only; per ``enroll()``'s contract the token itself never appears in the
+    exception or reaches this log line) and the server continues booting
+    unenrolled. A successful enrollment logs the assigned tenant/robot --
+    again, never the token.
+    """
+    logger = logging.getLogger(__name__)
+    token = settings.FLEET_ENROLL_TOKEN
+    url = settings.FLEET_ENROLL_URL
+    if not token or not url:
+        return
+    directory = settings.FLEET_IDENTITY_DIRECTORY
+    if is_enrolled(directory):
+        return
+    try:
+        result = enroll(token, url, pathlib.Path(directory))
+    except Exception as exc:
+        logger.error("First-boot fleet enrollment failed: %s", exc)
+        return
+    logger.info(
+        "First-boot fleet enrollment succeeded: tenant=%s robot=%s",
+        result.tenant,
+        result.robot_id,
+    )

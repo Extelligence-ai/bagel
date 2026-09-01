@@ -28,6 +28,7 @@ from src.pipeline import (
 )
 from src.pipeline.tasks.waffle import snap as waffle_snap
 from src.sink import startup
+from src.sink.publish import identity as fleet_identity
 
 server = mcp_compat.create_server(
     name="Bagel MCP Server",
@@ -1129,6 +1130,9 @@ def snap_hardware(directory: str = ".") -> dict[str, Any]:
 
 
 if __name__ == "__main__":
+    # No-op unless FLEET_ENROLL_TOKEN/_URL are set and unenrolled; before the
+    # startup.start gate so its manifest's `streams:` wiring finds the identity.
+    fleet_identity.maybe_enroll_on_first_boot()
     if settings.STARTUP_PIPELINES_FILE and pathlib.Path(settings.STARTUP_PIPELINES_FILE).exists():
         # Standing pipelines: re-establish subscriptions (and their attached pipelines)
         # on boot, so they survive container restarts.
