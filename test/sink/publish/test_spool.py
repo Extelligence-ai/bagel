@@ -210,3 +210,53 @@ class TestStats:
         assert st.last_seq == 4
         assert st.acked_seq == 1
         assert st.bytes > 0
+
+
+class TestForRobot:
+    def test_for_robot_single_segment_nests_correctly(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """for_robot('r7') creates spool at CACHE_DIRECTORY/publish/r7 with channels cap."""
+        monkeypatch.setattr("settings.settings.CACHE_DIRECTORY", str(tmp_path))
+        monkeypatch.setattr("settings.settings.FLEET_SPOOL_MAX_BYTES", 500)
+        s = Spool.for_robot("r7")
+        s.append("channels", 1, {"n": 1})
+        assert (tmp_path / "publish" / "r7" / "channels").exists()
+        assert s._capped["channels"] == 500
+
+    def test_for_robot_two_segment_nests_correctly(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """for_robot('acme/r7') creates spool at CACHE_DIRECTORY/publish/acme/r7."""
+        monkeypatch.setattr("settings.settings.CACHE_DIRECTORY", str(tmp_path))
+        s = Spool.for_robot("acme/r7")
+        s.append("channels", 1, {"n": 1})
+        assert (tmp_path / "publish" / "acme" / "r7" / "channels").exists()
+
+    def test_for_robot_rejects_leading_slash(self) -> None:
+        with pytest.raises(ValueError, match="must not start with /"):
+            Spool.for_robot("/etc/passwd")
+
+    def test_for_robot_rejects_empty_string(self) -> None:
+        with pytest.raises(ValueError, match="must be non-empty"):
+            Spool.for_robot("")
+
+    def test_for_robot_rejects_dot_dot(self) -> None:
+        with pytest.raises(ValueError, match="at most one /"):
+            Spool.for_robot("../../evil")
+
+    def test_for_robot_rejects_dot_dot_in_path(self) -> None:
+        with pytest.raises(ValueError, match="at most one /"):
+            Spool.for_robot("a/../b")
+
+    def test_for_robot_rejects_too_many_segments(self) -> None:
+        with pytest.raises(ValueError, match="at most one /"):
+            Spool.for_robot("a/b/c")
+
+    def test_for_robot_rejects_empty_segment(self) -> None:
+        with pytest.raises(ValueError, match="must be non-empty"):
+            Spool.for_robot("acme/")
+
+    def test_for_robot_rejects_dot_segment(self) -> None:
+        with pytest.raises(ValueError, match="must be non-empty and not"):
+            Spool.for_robot(".")

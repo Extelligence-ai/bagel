@@ -40,7 +40,7 @@ class LaneStats:
     pending: int
     last_seq: int
     acked_seq: int
-    evicted: int = 0
+    evicted: int = 0  # Records discarded by eviction; exact if contiguous, may over-count if gapped
 
 
 def _segment_name(first_seq: int) -> str:
@@ -228,20 +228,25 @@ class Spool:
                 segment.unlink()
 
     def _evict(self, lane: str) -> None:
+        """Unlink oldest segments when lane bytes exceed cap.
+
+        Evicted-count tracking counts records above the watermark that were unlinked.
+        For contiguous seqs, the count is exact; with seq gaps, it may over-count (erring
+        toward reporting data loss). Seqs below the watermark are never counted as loss.
+        """
         cap = self._capped.get(lane)
         if cap is None:
             return
         segments = self._segments(lane)
         total = sum(p.stat().st_size for p in segments)
+        watermark = self._watermark(lane)
         while total > cap and len(segments) > 1:
             oldest = segments.pop(0)
-            watermark = self._watermark(lane)
-            if len(segments) >= 1:
-                last_in_oldest = _first_seq_of(segments[0]) - 1
-                if last_in_oldest > watermark:
-                    self._evicted[lane] = self._evicted.get(lane, 0) + (
-                        last_in_oldest - max(watermark, _first_seq_of(oldest) - 1)
-                    )
+            last_in_oldest = _first_seq_of(segments[0]) - 1
+            if last_in_oldest > watermark:
+                self._evicted[lane] = self._evicted.get(lane, 0) + (
+                    last_in_oldest - max(watermark, _first_seq_of(oldest) - 1)
+                )
             total -= oldest.stat().st_size
             oldest.unlink()
 
@@ -275,15 +280,37 @@ class Spool:
         """Create a Spool for a robot with default caps.
 
         Args:
-            robot: Robot identifier.
+            robot: Robot identifier in shape tenant/robot or robot (one `/` max).
+                   Must not contain `.`, `..`, or be empty. No leading `/`.
 
         Returns:
             Spool configured with default channels lane cap.
 
+        Raises:
+            ValueError: If robot contains path traversal or is malformed.
+
         """
         from settings import settings
 
-        root = pathlib.Path(settings.CACHE_DIRECTORY) / "publish" / robot
+        # Validate robot identifier to prevent path traversal
+        if not robot:
+            raise ValueError("robot must be non-empty")
+        if robot.startswith("/"):
+            raise ValueError("robot must not start with /")
+        segments = robot.split("/")
+        max_segments = 2  # tenant/robot or robot (0 vs 1 slash)
+        if len(segments) > max_segments:
+            raise ValueError("robot must have at most one / (format: robot or tenant/robot)")
+        for segment in segments:
+            if not segment or segment in (".", ".."):
+                raise ValueError("robot segments must be non-empty and not . or ..")
+
+        # Belt-and-braces: ensure resolved path is within publish directory
+        base = (pathlib.Path(settings.CACHE_DIRECTORY) / "publish").resolve()
+        root = (base / robot).resolve()
+        if not root.is_relative_to(base):
+            raise ValueError(f"robot path escapes base directory: {root}")
+
         return cls(root, capped_lanes={"channels": settings.FLEET_SPOOL_MAX_BYTES})
 
     # -- replay ------------------------------------------------------------------
