@@ -117,3 +117,96 @@ class TestCrashTolerance:
         s2 = Spool(root)
         with pytest.raises(json.JSONDecodeError):
             list(s2.pending("channels"))
+
+
+class TestAckAndWatermark:
+    def test_ack_prunes_fully_acked_segments(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 120)
+        s = Spool(root)
+        for i in range(1, 10):
+            s.append("channels", i, {"pad": "x" * 40, "n": i})
+        segments_before = len(list((root / "channels").glob("segment-*.jsonl")))
+        assert segments_before >= 3
+        s.ack("channels", 8)
+        remaining = sorted((root / "channels").glob("segment-*.jsonl"))
+        assert len(remaining) < segments_before
+        assert [seq for seq, _ in s.pending("channels")] == [9]
+
+    def test_ack_is_idempotent_and_ignores_stale(self, root: pathlib.Path) -> None:
+        s = Spool(root)
+        for i in range(1, 4):
+            s.append("channels", i, {"n": i})
+        s.ack("channels", 2)
+        s.ack("channels", 2)
+        s.ack("channels", 1)  # stale: no-op
+        assert [seq for seq, _ in s.pending("channels")] == [3]
+
+    def test_watermark_survives_restart_exactly(self, root: pathlib.Path) -> None:
+        s = Spool(root)
+        for i in range(1, 6):
+            s.append("channels", i, {"n": i})
+        s.ack("channels", 3)
+        del s
+        s2 = Spool(root)
+        assert [seq for seq, _ in s2.pending("channels")] == [4, 5]
+        assert s2.next_seq("channels") == 6
+
+    def test_watermark_file_is_valid_json_after_ack(self, root: pathlib.Path) -> None:
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})
+        s.ack("channels", 1)
+        data = json.loads((root / "watermark.json").read_text())
+        assert data == {"channels": 1}
+
+
+class TestEvictionAndCaps:
+    def test_capped_lane_evicts_oldest_segments(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 120)
+        s = Spool(root, capped_lanes={"channels": 300})
+        for i in range(1, 30):
+            s.append("channels", i, {"pad": "x" * 40, "n": i})
+        lane_bytes = sum(p.stat().st_size for p in (root / "channels").glob("*.jsonl"))
+        assert lane_bytes <= 300 + 120  # cap + one-segment slack
+        pending = [seq for seq, _ in s.pending("channels")]
+        assert pending == sorted(pending)
+        assert pending[-1] == 29  # newest survives
+        assert s.stats()["channels"].evicted > 0
+
+    def test_never_drop_lane_ignores_caps_and_grows(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 120)
+        s = Spool(root, capped_lanes={"channels": 300})
+        for i in range(1, 30):
+            s.append("events", i, {"pad": "x" * 40, "n": i})
+        assert len([seq for seq, _ in s.pending("events")]) == 29
+
+    def test_write_failure_on_never_drop_lane_raises_spool_full(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        s = Spool(root)
+        s.append("events", 1, {"n": 1})
+
+        def boom(*a: object, **k: object) -> object:
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr("builtins.open", boom)
+        with pytest.raises(spool_mod.SpoolFullError, match="events"):
+            s.append("events", 2, {"n": 2})
+
+
+class TestStats:
+    def test_stats_reports_bytes_pending_and_seqs(self, root: pathlib.Path) -> None:
+        s = Spool(root)
+        for i in range(1, 5):
+            s.append("channels", i, {"n": i})
+        s.ack("channels", 1)
+        st = s.stats()["channels"]
+        assert st.pending == 3
+        assert st.last_seq == 4
+        assert st.acked_seq == 1
+        assert st.bytes > 0

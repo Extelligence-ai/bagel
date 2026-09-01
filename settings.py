@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     # regardless of configuration: nothing connects, nothing leaves the box.
     FLEET_ENABLED: bool = True
 
+    # Disk budget for the fleet spool's channels lane (store-and-forward
+    # outbox under CACHE_DIRECTORY/publish/). Oldest segments are dropped
+    # first when over budget; events and heartbeats are never dropped and
+    # don't count against this cap. Transient overshoot of one segment
+    # (~4 MB) is possible while rotating.
+    FLEET_SPOOL_MAX_BYTES: int = 268_435_456
+
     # Default quantization resolution in meters for cloudini lossy compression
     CLOUDINI_DEFAULT_RESOLUTION: float = 0.001
     ###############################################
