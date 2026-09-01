@@ -613,6 +613,55 @@ class TestLoadIdentityPointerFieldTypeValidation:
         assert loaded.ca_path == directory / "ca.crt"
 
 
+class TestMaybeEnrollOnFirstBootKillSwitch:
+    """Codex review: FLEET_ENABLED=0 must make maybe_enroll_on_first_boot() a
+    no-op even when a one-time token+URL are configured -- the kill switch's
+    documented "makes the subsystem inert" contract previously had no guard
+    in this call path (server.py's __main__ calls it unconditionally).
+    """
+
+    def test_fleet_disabled_skips_enrollment_even_with_token_and_url_set(
+        self, tmp_path: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        directory = tmp_path / "identity"
+        monkeypatch.setattr(settings, "FLEET_ENABLED", False)
+        monkeypatch.setattr(settings, "FLEET_ENROLL_TOKEN", "some-token")
+        monkeypatch.setattr(settings, "FLEET_ENROLL_URL", "https://enroll.example.com")
+        monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(directory))
+
+        calls = []
+
+        def spy_enroll(*a: object, **kw: object) -> None:
+            calls.append((a, kw))
+            raise AssertionError("enroll() must not be called when FLEET_ENABLED=0")
+
+        monkeypatch.setattr(identity_mod, "enroll", spy_enroll)
+
+        identity_mod.maybe_enroll_on_first_boot()  # must not raise, must not enroll
+
+        assert calls == []  # enroll() itself was never invoked -- not just its raise swallowed
+        assert identity_mod.is_enrolled(directory) is False
+
+    def test_fleet_disabled_logs_skip_reason(
+        self,
+        tmp_path: object,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        directory = tmp_path / "identity"
+        monkeypatch.setattr(settings, "FLEET_ENABLED", False)
+        monkeypatch.setattr(settings, "FLEET_ENROLL_TOKEN", "some-token")
+        monkeypatch.setattr(settings, "FLEET_ENROLL_URL", "https://enroll.example.com")
+        monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(directory))
+
+        with caplog.at_level(logging.DEBUG):
+            identity_mod.maybe_enroll_on_first_boot()
+
+        assert any(
+            "FLEET_ENABLED" in record.getMessage() for record in caplog.records
+        )
+
+
 class TestMaybeEnrollOnFirstBootNeverRaisesOnCorruptIdentity:
     def test_survives_a_null_key_file_in_an_existing_identity_yaml(
         self, fake_server: str, tmp_path: object, monkeypatch: pytest.MonkeyPatch

@@ -779,10 +779,14 @@ def maybe_enroll_on_first_boot() -> None:
     a fresh enrollment's identity is already on disk by the time the
     manifest's ``streams:`` wiring looks for one (see ``src/sink/startup.py``).
 
-    A no-op unless both ``settings.FLEET_ENROLL_TOKEN`` and
-    ``settings.FLEET_ENROLL_URL`` are set AND ``settings.FLEET_IDENTITY_DIRECTORY``
-    is not already enrolled (``is_enrolled()``) -- an already-enrolled robot,
-    or one with no token configured at all, does nothing here.
+    A no-op unless ``settings.FLEET_ENABLED`` is true (the kill switch's
+    documented "makes the subsystem inert" contract -- Codex review: this
+    was previously unchecked here, so ``FLEET_ENABLED=0`` did not stop a
+    first-boot enrollment keygen+POST), AND both ``settings.FLEET_ENROLL_TOKEN``
+    and ``settings.FLEET_ENROLL_URL`` are set AND
+    ``settings.FLEET_IDENTITY_DIRECTORY`` is not already enrolled
+    (``is_enrolled()``) -- an already-enrolled robot, or one with no token
+    configured at all, does nothing here.
 
     Never raises: enrollment failing at boot (bad token, unreachable server,
     ...) must not brick the container -- it is logged at ERROR (the reason
@@ -792,6 +796,12 @@ def maybe_enroll_on_first_boot() -> None:
     again, never the token.
     """
     logger = logging.getLogger(__name__)
+    if not settings.FLEET_ENABLED:
+        logger.debug(
+            "First-boot fleet enrollment skipped: FLEET_ENABLED=0 (kill switch makes the "
+            "fleet subsystem inert)"
+        )
+        return
     token = settings.FLEET_ENROLL_TOKEN
     url = settings.FLEET_ENROLL_URL
     if not token or not url:
