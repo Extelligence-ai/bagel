@@ -130,7 +130,36 @@ class TestConnect:
 
     def test_client_id_is_deterministic(self, fake: dict[str, FakeFleetPaho]) -> None:
         _publisher().connect()
-        assert fake["client"].kwargs["client_id"] == "bagel-acme-r7"
+        assert fake["client"].kwargs["client_id"] == "bagel/acme/r7"
+
+    def test_client_id_is_deterministic_across_reconnects(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        # Codex review: reconnect displacement semantics depend on the same
+        # (tenant, robot) pair always producing the same client id.
+        p = _publisher()
+        p.connect()
+        first_id = fake["client"].kwargs["client_id"]
+        p.connect()
+        second_id = fake["client"].kwargs["client_id"]
+        assert first_id == second_id == "bagel/acme/r7"
+
+    def test_client_id_does_not_collide_across_tenant_robot_boundary(
+        self, fake: dict[str, FakeFleetPaho], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex review (3909409399): the old "bagel-{tenant}-{robot}" format
+        # collided on the hyphen -- ("acme-west", "r7") and ("acme",
+        # "west-r7") both produced "bagel-acme-west-r7". "/" is outside both
+        # id charsets, so the new delimiter is provably collision-free.
+        _publisher(tenant="acme-west", robot="r7").connect()
+        id_a = fake["client"].kwargs["client_id"]
+
+        _publisher(tenant="acme", robot="west-r7").connect()
+        id_b = fake["client"].kwargs["client_id"]
+
+        assert id_a != id_b
+        assert id_a == "bagel/acme-west/r7"
+        assert id_b == "bagel/acme/west-r7"
 
     def test_connect_raises_when_fleet_disabled_before_touching_paho(
         self, fake: dict[str, FakeFleetPaho], monkeypatch: pytest.MonkeyPatch

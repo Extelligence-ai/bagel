@@ -150,7 +150,15 @@ class MqttPublisher(Publisher):
         paho = _paho()
         client = paho.Client(
             callback_api_version=paho.CallbackAPIVersion.VERSION2,
-            client_id=f"bagel-{self._tenant}-{self._robot}",
+            # "/" is outside both id charsets (robot ids match
+            # ^[a-z0-9][a-z0-9_-]{0,62}$; tenant ids are Cognito-derived
+            # without "/"), so this delimiter is provably collision-free --
+            # unlike the old "bagel-{tenant}-{robot}" hyphen join, where
+            # ("acme-west", "r7") and ("acme", "west-r7") both produced
+            # "bagel-acme-west-r7" (Codex review). Mirrors the cert CN's
+            # delimiter. Must stay deterministic per (tenant, robot):
+            # reconnect displacement semantics depend on it.
+            client_id=f"bagel/{self._tenant}/{self._robot}",
             protocol=paho.MQTTv5,
         )
         client.will_set(
