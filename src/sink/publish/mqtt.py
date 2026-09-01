@@ -10,6 +10,7 @@ import time
 import weakref
 from urllib.parse import urlparse
 
+from src.sink.publish import require_fleet
 from src.sink.publish.publisher import LWT_PAYLOAD, Publisher, PublishError, wire_topic
 
 _DEFAULT_PORTS = {"mqtts": 8883, "mqtt": 1883}
@@ -91,7 +92,16 @@ class MqttPublisher(Publisher):
         self._finalizer = weakref.finalize(self, _finalize, None)
 
     def connect(self) -> None:
-        """Build the paho client, arm the last-will, and connect."""
+        """Build the paho client, arm the last-will, and connect.
+
+        Enforces the fleet gate first, so a disabled or not-installed fleet
+        subsystem never imports paho or opens a socket. If already connected
+        to a prior client, tears it down before building the replacement
+        (connect() is idempotent-with-replacement).
+        """
+        require_fleet()
+        if self._client is not None:
+            _finalize(self._client)
         paho = _paho()
         client = paho.Client(
             callback_api_version=paho.CallbackAPIVersion.VERSION2,

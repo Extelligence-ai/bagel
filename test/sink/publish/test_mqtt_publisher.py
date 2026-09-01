@@ -7,6 +7,8 @@ import types
 
 import pytest
 
+from settings import settings
+from src.sink.publish import FleetDisabledError
 from src.sink.publish import mqtt as publish_mqtt
 from src.sink.publish.publisher import PublishError
 
@@ -129,6 +131,29 @@ class TestConnect:
     def test_client_id_is_deterministic(self, fake: dict[str, FakeFleetPaho]) -> None:
         _publisher().connect()
         assert fake["client"].kwargs["client_id"] == "bagel-acme-r7"
+
+    def test_connect_raises_when_fleet_disabled_before_touching_paho(
+        self, fake: dict[str, FakeFleetPaho], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "FLEET_ENABLED", False)
+        p = _publisher()
+        with pytest.raises(FleetDisabledError, match="FLEET_ENABLED"):
+            p.connect()
+        assert fake == {}
+
+    def test_reconnect_tears_down_prior_client_before_replacing_it(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        first = fake["client"]
+        p.connect()
+        second = fake["client"]
+        assert first is not second
+        assert ("loop_stop",) in first.calls and ("disconnect",) in first.calls
+        assert not first.is_connected()
+        assert second.is_connected()
+        assert p.connected
 
 
 class TestPublish:
