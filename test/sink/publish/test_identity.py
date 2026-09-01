@@ -25,6 +25,9 @@ UNKNOWN_TOKEN = "unknown-token"  # noqa: S105
 USED_TOKEN = "used-token"  # noqa: S105
 MALFORMED_TOKEN = "malformed-token"  # noqa: S105
 SERVER_ERROR_TOKEN = "server-error-token"  # noqa: S105
+# A 500 whose body echoes this token verbatim (debug-mode server / reflecting
+# proxy / malicious endpoint) -- the redaction regression test's token.
+ECHOING_ERROR_TOKEN = "echoing-error-token-secret-xyz"  # noqa: S105
 
 
 def _build_ca_and_robot_cert(common_name: str, robot_public_key: object) -> tuple[bytes, bytes]:
@@ -93,6 +96,11 @@ class _FakeEnrollHandler(http.server.BaseHTTPRequestHandler):
             return
         if token == SERVER_ERROR_TOKEN:
             self._respond(500, b"internal error")
+            return
+        if token == ECHOING_ERROR_TOKEN:
+            # Simulates a debug-mode server (or a reflecting proxy/WAF) that
+            # echoes the failed request back in its error body, token included.
+            self._respond(500, f"internal error, request was: {raw.decode()}".encode())
             return
         if token == MALFORMED_TOKEN:
             self._respond(200, json.dumps({"cert_pem": "not enough fields"}).encode())
@@ -295,6 +303,22 @@ class TestTokenHygiene:
         assert UNKNOWN_TOKEN not in excinfo.value.reason
         for record in caplog.records:
             assert UNKNOWN_TOKEN not in record.getMessage()
+
+    def test_token_is_redacted_from_an_echoing_server_error_body(
+        self, fake_server: str, tmp_path: object, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The 401/410 branches use hardcoded reason strings, so they can't leak
+        # the token even by accident -- this covers the general (other-status)
+        # branch, which forwards a snippet of the server's actual body.
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(EnrollmentError) as excinfo:
+                identity_mod.enroll(ECHOING_ERROR_TOKEN, fake_server, tmp_path / "identity")
+        assert excinfo.value.status == 500
+        assert ECHOING_ERROR_TOKEN not in excinfo.value.reason
+        assert ECHOING_ERROR_TOKEN not in str(excinfo.value)
+        assert "***REDACTED***" in excinfo.value.reason
+        for record in caplog.records:
+            assert ECHOING_ERROR_TOKEN not in record.getMessage()
 
 
 class TestLoadIdentity:

@@ -62,6 +62,13 @@ def _atomic_write(target: pathlib.Path, data: bytes, *, mode: int | None = None)
     When ``mode`` is given, the temp file's fd is chmod'd before the write so the
     file lands at that mode the instant it becomes visible at ``target`` -- there
     is no window where the final path exists with looser permissions.
+
+    Note: even when ``mode`` is omitted (``robot.crt``, ``ca.crt``,
+    ``identity.yaml``), ``tempfile.mkstemp`` itself creates the temp file at 0600
+    on POSIX, and ``os.replace`` preserves the source inode's mode -- so those
+    files end up 0600 too, stricter than the spec requires (only ``robot.key``
+    is mandated at 0600). Intentional, not a mode explicitly chosen for them;
+    noted here for a future consumer who needs a world/group-readable cert.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
@@ -111,14 +118,17 @@ def enroll(token: str, enroll_url: str, directory: pathlib.Path) -> Identity:
     200 response, writes ``robot.key`` (0600), ``robot.crt``, ``ca.crt``, and
     ``identity.yaml`` atomically under ``directory`` and returns the resulting
     Identity. The token is sent in the request body only -- it is never logged
-    and never appears in a raised error's message.
+    and never appears in a raised error's message: an other-status HTTPError
+    body is echoed as a snippet for diagnostics, but the literal token is
+    redacted from it first (defense against a debug-mode server, a reflecting
+    proxy/WAF, or a malicious enroll endpoint handing the token straight back).
 
     Raises:
         ValueError: if ``enroll_url`` is not http(s).
         EnrollmentError: on a non-200 response (401 "unknown token", 410
-            "used/expired", other statuses carry a body snippet), a malformed
-            200 body (missing required fields), or a transport failure
-            (status 0, the URLError reason).
+            "used/expired", other statuses carry a token-redacted body
+            snippet), a malformed 200 body (missing required fields), or a
+            transport failure (status 0, the URLError reason).
 
     """
     if not enroll_url.startswith(("https://", "http://")):
@@ -140,7 +150,12 @@ def enroll(token: str, enroll_url: str, directory: pathlib.Path) -> Identity:
             status = response.status
     except urllib.error.HTTPError as exc:
         status = exc.code
-        snippet = exc.read().decode("utf-8", errors="replace")[:200]
+        # The request body carried the token, so an echoing/reflecting server
+        # (debug mode, a WAF, a malicious endpoint) could hand it straight back
+        # in its error body. Redact before truncating -- never truncate first,
+        # or a token straddling the cut point survives partially intact.
+        body_text = exc.read().decode("utf-8", errors="replace")
+        snippet = body_text.replace(token, "***REDACTED***")[:200]
         if status == 401:  # noqa: PLR2004 -- protocol status code, not a magic threshold
             reason = "unknown token"
         elif status == 410:  # noqa: PLR2004 -- protocol status code, not a magic threshold
