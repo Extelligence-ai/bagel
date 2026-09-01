@@ -117,6 +117,12 @@ jobs:
   # don't support command overrides either. Running mosquitto via `docker
   # run` with its built-in /mosquitto-no-auth.conf sidesteps both problems
   # and is the locally-verified route (test/sink/publish/test_mqtt_integration.py).
+  #
+  # test_stream_e2e.py's chaos test manages its OWN mosquitto container on
+  # MQTT_CHAOS_PORT (default 1884, set in that test file) -- never this
+  # job's `mosq` container on 1883 -- so MQTT_TEST_BROKER_MANAGED=1 is safe
+  # to set here: it only tells that one test its broker (a container IT
+  # starts) is safe to kill and restart.
   iot:
     runs-on: ubuntu-latest
     steps:
@@ -131,7 +137,11 @@ jobs:
       - name: Broker round-trip tests
         env:
           MQTT_TEST_BROKER: mqtt://localhost:1883
-        run: uv run pytest -q test/sink/publish/test_mqtt_integration.py -p no:cacheprovider
+          MQTT_TEST_BROKER_MANAGED: "1"
+        run: |
+          uv run pytest -q -p no:cacheprovider \
+            test/sink/publish/test_mqtt_integration.py \
+            test/sink/publish/test_stream_e2e.py
 
   coverage-gate:
     needs: [docker, host-tests]
