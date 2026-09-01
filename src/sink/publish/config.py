@@ -5,8 +5,11 @@ Two phases: `load_streams` turns raw YAML into models (shape validation);
 (field existence, scalar-ness, wire types). No runtime behavior lives here.
 """
 
+from urllib.parse import urlparse
+
 import pyarrow as pa
 import pyarrow.types as pat
+from pydantic import BaseModel
 
 from src.message.base import AccessPath
 from src.sink.publish import StreamConfigError
@@ -38,3 +41,163 @@ def resolve_path(struct: pa.StructType, dotted: str, *, field_label: str) -> Acc
         current = current.field(index).type
         walked.append(segment)
     return AccessPath(path=walked, pa_type=current)
+
+
+MAX_RATE_HZ = 50.0
+ARTIFACT_KINDS = ("mcap",)
+
+
+class ChannelRule(BaseModel):
+    """One `channels:` entry: project fields of a topic at a capped rate."""
+
+    topic: str
+    fields: list[str] | None = None
+    geo: dict[str, str] | None = None
+    rate_hz: float
+    renames: dict[str, str] = {}
+
+    @staticmethod
+    def build(config: dict, label: str = "channels[]") -> "ChannelRule":
+        """Build and validate a channel rule from config dict."""
+        match config:
+            case {"topic": str(topic), **rest}:
+                pass
+            case _:
+                raise StreamConfigError(f"{label}.topic", f"missing or non-string topic: {config}")
+        fields = rest.get("fields")
+        geo = rest.get("geo")
+        if (fields is None) == (geo is None):
+            raise StreamConfigError(label, "exactly one of 'fields' or 'geo' is required")
+        if fields is not None and (
+            not isinstance(fields, list)
+            or not fields
+            or not all(isinstance(f, str) for f in fields)
+        ):
+            raise StreamConfigError(
+                f"{label}.fields",
+                f"must be a non-empty list of strings: {fields}",
+            )
+        if geo is not None:
+            if not isinstance(geo, dict) or not {"lat", "lon"} <= set(geo):
+                raise StreamConfigError(
+                    f"{label}.geo",
+                    f"requires 'lat' and 'lon' dotted paths: {geo}",
+                )
+            unknown = set(geo) - {"lat", "lon", "alt"}
+            if unknown:
+                raise StreamConfigError(f"{label}.geo", f"unknown keys {sorted(unknown)}")
+        rate = rest.get("rate_hz")
+        if (
+            not isinstance(rate, int | float)
+            or isinstance(rate, bool)
+            or not 0 < rate <= MAX_RATE_HZ
+        ):
+            raise StreamConfigError(
+                f"{label}.rate_hz",
+                f"must be in (0, {MAX_RATE_HZ:g}]: {rate!r}",
+            )
+        renames = rest.get("as", {})
+        if not isinstance(renames, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in renames.items()
+        ):
+            raise StreamConfigError(
+                f"{label}.as",
+                f"must map field paths to channel names: {renames}",
+            )
+        return ChannelRule(
+            topic=topic,
+            fields=fields,
+            geo=geo,
+            rate_hz=float(rate),
+            renames=renames,
+        )
+
+
+class EventRule(BaseModel):
+    """One `events:` entry: a named predicate with capture windows."""
+
+    name: str
+    topic: str
+    predicate: str
+    pre_seconds: float = 0.0
+    post_seconds: float = 0.0
+    debounce_seconds: float = 0.0
+    artifact: str | None = None
+
+    @staticmethod
+    def build(config: dict, label: str = "events[]") -> "EventRule":
+        """Build and validate an event rule from config dict."""
+        match config:
+            case {
+                "name": str(name),
+                "topic": str(topic),
+                "predicate": str(predicate),
+                **rest,
+            }:
+                pass
+            case _:
+                raise StreamConfigError(
+                    label,
+                    f"requires string 'name', 'topic' and 'predicate': {config}",
+                )
+        windows = {}
+        for key in ("pre_seconds", "post_seconds", "debounce_seconds"):
+            value = rest.get(key, 0.0)
+            if not isinstance(value, int | float) or isinstance(value, bool) or value < 0:
+                raise StreamConfigError(
+                    f"{label}.{key}",
+                    f"must be a non-negative number: {value!r}",
+                )
+            windows[key] = float(value)
+        artifact = rest.get("artifact")
+        if artifact is not None and artifact not in ARTIFACT_KINDS:
+            raise StreamConfigError(
+                f"{label}.artifact",
+                f"must be one of {ARTIFACT_KINDS}: {artifact!r}",
+            )
+        return EventRule(
+            name=name,
+            topic=topic,
+            predicate=predicate,
+            artifact=artifact,
+            **windows,
+        )
+
+
+class StreamsConfig(BaseModel):
+    """The whole `streams:` manifest section, shape-validated."""
+
+    broker: str | None = None
+    flush_interval_s: float = 1.0
+    channels: list[ChannelRule] = []
+    events: list[EventRule] = []
+
+    @staticmethod
+    def build(config: dict) -> "StreamsConfig":
+        """Build and validate streams config from dict."""
+        if not isinstance(config, dict):
+            raise StreamConfigError("streams", f"must be a mapping: {config!r}")
+        broker = config.get("broker")
+        if broker is not None:
+            parsed = urlparse(str(broker))
+            if parsed.scheme not in ("mqtt", "mqtts") or not parsed.hostname:
+                raise StreamConfigError(
+                    "streams.broker",
+                    f"must be an mqtt:// or mqtts:// URL with a host: {broker!r}",
+                )
+        flush = config.get("flush_interval_s", 1.0)
+        if not isinstance(flush, int | float) or isinstance(flush, bool) or flush <= 0:
+            raise StreamConfigError("streams.flush_interval_s", f"must be > 0: {flush!r}")
+        channels = [
+            ChannelRule.build(c, label=f"channels[{i}]")
+            for i, c in enumerate(config.get("channels", []))
+        ]
+        events = [
+            EventRule.build(e, label=f"events[{i}]") for i, e in enumerate(config.get("events", []))
+        ]
+        return StreamsConfig(
+            broker=broker,
+            flush_interval_s=float(flush),
+            channels=channels,
+            events=events,
+        )
