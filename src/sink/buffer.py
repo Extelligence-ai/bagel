@@ -148,6 +148,11 @@ class TopicBufferWriter:
         return self._topic
 
     @property
+    def struct(self) -> pa.StructType:
+        """PyArrow StructType for the topic (read-only; used to resolve fleet-stream channels)."""
+        return self._struct
+
+    @property
     def pipeline(self) -> Pipeline | None:
         """The callback pipeline associated with this buffer, if any."""
         return self._pipeline

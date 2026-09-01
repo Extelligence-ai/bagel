@@ -396,3 +396,39 @@ class TestStreamRouterThread:
         # The unacked tail is a contiguous run up to total_records -- no gaps,
         # no out-of-order acks.
         assert remaining == list(range(remaining[0], total_records + 1))
+
+
+class TestStreamRouterDeathIsVisible:
+    """A bug in core/spool (not a PublishError) must not die silently.
+
+    run() wraps _tick in a broad except: log, record _fatal_error, exit the
+    loop. `alive` (thread running AND no fatal error) and `last_error` make
+    this visible to FleetService.status() instead of leaving a router that
+    looks merely "not yet reconnected" forever.
+    """
+
+    def test_non_publish_error_kills_thread_and_is_visible(self, tmp_path: pathlib.Path) -> None:
+        router, q, _spool, _pub = _router(tmp_path, flush_interval_s=1.0)
+
+        def boom(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("core exploded")
+
+        router._core.offer = boom  # type: ignore[method-assign]
+        q.put(("/imu", 1.0, {"x": 1.0}))
+
+        assert router.alive is False  # never started yet: not alive, but no error either
+        assert router.last_error is None
+
+        router.start()
+        deadline = time.monotonic() + 2.0
+        while router.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert not router.is_alive()
+        assert router.alive is False
+        assert router.last_error is not None
+        assert "core exploded" in router.last_error
+
+        # stop() on an already-dead thread must not raise (no exception escapes).
+        router.stop()
+        assert not router.is_alive()

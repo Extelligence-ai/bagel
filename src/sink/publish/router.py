@@ -5,6 +5,7 @@ must never block or raise; the router thread drains, rate-caps, batches,
 spools and publishes. Spec §2/§4.
 """
 
+import logging
 import queue as queue_mod
 import random
 import threading
@@ -212,11 +213,25 @@ class StreamRouter(threading.Thread):
         self._online = False
         self._backoff = self.INITIAL_BACKOFF_S
         self._next_attempt = 0.0
+        self._fatal_error: str | None = None
 
     def run(self) -> None:
-        """Thin loop: tick until stop() is called. All logic lives in `_tick`."""
+        """Thin loop: tick until stop() is called. All logic lives in `_tick`.
+
+        A `_tick` failure that is not a `PublishError` (already handled inside
+        `_pump`) means a bug in `RouterCore` or `Spool`, not an offline
+        broker. Rather than dying silently -- indistinguishable from a router
+        that is merely still offline -- log it, record it as `_fatal_error`,
+        and exit the loop so `alive`/`last_error` surface it to
+        `FleetService.status()`.
+        """
         while not self._stop_event.is_set():
-            self._tick(time.time())
+            try:
+                self._tick(time.time())
+            except Exception as exc:
+                logging.getLogger(__name__).exception("StreamRouter thread died")
+                self._fatal_error = repr(exc)
+                return
 
     def _tick(self, now: float) -> None:
         """One iteration: drain+offer+maybe-flush-to-spool, then publish.
@@ -297,3 +312,18 @@ class StreamRouter(threading.Thread):
     def backoff(self) -> float:
         """Current backoff ceiling (seconds) used for the next reconnect's full jitter."""
         return self._backoff
+
+    @property
+    def alive(self) -> bool:
+        """Whether the thread is running AND has not died on an unhandled `_tick` error.
+
+        Distinct from `online`: `online` tracks the broker session (false
+        while offline-but-retrying, which is normal); `alive` tracks whether
+        the router thread itself is still doing its job at all.
+        """
+        return self.is_alive() and self._fatal_error is None
+
+    @property
+    def last_error(self) -> str | None:
+        """The `repr()` of the exception that killed the thread, if any."""
+        return self._fatal_error
