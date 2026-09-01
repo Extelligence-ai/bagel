@@ -223,6 +223,69 @@ class TestClose:
         p.close()  # must not raise
 
 
+class TestSetTls:
+    """CRITICAL fix: a post-renewal reconnect must pick up the NEW cert/key paths.
+
+    `MqttPublisher` captures `tls_certfile`/`tls_keyfile` at construction and
+    re-reads them from `self._tls` on every `connect()`. Without a seam to
+    replace that dict after a renewal rotates the files on disk, every
+    reconnect after the old files are unlinked fails forever. `set_tls`
+    fixes this by atomically swapping in a NEW dict (never mutating the old
+    one in place, so a router thread reading `self._tls` mid-connect never
+    sees a half-updated mix of old and new paths).
+    """
+
+    def test_set_tls_replaces_the_tls_dict_with_a_new_object(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher(
+            tls_ca_certs="/old-ca.pem", tls_certfile="/old-c.pem", tls_keyfile="/old-k.pem"
+        )
+        old_tls = p._tls
+
+        p.set_tls(
+            tls_ca_certs="/new-ca.pem", tls_certfile="/new-c.pem", tls_keyfile="/new-k.pem"
+        )
+
+        assert p._tls is not old_tls  # a NEW dict, not an in-place mutation
+        assert p._tls == {
+            "ca_certs": "/new-ca.pem",
+            "certfile": "/new-c.pem",
+            "keyfile": "/new-k.pem",
+        }
+        # the old dict object itself is untouched -- a reader still holding
+        # it (e.g. mid-connect on another thread) never sees a partial update
+        assert old_tls == {
+            "ca_certs": "/old-ca.pem",
+            "certfile": "/old-c.pem",
+            "keyfile": "/old-k.pem",
+        }
+
+    def test_reconnect_after_set_tls_uses_the_new_paths(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher(
+            tls_ca_certs="/old-ca.pem", tls_certfile="/old-c.pem", tls_keyfile="/old-k.pem"
+        )
+        p.connect()
+        assert fake["client"].tls == {
+            "ca_certs": "/old-ca.pem",
+            "certfile": "/old-c.pem",
+            "keyfile": "/old-k.pem",
+        }
+
+        p.set_tls(
+            tls_ca_certs="/new-ca.pem", tls_certfile="/new-c.pem", tls_keyfile="/new-k.pem"
+        )
+        p.connect()  # forced reconnect, e.g. after a broker drop
+
+        assert fake["client"].tls == {
+            "ca_certs": "/new-ca.pem",
+            "certfile": "/new-c.pem",
+            "keyfile": "/new-k.pem",
+        }
+
+
 class TestReconnectCounter:
     def test_on_disconnect_is_registered_at_connect(self, fake: dict[str, FakeFleetPaho]) -> None:
         p = _publisher()

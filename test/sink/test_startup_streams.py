@@ -24,6 +24,7 @@ from src.sink import mqtt as sink_mqtt
 from src.sink import startup
 from src.sink.publish import EnrollmentError
 from src.sink.publish import identity as identity_mod
+from src.sink.publish.service import FleetService
 
 _PORT_COUNTER = itertools.count(31000)
 
@@ -235,6 +236,65 @@ class TestFleetServiceReplacement:
 
         # The second service is the one actually live.
         assert service_2._started is True
+
+
+class TestFleetServiceReplacementFailure:
+    """MINOR fix: a failed second start must not leave `_FLEET_SERVICE`
+    pointing at the FIRST service's now-stopped instance -- a caller reading
+    the holder (step 7's status/control tools) would see a dead service as
+    if it were live.
+    """
+
+    def test_new_start_failure_after_stopping_old_leaves_fleet_service_none(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+        monkeypatch.setattr(startup.MqttPublisher, "connect", lambda self: None)
+
+        fake = FakePahoClient()
+        fake.retained = {
+            "robot/telemetry_1": [b'{"speed": 1.5, "t": 100.0}'],
+            "robot/telemetry_2": [b'{"speed": 2.5, "t": 100.0}'],
+        }
+        monkeypatch.setattr(sink_mqtt.paho, "Client", lambda **_: fake)
+
+        entry_1 = _subscription_entry("manifest.test", "robot/telemetry_1")
+        manifest_1 = {
+            "subscriptions": [entry_1],
+            "streams": {
+                "channels": [{"topic": "robot/telemetry_1", "fields": ["speed"], "rate_hz": 1}]
+            },
+        }
+        manifest_file_1 = _write_manifest(tmp_path, manifest_1, name="startup1.yaml")
+
+        reports_1 = startup.start(manifest_file_1)
+        assert reports_1[-1] == {"fleet": "started"}
+        service_1 = startup._FLEET_SERVICE
+        assert service_1 is not None
+
+        # The second start's FleetService.start() fails AFTER the first
+        # service has already been stopped and replaced.
+        def failing_start(self: FleetService) -> None:
+            raise RuntimeError("simulated start failure")
+
+        monkeypatch.setattr(FleetService, "start", failing_start)
+
+        entry_2 = _subscription_entry("manifest.test", "robot/telemetry_2")
+        manifest_2 = {
+            "subscriptions": [entry_2],
+            "streams": {
+                "channels": [{"topic": "robot/telemetry_2", "fields": ["speed"], "rate_hz": 1}]
+            },
+        }
+        manifest_file_2 = _write_manifest(tmp_path, manifest_2, name="startup2.yaml")
+
+        reports_2 = startup.start(manifest_file_2)  # must not raise
+
+        assert reports_2[-1]["fleet"] == "failed"
+        # BUG (pre-fix): _FLEET_SERVICE still pointed at the stopped, dead
+        # service_1 -- a caller reading the holder would see a dead service
+        # as if it were the live one.
+        assert startup._FLEET_SERVICE is None
 
 
 class TestFleetDisabled:

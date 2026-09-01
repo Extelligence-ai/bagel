@@ -22,6 +22,7 @@ import time
 import pytest
 import yaml
 
+from settings import settings
 from src.sink.publish import EnrollmentError, FleetNotEnrolledError
 from src.sink.publish import identity as identity_mod
 
@@ -510,6 +511,192 @@ class TestLoadIdentity:
         assert not legacy.key_path.exists()  # old fixed-name file unlinked
 
 
+class TestLoadIdentityPointerFieldTypeValidation:
+    """IMPORTANT fix: a hand-edited identity.yaml with a null pointer field must
+    never raise a raw TypeError -- that would brick server boot through
+    ``maybe_enroll_on_first_boot`` (whose contract is "never raises").
+    ``load_identity`` used to do ``directory / data.get("key_file", "robot.key")``,
+    where ``.get``'s default only applies when the key is ABSENT -- an explicit
+    ``key_file: null`` still resolves to ``None`` and blows up the ``/`` operator.
+    """
+
+    def test_null_key_file_is_treated_as_not_enrolled(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        doc["key_file"] = None
+        (directory / "identity.yaml").write_text(yaml.safe_dump(doc))
+
+        with pytest.raises(FleetNotEnrolledError):
+            identity_mod.load_identity(directory)
+        assert identity_mod.is_enrolled(directory) is False
+
+    def test_null_cert_file_is_treated_as_not_enrolled(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        doc["cert_file"] = None
+        (directory / "identity.yaml").write_text(yaml.safe_dump(doc))
+
+        with pytest.raises(FleetNotEnrolledError):
+            identity_mod.load_identity(directory)
+
+    def test_null_ca_file_is_treated_as_not_enrolled(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        doc["ca_file"] = None
+        (directory / "identity.yaml").write_text(yaml.safe_dump(doc))
+
+        with pytest.raises(FleetNotEnrolledError):
+            identity_mod.load_identity(directory)
+
+    def test_non_string_key_file_is_treated_as_not_enrolled(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        doc["key_file"] = 42
+        (directory / "identity.yaml").write_text(yaml.safe_dump(doc))
+
+        with pytest.raises(FleetNotEnrolledError):
+            identity_mod.load_identity(directory)
+
+    def test_unquoted_expires_at_timestamp_is_treated_as_not_enrolled(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        # A hand-edited identity.yaml with an unquoted timestamp: YAML's
+        # implicit resolver parses it as a datetime object, not a string --
+        # should_attempt_renewal's `expires_at.replace("Z", ...)` would then
+        # blow up (or silently misbehave) instead of being treated as the
+        # corrupt/not-enrolled document it actually is.
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        text = (directory / "identity.yaml").read_text()
+        text = text.replace(
+            "expires_at: '2027-01-01T00:00:00Z'", "expires_at: 2027-01-01T00:00:00Z"
+        )
+        (directory / "identity.yaml").write_text(text)
+        # Sanity check the edit actually triggers YAML's auto-datetime edge.
+        parsed = yaml.safe_load(text)
+        assert isinstance(parsed["expires_at"], datetime.datetime)
+
+        with pytest.raises(FleetNotEnrolledError):
+            identity_mod.load_identity(directory)
+
+    def test_legacy_absent_pointer_fields_still_default_correctly(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        # Regression guard: the null-vs-absent distinction must not break the
+        # existing legacy-loading behavior (see
+        # TestLoadIdentity.test_legacy_identity_yaml_without_pointer_fields_still_loads) --
+        # an ABSENT field still means "use the historical fixed name", only an
+        # EXPLICIT null is corrupt.
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        for key in ("key_file", "cert_file", "ca_file"):
+            doc.pop(key, None)
+        (directory / "identity.yaml").write_text(yaml.safe_dump(doc))
+
+        loaded = identity_mod.load_identity(directory)
+
+        assert loaded.key_path == directory / "robot.key"
+        assert loaded.cert_path == directory / "robot.crt"
+        assert loaded.ca_path == directory / "ca.crt"
+
+
+class TestMaybeEnrollOnFirstBootNeverRaisesOnCorruptIdentity:
+    def test_survives_a_null_key_file_in_an_existing_identity_yaml(
+        self, fake_server: str, tmp_path: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        doc["key_file"] = None
+        (directory / "identity.yaml").write_text(yaml.safe_dump(doc))
+
+        monkeypatch.setattr(settings, "FLEET_ENROLL_TOKEN", VALID_TOKEN)
+        monkeypatch.setattr(settings, "FLEET_ENROLL_URL", fake_server)
+        monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(directory))
+
+        identity_mod.maybe_enroll_on_first_boot()  # must not raise
+
+        # is_enrolled() saw the corrupt doc as not-enrolled, so this re-enrolled.
+        assert identity_mod.is_enrolled(directory) is True
+
+
+class TestLastRenewalAttemptAtPersistence:
+    """IMPORTANT fix: `last_renewal_attempt_at` must survive a process restart.
+
+    `_write_identity_yaml` already persists it, but `load_identity` never
+    read it back -- a crashlooping robot inside the 30-day renewal window
+    would re-fire a renewal POST on every restart, ignoring the daily rate
+    limit entirely.
+    """
+
+    def test_load_identity_reads_last_renewal_attempt_at(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        doc["last_renewal_attempt_at"] = 1735689600.5
+        (directory / "identity.yaml").write_text(yaml.safe_dump(doc))
+
+        loaded = identity_mod.load_identity(directory)
+
+        assert loaded.last_renewal_attempt_at == 1735689600.5
+
+    def test_load_identity_defaults_to_none_when_field_absent(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)  # never writes the field
+
+        loaded = identity_mod.load_identity(directory)
+
+        assert loaded.last_renewal_attempt_at is None
+
+    def test_load_identity_tolerates_a_wrong_typed_value(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        doc["last_renewal_attempt_at"] = "not-a-number"
+        (directory / "identity.yaml").write_text(yaml.safe_dump(doc))
+
+        loaded = identity_mod.load_identity(directory)
+
+        assert loaded.last_renewal_attempt_at is None
+
+
+class TestIdentityDirectoryPermissions:
+    """MINOR fix: a freshly created identity directory should be 0700, not the
+    default (umask-dependent, typically 0755) mkdir mode -- it holds a
+    private key plus mTLS material.
+    """
+
+    def test_freshly_created_directory_is_mode_0700(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        assert not directory.exists()  # sanity: enroll() must create it
+
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+
+        mode = stat.S_IMODE(directory.stat().st_mode)
+        assert mode == 0o700
+
+
 class TestIsEnrolled:
     def test_true_after_enroll(self, fake_server: str, tmp_path: object) -> None:
         directory = tmp_path / "identity"
@@ -619,6 +806,61 @@ class TestRenewUrl:
         assert result.renew_url == fake_renew_server
         doc = yaml.safe_load((directory / "identity.yaml").read_text())
         assert doc["renew_url"] == fake_renew_server
+
+
+class TestBaseUrlTrailingSlash:
+    """MINOR fix: a trailing slash on the configured base URL must not produce
+    a double slash before the appended path (``FLEET_ENROLL_URL=https://x/``
+    must hit ``.../v1/enroll``, not ``...//v1/enroll``). The stored BASE
+    value itself (``identity.yaml``'s ``enroll_url``) is untouched --
+    trailing slash and all -- only the REQUEST url is stripped.
+    """
+
+    def test_enroll_strips_trailing_slash_before_appending_the_path(
+        self, fake_server: str, tmp_path: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured_urls: list[str] = []
+        real_request = identity_mod.urllib.request.Request
+
+        def spy_request(url: str, *args: object, **kwargs: object) -> object:
+            captured_urls.append(url)
+            return real_request(url, *args, **kwargs)
+
+        monkeypatch.setattr(identity_mod.urllib.request, "Request", spy_request)
+
+        directory = tmp_path / "identity"
+        result = identity_mod.enroll(VALID_TOKEN, f"{fake_server}/", directory)
+
+        assert captured_urls == [f"{fake_server}/v1/enroll"]  # no double slash
+        # BASE semantics unchanged: the stored/returned enroll_url is exactly
+        # what was passed in, trailing slash and all.
+        assert result.enroll_url == f"{fake_server}/"
+
+    def test_renew_strips_trailing_slash_before_appending_the_path(
+        self,
+        fake_server: str,
+        fake_renew_server: str,
+        tmp_path: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        identity = _identity_for_renew(
+            fake_server, f"{fake_renew_server}/", tmp_path, "renew-ok"
+        )
+        assert identity.enroll_url == f"{fake_renew_server}/"  # renew_url absent -> falls back
+
+        captured_urls: list[str] = []
+        real_request = identity_mod.urllib.request.Request
+
+        def spy_request(url: str, *args: object, **kwargs: object) -> object:
+            captured_urls.append(url)
+            return real_request(url, *args, **kwargs)
+
+        monkeypatch.setattr(identity_mod.urllib.request, "Request", spy_request)
+
+        result = identity_mod.renew(identity)
+
+        assert result is not None
+        assert captured_urls == [f"{fake_renew_server}/v1/renew"]  # no double slash
 
 
 def test_identity_module_does_not_import_paho_or_cryptography_eagerly(

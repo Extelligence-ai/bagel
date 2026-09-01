@@ -299,6 +299,12 @@ def _start_fleet(
                     "Failed to stop the previous FleetService before replacing it: %s",
                     stop_error,
                 )
+            # Clear the holder immediately, whether or not stop() itself
+            # succeeded -- if the NEW service below fails to start, the
+            # holder must not keep pointing at this now-stopped instance as
+            # if it were still the live one (a caller reading it -- step 7's
+            # status/control tools -- would see a dead service as live).
+            _FLEET_SERVICE = None
 
         directory = settings.FLEET_IDENTITY_DIRECTORY
         identity = (

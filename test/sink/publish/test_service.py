@@ -6,17 +6,26 @@ import json
 import pathlib
 import sys
 import time
+import types
 
 import pyarrow as pa
 import pytest
 
+from publish.test_identity import VALID_TOKEN, fake_renew_server, fake_server
 from src.sink.publish import StreamConfigError
+from src.sink.publish import identity as identity_mod
+from src.sink.publish import mqtt as publish_mqtt
 from src.sink.publish import service as service_mod
 from src.sink.publish.config import StreamsConfig
 from src.sink.publish.identity import Identity
+from src.sink.publish.mqtt import MqttPublisher
 from src.sink.publish.publisher import Publisher, PublishError
 from src.sink.publish.service import FleetService
 from src.sink.publish.spool import Spool
+
+# Re-exported so pytest picks them up as fixtures in this module too (they're
+# only *used* below via the `fake_server`/`fake_renew_server` parameter names).
+__all__ = ["fake_renew_server", "fake_server"]
 
 
 def test_service_module_does_not_import_paho_eagerly(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -610,3 +619,206 @@ class TestIdentityWiring:
             assert service._heartbeat.is_alive()
         finally:
             service.stop()
+
+
+class TestLastRenewalAttemptSeedsFromIdentity:
+    """IMPORTANT fix: the daily rate limit must survive a process restart.
+
+    `FleetService` used to always start with `_last_renewal_attempt_at =
+    None`, regardless of what `identity.yaml` had on disk -- so a
+    crashlooping robot inside the 30-day renewal window would fire a fresh
+    renewal attempt roughly every restart, ignoring the daily rate limit.
+    """
+
+    def test_recent_on_disk_attempt_blocks_a_renewal_check_right_after_construction(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        identity = _fake_identity(tmp_path, expires_at="2026-09-05T00:00:00Z")  # within window
+        identity = dataclasses.replace(
+            identity, last_renewal_attempt_at=time.time() - 3600
+        )  # 1h ago -- well inside the 1-day rate limit
+
+        service = FleetService(
+            sink=FakeSink({}),
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+            identity=identity,
+        )
+
+        # Seeded at construction time, not left at None.
+        assert service._last_renewal_attempt_at == identity.last_renewal_attempt_at
+
+        def fail_if_called(identity: Identity) -> Identity:
+            raise AssertionError(
+                "renew() must not be called: rate-limited by the seeded "
+                "last_renewal_attempt_at, even on a freshly constructed service"
+            )
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(service_mod, "renew", fail_if_called)
+            service._renewal_check()  # real should_attempt_renewal: must see "not due"
+
+    def test_no_on_disk_attempt_allows_an_immediate_renewal_check(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        identity = _fake_identity(tmp_path, expires_at="2026-09-05T00:00:00Z")
+        assert identity.last_renewal_attempt_at is None
+
+        service = FleetService(
+            sink=FakeSink({}),
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+            identity=identity,
+        )
+        assert service._last_renewal_attempt_at is None
+
+        renew_calls = []
+        monkeypatch.setattr(service_mod, "renew", lambda ident: renew_calls.append(ident) or None)
+
+        service._renewal_check()
+
+        assert renew_calls == [identity]
+
+
+class _FakeTlsCapturingPahoClient:
+    """A minimal fake paho client that just records the kwargs `tls_set` got.
+
+    Module-level (rather than nested in the test) purely to keep the test
+    function's own cyclomatic complexity down -- this class carries no
+    branching logic of its own.
+    """
+
+    def __init__(self) -> None:
+        self.tls: dict[str, object] | None = None
+        self._connected = False
+
+    def will_set(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def tls_set(self, **kwargs: object) -> None:
+        self.tls = kwargs
+
+    def username_pw_set(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def connect(self, host: str, port: int, keepalive: int = 60) -> None:
+        self._connected = True
+
+    def loop_start(self) -> None:
+        pass
+
+    def loop_stop(self) -> None:
+        pass
+
+    def disconnect(self) -> None:
+        self._connected = False
+
+    def is_connected(self) -> bool:
+        return self._connected
+
+
+def _install_fake_tls_capturing_paho(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Monkeypatch `publish_mqtt._paho` with a fake whose Client is `_FakeTlsCapturingPahoClient`.
+
+    Returns a holder dict populated with the live client under "client" once
+    `MqttPublisher.connect()` builds one -- same pattern as
+    test_mqtt_publisher.py's `fake` fixture.
+    """
+    holder: dict[str, object] = {}
+
+    def fake_client(**kwargs: object) -> _FakeTlsCapturingPahoClient:
+        holder["client"] = _FakeTlsCapturingPahoClient()
+        return holder["client"]
+
+    fake_paho_module = types.SimpleNamespace(
+        Client=fake_client,
+        CallbackAPIVersion=types.SimpleNamespace(VERSION2="v2"),
+        MQTTv5=5,
+    )
+    monkeypatch.setattr(publish_mqtt, "_paho", lambda: fake_paho_module)
+    return holder
+
+
+class TestRenewalReconnectPicksUpNewTlsMaterial:
+    """CRITICAL fix: a live MqttPublisher must reconnect with the RENEWED cert/key.
+
+    Before this fix, `MqttPublisher` captured `tls_certfile`/`tls_keyfile`
+    paths at construction and never learned about a renewal's pointer swap
+    (identity.py's `_commit_renewed_files`, which unlinks the OLD key/cert
+    once the new ones are committed) -- so the first reconnect after a
+    renewal tried to `tls_set()` with paths to files that no longer exist.
+
+    This drives the real thing end to end: a real `enroll()` + real
+    `renew()` against the mini-CA fake HTTP servers from test_identity.py
+    (so the old files are genuinely unlinked from disk, not just
+    hand-waved), a real `MqttPublisher` (paho faked out, per
+    test_mqtt_publisher.py's convention), and `FleetService._renewal_check`
+    -- the actual seam that must call `MqttPublisher.set_tls` before a
+    caller can safely force a reconnect.
+    """
+
+    def test_renewal_check_updates_the_live_publisher_before_next_reconnect(
+        self,
+        fake_server: str,
+        fake_renew_server: str,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        directory = tmp_path / "identity"
+        enrolled = identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        # _FakeRenewHandler (test_identity.py) reads the scenario back off
+        # the CSR's common name -- "renew-ok" is its happy-path scenario.
+        old_identity = dataclasses.replace(
+            enrolled, robot_id="renew-ok", enroll_url=fake_renew_server
+        )
+        old_key_path, old_cert_path, old_ca_path = (
+            old_identity.key_path,
+            old_identity.cert_path,
+            old_identity.ca_path,
+        )
+        assert old_key_path.exists()  # sanity: real files from a real enroll()
+
+        fake_paho_client = _install_fake_tls_capturing_paho(monkeypatch)
+
+        publisher = MqttPublisher(
+            broker_url=old_identity.broker_url,
+            tenant=old_identity.tenant,
+            robot=old_identity.robot_id,
+            tls_ca_certs=str(old_identity.ca_path),
+            tls_certfile=str(old_identity.cert_path),
+            tls_keyfile=str(old_identity.key_path),
+        )
+        publisher.connect()
+        assert fake_paho_client["client"].tls == {
+            "ca_certs": str(old_ca_path),
+            "certfile": str(old_cert_path),
+            "keyfile": str(old_key_path),
+        }
+
+        service = FleetService(
+            sink=FakeSink({}),
+            streams=_imu_streams(),
+            publisher=publisher,
+            spool=Spool(tmp_path / "spool"),
+            identity=old_identity,
+        )
+        monkeypatch.setattr(service_mod, "should_attempt_renewal", lambda *a, **kw: True)
+
+        service._renewal_check()  # runs the REAL renew() against fake_renew_server
+
+        new_identity = service._identity
+        assert new_identity is not old_identity
+        assert new_identity.key_path != old_key_path
+        # The pointer-swap's cleanup step really did unlink the old files.
+        assert not old_key_path.exists()
+        assert not old_cert_path.exists()
+
+        publisher.connect()  # forced reconnect, e.g. the router's backoff retry
+
+        assert fake_paho_client["client"].tls == {
+            "ca_certs": str(new_identity.ca_path),
+            "certfile": str(new_identity.cert_path),
+            "keyfile": str(new_identity.key_path),
+        }

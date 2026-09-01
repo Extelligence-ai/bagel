@@ -23,7 +23,11 @@ docstring for why. All writes are atomic (sibling tempfile + os.replace).
 
 ``enroll_url`` and the OPTIONAL ``renew_url`` are both BASE urls (no
 trailing path) -- the client appends ``/v1/enroll`` and ``/v1/renew``
-itself. They commonly point at different hosts entirely: enroll is a
+itself. A trailing slash on the configured base is tolerated: it is
+stripped before the path is appended (so ``.../v1/enroll``, never
+``..//v1/enroll``), but the BASE value itself -- as stored in
+``identity.yaml`` and on the returned ``Identity`` -- is left exactly as
+given. They commonly point at different hosts entirely: enroll is a
 path-routed HTTPS endpoint (e.g. an ALB), while renew is an mTLS listener on
 the broker itself, which is a separate host:port -- so ``renew()`` targets
 ``identity.renew_url`` when the enroll response carried one, falling back to
@@ -93,6 +97,18 @@ class Identity:
     cert_path: pathlib.Path
     ca_path: pathlib.Path
     renew_url: str | None = None
+    last_renewal_attempt_at: float | None = None
+    """Unix epoch seconds of the most recent renewal attempt, on disk or None.
+
+    Populated by ``load_identity`` from identity.yaml's ``last_renewal_attempt_at``
+    (tolerating an absent or wrong-typed value as ``None``) so
+    ``FleetService`` can seed its own in-memory rate-limit tracking from it
+    at construction time -- without this, the daily rate limit
+    (``_RENEWAL_MIN_INTERVAL_S``) resets on every process restart, letting a
+    crashlooping robot inside the 30-day renewal window fire a fresh renewal
+    POST roughly every restart. Defaults to ``None`` so every existing
+    construction of this dataclass keeps working unchanged.
+    """
 
     @property
     def robot(self) -> str:
@@ -114,7 +130,12 @@ def _atomic_write(target: pathlib.Path, data: bytes, *, mode: int | None = None)
     is mandated at 0600). Intentional, not a mode explicitly chosen for them;
     noted here for a future consumer who needs a world/group-readable cert.
     """
-    target.parent.mkdir(parents=True, exist_ok=True)
+    # mode=0o700: the identity directory holds a private key plus mTLS
+    # material, so it should never be group/other-readable. Only applies at
+    # creation time -- an already-existing directory keeps whatever mode it
+    # already has (exist_ok=True), which is fine: this only needs to nail
+    # down the mode the FIRST time this directory is ever created.
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
     tmp = pathlib.Path(tmp_name)
     try:
@@ -186,7 +207,7 @@ def enroll(token: str, enroll_url: str, directory: pathlib.Path) -> Identity:
 
     body = json.dumps({"token": token, "csr_pem": csr_pem.decode()}).encode()
     request = urllib.request.Request(  # noqa: S310 -- scheme enforced to http(s) above
-        f"{enroll_url}/v1/enroll",
+        f"{enroll_url.rstrip('/')}/v1/enroll",
         data=body,
         headers={"Content-Type": "application/json"},
     )
@@ -277,6 +298,44 @@ def enroll(token: str, enroll_url: str, directory: pathlib.Path) -> Identity:
     )
 
 
+def _resolve_pointer_field(
+    data: dict, field_name: str, default_name: str, identity_path: pathlib.Path
+) -> str:
+    """Resolve one of identity.yaml's optional key_file/cert_file/ca_file pointers.
+
+    Absent entirely -> ``default_name`` (the historical fixed name -- see
+    ``load_identity``'s docstring). Present but not a ``str`` (e.g. an
+    explicit ``key_file: null``) -> ``FleetNotEnrolledError``: unlike the
+    "absent" case, ``.get(field, default)``'s default would NOT have applied
+    here (the key is present), so silently falling back would hide a corrupt
+    document; raising instead is what makes a hand-edited ``key_file: null``
+    behave like "not enrolled" rather than a raw ``TypeError`` from
+    ``directory / None`` deeper in the caller.
+    """
+    if field_name not in data:
+        return default_name
+    value = data[field_name]
+    if not isinstance(value, str):
+        raise FleetNotEnrolledError(
+            f"identity.yaml at {identity_path} has non-string {field_name}: {value!r}"
+        )
+    return value
+
+
+def _parse_last_renewal_attempt_at(data: dict) -> float | None:
+    """Parse identity.yaml's OPTIONAL ``last_renewal_attempt_at``, tolerantly.
+
+    Unlike the pointer fields, an absent or wrong-typed value here is not
+    treated as corrupt -- there's no crash-risk equivalent of the
+    ``directory / None`` hazard the pointer fields have, so this simply
+    means "no attempt recorded yet" (``None``) rather than raising.
+    """
+    value = data.get("last_renewal_attempt_at")
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return value
+
+
 def load_identity(directory: pathlib.Path) -> Identity:
     """Load a previously stored Identity from ``directory``.
 
@@ -330,10 +389,25 @@ def load_identity(directory: pathlib.Path) -> Identity:
     if missing:
         raise FleetNotEnrolledError(f"identity.yaml at {identity_path} missing: {missing}")
 
-    key_path = directory / data.get("key_file", "robot.key")
-    cert_path = directory / data.get("cert_file", "robot.crt")
-    ca_path = directory / data.get("ca_file", "ca.crt")
+    # expires_at is required (checked above), but a hand-edited or corrupt
+    # document can still carry the right KEY with the wrong type -- notably
+    # an unquoted ISO timestamp, which YAML's implicit resolver parses as a
+    # datetime object, not str. should_attempt_renewal expects a str it can
+    # call .replace() on, so treat a non-str value the same as "not enrolled"
+    # rather than let a TypeError surface later, deep in the renewal path.
+    if not isinstance(expires_at, str):
+        raise FleetNotEnrolledError(
+            f"identity.yaml at {identity_path} has non-string expires_at: {expires_at!r}"
+        )
+
+    # The three pointer fields are OPTIONAL (see the module docstring and
+    # `_resolve_pointer_field`'s docstring for the absent-vs-wrong-type
+    # distinction that matters here).
+    key_path = directory / _resolve_pointer_field(data, "key_file", "robot.key", identity_path)
+    cert_path = directory / _resolve_pointer_field(data, "cert_file", "robot.crt", identity_path)
+    ca_path = directory / _resolve_pointer_field(data, "ca_file", "ca.crt", identity_path)
     renew_url = data.get("renew_url")  # optional -- absent means "fall back to enroll_url"
+    last_renewal_attempt_at = _parse_last_renewal_attempt_at(data)
 
     for path in (key_path, cert_path, ca_path):
         if not path.is_file():
@@ -349,6 +423,7 @@ def load_identity(directory: pathlib.Path) -> Identity:
         cert_path=cert_path,
         ca_path=ca_path,
         renew_url=renew_url,
+        last_renewal_attempt_at=last_renewal_attempt_at,
     )
 
 
@@ -556,6 +631,7 @@ def _commit_renewed_files(
         key_path=directory / new_key_file,
         cert_path=directory / new_cert_file,
         ca_path=directory / new_ca_file,
+        last_renewal_attempt_at=now,
     )
 
 
@@ -578,7 +654,7 @@ def _renew_inner(  # noqa: PLR0911 -- one early return per distinct failure bran
 
     body = json.dumps({"csr_pem": new_csr_pem.decode()}).encode()
     request = urllib.request.Request(  # noqa: S310 -- scheme enforced to http(s) above
-        f"{target_base}/v1/renew",
+        f"{target_base.rstrip('/')}/v1/renew",
         data=body,
         headers={"Content-Type": "application/json"},
     )

@@ -65,14 +65,17 @@ class FleetService:
         self._publisher = publisher
         self._spool = spool
         self._identity = identity
-        # In-memory only: this service's lifetime is the process's lifetime
-        # (see module docstring, ruling B), so there is no cross-restart
-        # state to recover here. `renew()` itself persists
-        # `last_renewal_attempt_at` to identity.yaml regardless of outcome;
-        # a fresh process simply doesn't consult that on-disk value and
-        # starts as if no attempt has been made, which is safe (worst case:
-        # one avoidable extra attempt right after a restart).
-        self._last_renewal_attempt_at: float | None = None
+        # Seeded from identity.yaml's on-disk `last_renewal_attempt_at` (via
+        # `load_identity`), not always `None`: this service's own lifetime is
+        # the process's lifetime (see module docstring, ruling B), so this
+        # field is never itself persisted again mid-run -- but the ON-DISK
+        # value it started from must still be honored on a fresh process, or
+        # a crashlooping robot inside the 30-day renewal window would fire a
+        # fresh renewal attempt on every restart, ignoring the daily rate
+        # limit (`_RENEWAL_MIN_INTERVAL_S`) entirely.
+        self._last_renewal_attempt_at: float | None = (
+            identity.last_renewal_attempt_at if identity is not None else None
+        )
 
         self._resolved: list = []
         self._schema_payload: dict = {"v": 1, "channels": []}
@@ -281,6 +284,13 @@ class FleetService:
         already runs `renewal_check` inside its own try/except, and `renew()`
         itself never raises -- so there is nothing left for this method to
         guard against beyond what those two already cover.
+
+        NOTE: `renew()` does a real mTLS POST with a 30s `urlopen` timeout,
+        and this runs synchronously on the heartbeat thread (it IS the
+        thread's `renewal_check` hook) -- so a slow/hanging renewal endpoint
+        can delay one heartbeat tick by up to a full interval. This happens
+        at most ~once/day (`_RENEWAL_MIN_INTERVAL_S`) and only in the last 30
+        days before cert expiry; accepted trade-off, not a bug.
         """
         if self._identity is None:  # pragma: no cover -- guarded by _launch_runtime's wiring
             return
@@ -291,4 +301,18 @@ class FleetService:
         self._last_renewal_attempt_at = now
         new_identity = renew(self._identity)
         if new_identity is not None:
+            # CRITICAL: point the LIVE publisher at the new cert/key BEFORE
+            # (or atomically with) swapping self._identity -- renew()'s
+            # pointer-commit already unlinked the old files, so the very
+            # next reconnect must not still be holding their paths (see
+            # MqttPublisher.set_tls's docstring). Not every Publisher
+            # implementation has this seam (e.g. tests' FakePublisher), so
+            # it's called only when present.
+            set_tls = getattr(self._publisher, "set_tls", None)
+            if set_tls is not None:
+                set_tls(
+                    tls_ca_certs=str(new_identity.ca_path),
+                    tls_certfile=str(new_identity.cert_path),
+                    tls_keyfile=str(new_identity.key_path),
+                )
             self._identity = new_identity

@@ -96,6 +96,36 @@ class MqttPublisher(Publisher):
         self.reconnects = 0
         self._finalizer = weakref.finalize(self, _finalize, None)
 
+    def set_tls(
+        self,
+        *,
+        tls_ca_certs: str | None,
+        tls_certfile: str | None,
+        tls_keyfile: str | None,
+    ) -> None:
+        """Atomically replace the TLS material used by the NEXT `connect()`.
+
+        Assigns a brand-new dict to `self._tls` rather than mutating the
+        existing one in place -- a single reference assignment is safe
+        against a background thread (e.g. `StreamRouter`'s reconnect loop)
+        reading `self._tls` mid-`connect()`; it always sees either the
+        fully-old or the fully-new dict, never a half-updated mix. This
+        exists for the certificate-renewal path (see `identity.renew()`'s
+        docstring): once a renewal has rotated the cert/key files on disk,
+        this is the seam that tells the LIVE publisher about the new paths
+        before its next reconnect, so it doesn't keep trying (and failing)
+        to load the now-deleted old files.
+
+        Does not itself force a reconnect or touch an already-open
+        connection -- the currently connected client, if any, keeps running
+        on the old material until its own next `connect()` call.
+        """
+        self._tls = {
+            "ca_certs": tls_ca_certs,
+            "certfile": tls_certfile,
+            "keyfile": tls_keyfile,
+        }
+
     def connect(self) -> None:
         """Build the paho client, arm the last-will, and connect.
 
