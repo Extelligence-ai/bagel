@@ -128,6 +128,7 @@ class HeartbeatThread(threading.Thread):
         self._interval_s = interval_s
         self._spool = spool
         self._stop_event = threading.Event()
+        self._spool_failures = 0
 
     def run(self) -> None:
         """Tick immediately on start, then every `interval_s`, until stop() is called."""
@@ -136,21 +137,39 @@ class HeartbeatThread(threading.Thread):
             self._stop_event.wait(self._interval_s)
 
     def _tick(self) -> None:
-        """One heartbeat: build the payload, publish it, spool it on failure."""
+        """One heartbeat: build the payload, publish it, spool it on failure.
+
+        A `PublishError` (the broker is unreachable) is normal, expected
+        offline behavior -- logged at DEBUG. A failure spooling the payload
+        to the never-drop "heartbeat" lane afterward is not: per spec §4
+        that lane must never silently drop, so a `SpoolError` (e.g.
+        `SpoolFullError` -- disk full) or any other exception from the spool
+        path logs at WARNING (with the lane and reason) and increments
+        `spool_failures` so it is visible to an operator via
+        `FleetService.status()`, instead of vanishing at DEBUG. Either way
+        the thread never dies and no exception escapes this method.
+        """
         payload = self._payload_factory()
         try:
             self._publisher.publish_heartbeat(payload)
         except PublishError:
+            logging.getLogger(__name__).debug("heartbeat publish failed", exc_info=True)
             if self._spool is not None:
                 try:
                     seq = self._spool.next_seq("heartbeat")
                     self._spool.append("heartbeat", seq, payload)
-                except Exception:
-                    logging.getLogger(__name__).debug(
-                        "heartbeat spool append failed", exc_info=True
+                except Exception as exc:
+                    self._spool_failures += 1
+                    logging.getLogger(__name__).warning(
+                        "heartbeat spool append failed on lane 'heartbeat': %s", exc, exc_info=True
                     )
 
     def stop(self) -> None:
         """Signal the loop to stop and join with a bounded timeout."""
         self._stop_event.set()
         self.join(timeout=5)
+
+    @property
+    def spool_failures(self) -> int:
+        """Count of failed attempts to spool a heartbeat payload after a publish failure."""
+        return self._spool_failures

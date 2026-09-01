@@ -311,6 +311,7 @@ class TestStatus:
                 "channels_active",
                 "router_alive",
                 "router_error",
+                "heartbeat_spool_failures",
             }
             assert status["subscriptions"] == ["/imu"]
             assert status["channels_active"] == 1
@@ -318,6 +319,7 @@ class TestStatus:
             assert isinstance(status["spool"], dict)
             assert status["router_alive"] is True
             assert status["router_error"] is None
+            assert status["heartbeat_spool_failures"] == 0
         finally:
             service.stop()
 

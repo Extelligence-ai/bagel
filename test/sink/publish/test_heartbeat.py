@@ -1,6 +1,7 @@
 """Heartbeat payload building and HeartbeatThread lifecycle (fleet streaming spec §3)."""
 
 import importlib
+import logging
 import pathlib
 import sys
 import time
@@ -10,7 +11,7 @@ import pytest
 from src.sink.publish import heartbeat as heartbeat_mod
 from src.sink.publish.heartbeat import HEARTBEAT_INTERVAL_S, HeartbeatThread, build_heartbeat
 from src.sink.publish.publisher import Publisher, PublishError
-from src.sink.publish.spool import Spool
+from src.sink.publish.spool import Spool, SpoolFullError
 
 
 def test_heartbeat_module_does_not_import_paho_eagerly(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -227,6 +228,7 @@ class TestHeartbeatThread:
         pending = list(spool.pending("heartbeat"))
         assert len(pending) == 1
         assert pending[0][1] == payload
+        assert thread.spool_failures == 0  # the spool write itself succeeded
 
     def test_publish_failure_without_spool_swallowed(self) -> None:
         pub = FakePublisher()
@@ -234,6 +236,42 @@ class TestHeartbeatThread:
         thread = HeartbeatThread(pub, lambda: {"v": 1}, interval_s=10.0)
         thread._tick()  # must not raise
         assert pub.heartbeat_calls == []
+        assert thread.spool_failures == 0  # no spool configured; nothing to fail
+
+    def test_spool_write_failure_after_publish_failure_logs_warning_and_counts(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # PublishError (broker offline) is normal and stays DEBUG-quiet (see
+        # test_publish_failure_spools_to_heartbeat_lane above); a failure
+        # writing to the never-drop "heartbeat" lane afterward is not --
+        # spec §4 requires it be visible, not silently dropped.
+        pub = FakePublisher()
+        pub.fail_next(1000)  # every tick's publish fails
+
+        class BoomSpool:
+            """Duck-typed Spool stand-in: next_seq works, append always fails."""
+
+            def next_seq(self, lane: str) -> int:
+                return 1
+
+            def append(self, lane: str, seq: int, payload: dict) -> None:
+                raise SpoolFullError(f"lane '{lane}': disk full")
+
+        thread = HeartbeatThread(pub, lambda: {"v": 1}, interval_s=10.0, spool=BoomSpool())
+
+        with caplog.at_level(logging.WARNING):
+            thread.start()
+            deadline = time.monotonic() + 2.0
+            while thread.spool_failures < 1 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert thread.is_alive()  # the failure never escaped run()'s loop
+            thread.stop()
+
+        assert thread.spool_failures == 1
+        assert pub.heartbeat_calls == []
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warnings
+        assert any("heartbeat" in r.getMessage() for r in warnings)
 
     def test_stop_joins_promptly(self) -> None:
         pub = FakePublisher()

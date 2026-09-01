@@ -184,6 +184,9 @@ class FleetService:
             "channels_active": len(self._resolved),
             "router_alive": self._router.alive if self._router is not None else False,
             "router_error": self._router.last_error if self._router is not None else None,
+            "heartbeat_spool_failures": (
+                self._heartbeat.spool_failures if self._heartbeat is not None else 0
+            ),
         }
 
     # -- internals ---------------------------------------------------------------
