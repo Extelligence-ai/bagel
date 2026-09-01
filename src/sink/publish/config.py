@@ -104,6 +104,9 @@ class ChannelRule(BaseModel):
                 f"{label}.as",
                 f"must map field paths to channel names: {renames}",
             )
+        unknown = set(config) - {"topic", "fields", "geo", "rate_hz", "as"}
+        if unknown:
+            raise StreamConfigError(label, f"unknown keys {sorted(unknown)}")
         return ChannelRule(
             topic=topic,
             fields=fields,
@@ -155,6 +158,17 @@ class EventRule(BaseModel):
                 f"{label}.artifact",
                 f"must be one of {ARTIFACT_KINDS}: {artifact!r}",
             )
+        unknown = set(config) - {
+            "name",
+            "topic",
+            "predicate",
+            "pre_seconds",
+            "post_seconds",
+            "debounce_seconds",
+            "artifact",
+        }
+        if unknown:
+            raise StreamConfigError(label, f"unknown keys {sorted(unknown)}")
         return EventRule(
             name=name,
             topic=topic,
@@ -174,6 +188,7 @@ class ResolvedChannel(BaseModel):
     unit: str | None = None
     source_topic: str
     source_field: str
+    rate_hz: float
     paths: dict[str, AccessPath]
 
 
@@ -181,11 +196,19 @@ def _stem(topic: str) -> str:
     return topic.rsplit("/", 1)[-1]
 
 
+def _check_renames(renames: dict[str, str], allowed: set[str], label: str) -> None:
+    """Reject a rename key that matches none of the rule's field paths."""
+    for key in renames:
+        if key not in allowed:
+            raise StreamConfigError(f"{label}.as", f"rename key '{key}' matches no field path")
+
+
 def _resolve_channel_rule(
     rule: ChannelRule, struct: pa.StructType, label: str
 ) -> list[ResolvedChannel]:
     resolved: list[ResolvedChannel] = []
     if rule.fields is not None:
+        _check_renames(rule.renames, set(rule.fields), label)
         for field_path in rule.fields:
             ap = resolve_path(struct, field_path, field_label=f"{label}.fields")
             try:
@@ -199,10 +222,12 @@ def _resolve_channel_rule(
                     type=type_name,
                     source_topic=rule.topic,
                     source_field=field_path,
+                    rate_hz=rule.rate_hz,
                     paths={"value": ap},
                 )
             )
     else:
+        _check_renames(rule.renames, {"geo"}, label)
         paths: dict[str, AccessPath] = {}
         for key, dotted in rule.geo.items():
             ap = resolve_path(struct, dotted, field_label=f"{label}.geo.{key}")
@@ -219,6 +244,7 @@ def _resolve_channel_rule(
                 type="geo",
                 source_topic=rule.topic,
                 source_field=",".join(f"{k}={v}" for k, v in sorted(rule.geo.items())),
+                rate_hz=rule.rate_hz,
                 paths=paths,
             )
         )
@@ -249,13 +275,20 @@ class StreamsConfig(BaseModel):
         flush = config.get("flush_interval_s", 1.0)
         if not isinstance(flush, int | float) or isinstance(flush, bool) or flush <= 0:
             raise StreamConfigError("streams.flush_interval_s", f"must be > 0: {flush!r}")
+        raw_channels = config.get("channels", [])
+        if raw_channels is None:
+            raw_channels = []
+        elif not isinstance(raw_channels, list):
+            raise StreamConfigError("streams.channels", f"must be a list: {raw_channels!r}")
         channels = [
-            ChannelRule.build(c, label=f"channels[{i}]")
-            for i, c in enumerate(config.get("channels", []))
+            ChannelRule.build(c, label=f"channels[{i}]") for i, c in enumerate(raw_channels)
         ]
-        events = [
-            EventRule.build(e, label=f"events[{i}]") for i, e in enumerate(config.get("events", []))
-        ]
+        raw_events = config.get("events", [])
+        if raw_events is None:
+            raw_events = []
+        elif not isinstance(raw_events, list):
+            raise StreamConfigError("streams.events", f"must be a list: {raw_events!r}")
+        events = [EventRule.build(e, label=f"events[{i}]") for i, e in enumerate(raw_events)]
         return StreamsConfig(
             broker=broker,
             flush_interval_s=float(flush),

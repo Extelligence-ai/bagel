@@ -147,6 +147,12 @@ class TestChannelRule:
         with pytest.raises(StreamConfigError, match="topic"):
             config.ChannelRule.build({"fields": ["a"], "rate_hz": 1})
 
+    def test_unknown_top_level_key_raises(self) -> None:
+        with pytest.raises(StreamConfigError, match=r"unknown keys \['az'\]"):
+            config.ChannelRule.build(
+                {"topic": "/t", "fields": ["a"], "rate_hz": 1, "az": {"lat": "a", "lon": "b"}}
+            )
+
 
 class TestEventRule:
     def test_full_event_builds(self) -> None:
@@ -183,6 +189,12 @@ class TestEventRule:
     def test_missing_predicate_raises(self) -> None:
         with pytest.raises(StreamConfigError, match="predicate"):
             config.EventRule.build({"name": "n", "topic": "/t"})
+
+    def test_unknown_top_level_key_raises(self) -> None:
+        with pytest.raises(StreamConfigError, match=r"unknown keys \['severity'\]"):
+            config.EventRule.build(
+                {"name": "n", "topic": "/t", "predicate": "true", "severity": "high"}
+            )
 
 
 class TestStreamsConfigBuild:
@@ -244,6 +256,22 @@ class TestStreamsConfigBuild:
                 }
             )
 
+    def test_null_channels_is_treated_as_empty(self) -> None:
+        cfg = config.StreamsConfig.build({"channels": None})
+        assert cfg.channels == []
+
+    def test_null_events_is_treated_as_empty(self) -> None:
+        cfg = config.StreamsConfig.build({"channels": [], "events": None})
+        assert cfg.events == []
+
+    def test_non_list_channels_raises_typed(self) -> None:
+        with pytest.raises(StreamConfigError, match="streams.channels"):
+            config.StreamsConfig.build({"channels": "x"})
+
+    def test_non_list_events_raises_typed(self) -> None:
+        with pytest.raises(StreamConfigError, match="streams.events"):
+            config.StreamsConfig.build({"channels": [], "events": {"a": 1}})
+
 
 class TestResolve:
     def _cfg(self, channels: list) -> config.StreamsConfig:
@@ -261,6 +289,7 @@ class TestResolve:
         assert out[0].source_topic == "/imu"
         assert out[0].source_field == "linear_acceleration.x"
         assert out[0].paths["value"].path == ["linear_acceleration", "x"]
+        assert out[0].rate_hz == 5.0
 
     def test_rename_overrides_default(self) -> None:
         cfg = self._cfg(
@@ -282,6 +311,21 @@ class TestResolve:
         (c,) = cfg.resolve({"/nav/odom": ODOM})
         assert c.name == "odom.geo" and c.type == "geo"
         assert set(c.paths) == {"lat", "lon"}
+        assert c.rate_hz == 1.0
+
+    def test_geo_channel_with_alt_resolves(self) -> None:
+        cfg = self._cfg(
+            [
+                {
+                    "topic": "/nav/odom",
+                    "geo": {"lat": "pose.x", "lon": "pose.y", "alt": "pose.z"},
+                    "rate_hz": 1,
+                }
+            ]
+        )
+        (c,) = cfg.resolve({"/nav/odom": ODOM})
+        assert set(c.paths) == {"lat", "lon", "alt"}
+        assert c.type == "geo"
 
     def test_geo_path_to_non_number_raises(self) -> None:
         cfg = self._cfg(
@@ -314,6 +358,44 @@ class TestResolve:
         )
         with pytest.raises(StreamConfigError, match="duplicate channel name"):
             cfg.resolve({"/imu": IMU})
+
+    def test_duplicate_default_names_raise(self) -> None:
+        cfg = self._cfg(
+            [
+                {"topic": "/imu", "fields": ["frame_id"], "rate_hz": 1},
+                {"topic": "/imu", "fields": ["frame_id"], "rate_hz": 2},
+            ]
+        )
+        with pytest.raises(StreamConfigError, match="duplicate channel name"):
+            cfg.resolve({"/imu": IMU})
+
+    def test_typo_rename_key_raises(self) -> None:
+        cfg = self._cfg(
+            [
+                {
+                    "topic": "/imu",
+                    "fields": ["frame_id"],
+                    "rate_hz": 1,
+                    "as": {"frme_id": "n"},
+                }
+            ]
+        )
+        with pytest.raises(StreamConfigError, match="matches no field path"):
+            cfg.resolve({"/imu": IMU})
+
+    def test_typo_geo_rename_key_raises(self) -> None:
+        cfg = self._cfg(
+            [
+                {
+                    "topic": "/nav/odom",
+                    "geo": {"lat": "pose.x", "lon": "pose.y"},
+                    "rate_hz": 1,
+                    "as": {"gep": "position"},
+                }
+            ]
+        )
+        with pytest.raises(StreamConfigError, match="matches no field path"):
+            cfg.resolve({"/nav/odom": ODOM})
 
 
 class TestLoadStreams:
