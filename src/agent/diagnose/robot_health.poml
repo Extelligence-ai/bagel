@@ -1,0 +1,134 @@
+<poml>
+    <task>
+        Generate a single-log health report card: inventory what topics actually exist in
+        the log, run only the checks those topics support, and back every number in the
+        report with a Bagel SQL query.
+        <stepwise-instructions>
+            <list listStyle="decimal">
+                <item>
+                    Call `describe_data_source` on the path. Note the log identity (path,
+                    format), start/end time, duration, message count, and the full topic
+                    list - this determines which checks below are even possible. Do not
+                    guess topic names; read them from this call.
+                </item>
+                <item>
+                    Match the topics that exist to the check categories below by name and
+                    type - do not assume a fixed schema. Topic names differ per ecosystem;
+                    treat these as hints, not requirements, and adapt to whatever the log
+                    actually contains:
+                    <list>
+                        <item>
+                            <b>PX4 (.ulg)</b>: `battery_status_*` (power),
+                            `sensor_accel_*`/`sensor_combined_*` (IMU),
+                            `vehicle_gps_position_*` (GPS),
+                            `vehicle_status_*`/`commander_state_*` (status).
+                        </item>
+                        <item>
+                            <b>ArduPilot (.bin/.log)</b>: `BAT` (power), `IMU`/`VIBE` (IMU),
+                            `GPS` (GPS), `MSG` (status text).
+                        </item>
+                        <item>
+                            <b>Betaflight (.bbl/.BFL)</b>: the `I`/`P` frame topics carry
+                            `vbatLatest` (power) and `gyroADC[0..2]`/`gyroUnfilt[0..2]` (IMU)
+                            in one table; treat GPS as absent unless a GPS frame type shows
+                            up in `describe_data_source`.
+                        </item>
+                        <item>
+                            <b>ROS 1/2 (.bag/.mcap/.db3)</b>: a topic typed
+                            `sensor_msgs/BatteryState` (power), `sensor_msgs/Imu` (IMU),
+                            `sensor_msgs/NavSatFix` (GPS), and `/rosout` or a `Log`-typed
+                            topic (status).
+                        </item>
+                    </list>
+                    A check with no matching topic is SKIPPED, not failed - never fabricate
+                    a reading for a topic that doesn't exist.
+                </item>
+                <item>
+                    For each applicable check, call `describe_topic` once to confirm the
+                    exact field paths and units (they vary by firmware/message version),
+                    then answer with `query_messages` SQL. Never estimate a number from
+                    `describe_data_source` metadata alone - it does not contain message
+                    values.
+                    <list>
+                        <item>
+                            <b>Power</b>: min, max, and end-of-log voltage, plus the largest
+                            single-sample drop (e.g.
+                            `voltage - LAG(voltage) OVER (ORDER BY timestamp_seconds)`).
+                            Flag sustained sag toward the pack's empty voltage, or a sudden
+                            drop out of proportion to the rest of the log.
+                        </item>
+                        <item>
+                            <b>IMU / vibration</b>: variance and max absolute value of linear
+                            acceleration (or gyro) per axis. Flag a window whose variance or
+                            extreme is far outside the log's own baseline (e.g. several times
+                            the overall STDDEV/AVG), and say when it happens.
+                        </item>
+                        <item>
+                            <b>GPS</b>: the fix-quality distribution (fix type / status /
+                            satellite count, whatever the ecosystem exposes) and any stretch
+                            where fix quality drops or the topic stops publishing. Flag a
+                            low-fix majority or a dropout, with its duration.
+                        </item>
+                        <item>
+                            <b>Data gaps</b>: for the topics already queried above (plus any
+                            other topic central to the log), compute inter-message latency
+                            from `timestamp_seconds` - the `diagnose/latency` recipe. Flag a
+                            gap much larger than the topic's own median interval.
+                        </item>
+                        <item>
+                            <b>Errors / status</b>: call `read_loggings` for the log's time
+                            range. If it returns nothing, look for a status/text topic
+                            instead (ArduPilot `MSG`, ROS `/rosout`) and query it with
+                            `query_messages`. Flag any ERROR; flag WARN only if numerous.
+                        </item>
+                    </list>
+                </item>
+                <item>
+                    Every numeric claim in the report must trace to a query you actually ran.
+                    Keep each query on hand and show it if the user asks "how do you know" -
+                    do not print every query inline in the report itself.
+                </item>
+            </list>
+        </stepwise-instructions>
+    </task>
+
+    <hint>
+        Report card skeleton - one line per section, icon first, numbers not adjectives:
+        <code lang="text">
+            sample.ulg - 41.5s, 2018 messages, 74 topics
+
+            Power      ✅  min 22.1V, largest drop 0.3V
+            IMU        ⚠️  accel_z variance 4.2x the log baseline at t=28s
+            GPS        —  skipped: no GPS topic
+            Data gaps  ✅  no gap > 3x median interval (checked battery_status_0, sensor_accel_0)
+            Errors     ❌  2 ERROR messages, first at t=31s: "failsafe triggered"
+
+            VERDICT: investigate the t=31s failsafe error first.
+        </code>
+    </hint>
+
+    <output-format>
+        A compact report card, in this exact shape:
+        <list listStyle="decimal">
+            <item>
+                One header line: log identity (path or file name) and duration, plus
+                message count and topic count if useful for context.
+            </item>
+            <item>
+                One line per check that was actually run: the check name, a
+                ✅ (clear) / ⚠️ (worth a look) / ❌ (actionable problem) verdict, and the
+                1-2 key numbers that justify it. No prose paragraphs per check.
+            </item>
+            <item>
+                One line per check that was skipped, using a `—` marker and a short reason
+                naming what was missing (e.g. "skipped: no GPS topic").
+            </item>
+            <item>
+                A final `VERDICT:` line naming the single most actionable item across every
+                check that ran (worst verdict first; ties broken by earliest timestamp), or
+                stating all-clear if every check that ran passed.
+            </item>
+        </list>
+        Do not include the raw SQL in the report card; offer to show it only if asked.
+    </output-format>
+</poml>

@@ -1,0 +1,98 @@
+<poml>
+    <task>
+        Generate a fleet health report: run the single-log health check-set across every
+        log under a directory (or an explicit list of sources), then aggregate the results
+        into one ranked table and a fleet-level verdict.
+        <stepwise-instructions>
+            <list listStyle="decimal">
+                <item>
+                    Enumerate the logs. If given a directory, list its files with whatever
+                    file-listing tool is available (Bagel has no directory-listing tool of
+                    its own) - one file per candidate log, skipping obvious non-log files
+                    (metadata sidecars, `.gitignore`, index files already implied by a
+                    `metadata.yaml` next to split `.db3`/`.mcap` parts). If given an explicit
+                    list of sources, use it as-is.
+                </item>
+                <item>
+                    For each candidate, call `describe_data_source`. If it errors (wrong
+                    extension for the resolved format, missing required `args` such as a
+                    CAN `dbc` or a Betaflight `log_index`), try the fix the error message
+                    suggests once; otherwise record that log as UNREADABLE with the one-line
+                    reason and move on - one bad file must never abort the fleet report. A
+                    directory of mixed formats (PX4 + ArduPilot + ROS2 side by side) is the
+                    normal case, not an error.
+                </item>
+                <item>
+                    For every log that did describe successfully, run the `diagnose/robot_health`
+                    methodology: inventory topics, run only the checks the log's topics
+                    support (power, IMU/vibration, GPS, data gaps, errors/status), and get a
+                    verdict and 1-2 key numbers per check - discover-and-adapt to each
+                    log's own topic names exactly as that capability describes, since two
+                    logs in the same directory may be different ecosystems entirely. Keep
+                    this per-log pass concise: capture the worst verdict and its headline
+                    number, not the full per-log report card - the fleet table is the
+                    deliverable, not N repeated single-log reports.
+                </item>
+                <item>
+                    Aggregate into the fleet table (see output format): one row per log,
+                    ranked worst-first (❌ before ⚠️ before ✅ before UNREADABLE, since an
+                    unreadable log is a data problem rather than a robot-health verdict;
+                    ties broken by earliest offending timestamp, then by log id).
+                </item>
+                <item>
+                    Every numeric claim, in every row, must trace to a query actually run
+                    against that log - the same house rule as `diagnose/robot_health`. Do
+                    not infer a fleet-wide number (e.g. "average voltage") by re-deriving it
+                    from the printed table; if the user wants a fleet-wide aggregate,
+                    compute it from the underlying per-log numbers explicitly.
+                </item>
+            </list>
+        </stepwise-instructions>
+    </task>
+
+    <hint>
+        Fleet table skeleton - ranked worst-first, one row per log:
+        <code lang="text">
+            Fleet health: ./data/logs - 3 logs, 2026-08-01 to 2026-08-03
+
+            Log            Duration  Worst   Headline
+            forklift_042   8m12s     ❌ GPS   fix&lt;3 for 41% of the log, 12s dropout at t=210s
+            forklift_017   6m03s     ⚠️ IMU   accel_z variance 3.1x baseline at t=90s
+            forklift_005   5m50s     ✅       all checks clear
+            forklift_009   -         ⛔       unreadable: missing dbc arg for CAN capture
+
+            VERDICT: 4 logs: 1 healthy, 2 need attention, 1 unreadable - forklift_042 needs
+            the GPS dropout investigated first.
+        </code>
+    </hint>
+
+    <output-format>
+        A compact fleet report, in this exact shape:
+        <list listStyle="decimal">
+            <item>
+                One header line: the directory (or source count) and log count, plus the
+                date/time range spanned if it's cheap to compute from what was already
+                fetched.
+            </item>
+            <item>
+                One fleet table, one row per log, columns: log id (filename or a short
+                identifying path segment), duration, worst verdict (icon plus the check
+                name it came from, or a plain ✅ with no check name when every check that
+                ran passed), and a one-line headline number for that worst verdict. An
+                UNREADABLE log gets a `⛔` row with the one-line reason instead of a
+                verdict.
+            </item>
+            <item>
+                Rows ranked worst-first: ❌, then ⚠️, then ✅, then ⛔ last.
+            </item>
+            <item>
+                A final `VERDICT:` line: total log count, a healthy/needs-attention/unreadable
+                breakdown, and the single log + item that most needs attention first (or
+                stating all-clear if every readable log passed every check that ran).
+            </item>
+        </list>
+        Do not repeat each log's full single-log report card; the table row is the summary.
+        Offer to run `diagnose/robot_health` on a specific log if the user wants its full
+        report card.
+    </output-format>
+</poml>
