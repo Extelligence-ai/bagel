@@ -69,14 +69,17 @@ def build_heartbeat(  # noqa: PLR0913
     disk_free_bytes: int,
     reconnects: int,
     now: float | None = None,
+    cert_expires_at: str | None = None,
 ) -> dict:
     """Build the §3 heartbeat payload.
 
     `spool_stats` maps lane name -> a value exposing `bytes`/`pending`/
     `evicted` (either as dict keys or attributes, e.g. `Spool.stats()`'s
     `LaneStats`); this aggregates the channels/events/heartbeat lanes into
-    one `spool` object by summing each field. `cert_expires_at` is always
-    `None` here -- identity/enrollment lands in step 6.
+    one `spool` object by summing each field. `cert_expires_at` defaults to
+    `None` (an unenrolled robot, or a caller with no identity wired) and is
+    otherwise passed straight through from the caller's `Identity.expires_at`
+    -- `FleetService` supplies it once constructed with an `identity`.
     """
     t = now if now is not None else time.time()
     return {
@@ -94,7 +97,7 @@ def build_heartbeat(  # noqa: PLR0913
             "evicted": sum(_lane_field(s, "evicted") for s in spool_stats.values()),
         },
         "disk_free_bytes": disk_free_bytes,
-        "cert_expires_at": None,
+        "cert_expires_at": cert_expires_at,
         "reconnects": reconnects,
     }
 
@@ -112,6 +115,15 @@ class HeartbeatThread(threading.Thread):
     spool's "heartbeat" lane instead (best-effort -- a spool failure here is
     swallowed too, since a heartbeat thread that dies is worse than one that
     occasionally fails to record a missed beat).
+
+    An optional `renewal_check` callable is invoked once per tick, before
+    the payload is built -- it exists purely as a convenient, already-running
+    clock for certificate renewal (`FleetService` wires its own
+    `identity.should_attempt_renewal`/`identity.renew` closure in here when
+    constructed with an `identity`). It runs inside its own try/except,
+    entirely separate from the payload-factory/publish/spool handling below:
+    an exception from it is logged at WARNING and otherwise ignored -- it
+    must never be able to skip a beat or kill this thread.
     """
 
     def __init__(
@@ -120,13 +132,18 @@ class HeartbeatThread(threading.Thread):
         payload_factory: Callable[[], dict],
         interval_s: float = HEARTBEAT_INTERVAL_S,
         spool: Spool | None = None,
+        renewal_check: Callable[[], None] | None = None,
     ) -> None:
-        """Wire the publisher, payload builder, and optional spool; does not start the thread."""
+        """Wire the publisher, payload builder, optional spool, and optional renewal hook.
+
+        Does not start the thread.
+        """
         super().__init__(daemon=True)
         self._publisher = publisher
         self._payload_factory = payload_factory
         self._interval_s = interval_s
         self._spool = spool
+        self._renewal_check = renewal_check
         self._stop_event = threading.Event()
         self._spool_failures = 0
         self._last_error: str | None = None
@@ -160,7 +177,18 @@ class HeartbeatThread(threading.Thread):
         `spool_failures` so it is visible to an operator via
         `FleetService.status()`, instead of vanishing at DEBUG. Either way
         the thread never dies and no exception escapes this method.
+
+        `renewal_check()` (if wired) runs first, in its own try/except --
+        see the class docstring. Its outcome (and any exception from it) has
+        no bearing on whether this beat's payload is built or published.
         """
+        if self._renewal_check is not None:
+            try:
+                self._renewal_check()
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "renewal_check hook failed: %s", exc, exc_info=True
+                )
         try:
             payload = self._payload_factory()
         except Exception as exc:

@@ -30,6 +30,7 @@ from settings import settings
 from src.sink.publish import require_fleet
 from src.sink.publish.config import StreamsConfig
 from src.sink.publish.heartbeat import HeartbeatThread, build_heartbeat, disk_free
+from src.sink.publish.identity import Identity, renew, should_attempt_renewal
 from src.sink.publish.publisher import Publisher
 from src.sink.publish.router import RouterCore, SampleQueue, StreamRouter
 from src.sink.publish.spool import Spool
@@ -39,13 +40,39 @@ class FleetService:
     """Owns one robot's fleet-streaming runtime: tap wiring + router + heartbeat."""
 
     def __init__(
-        self, *, sink: object, streams: StreamsConfig, publisher: Publisher, spool: Spool
+        self,
+        *,
+        sink: object,
+        streams: StreamsConfig,
+        publisher: Publisher,
+        spool: Spool,
+        identity: Identity | None = None,
     ) -> None:
-        """Store the collaborators; does not touch the sink, publisher, or spool yet."""
+        """Store the collaborators; does not touch the sink, publisher, or spool yet.
+
+        ``identity``, when given, is this robot's enrolled fleet identity
+        (spec §6). It is optional -- most tests and a dev-insecure,
+        unenrolled robot construct this service with none -- but when
+        present it does two things: `status()`/the heartbeat payload carry
+        `cert_expires_at`, and a certificate-renewal closure
+        (`should_attempt_renewal`/`renew`) is wired into the
+        `HeartbeatThread`'s `renewal_check` hook so renewal is attempted
+        automatically, once per heartbeat tick, when it's due. See
+        `_renewal_check`.
+        """
         self._sink = sink
         self._streams = streams
         self._publisher = publisher
         self._spool = spool
+        self._identity = identity
+        # In-memory only: this service's lifetime is the process's lifetime
+        # (see module docstring, ruling B), so there is no cross-restart
+        # state to recover here. `renew()` itself persists
+        # `last_renewal_attempt_at` to identity.yaml regardless of outcome;
+        # a fresh process simply doesn't consult that on-disk value and
+        # starts as if no attempt has been made, which is safe (worst case:
+        # one avoidable extra attempt right after a restart).
+        self._last_renewal_attempt_at: float | None = None
 
         self._resolved: list = []
         self._schema_payload: dict = {"v": 1, "channels": []}
@@ -194,6 +221,7 @@ class FleetService:
             ),
             "heartbeat_alive": self._heartbeat.alive if self._heartbeat is not None else False,
             "heartbeat_error": self._heartbeat.last_error if self._heartbeat is not None else None,
+            "cert_expires_at": self._identity.expires_at if self._identity is not None else None,
         }
 
     # -- internals ---------------------------------------------------------------
@@ -210,7 +238,10 @@ class FleetService:
             writer.set_tap(tap)
         self._started_at = time.time()
         self._heartbeat = HeartbeatThread(
-            self._publisher, self._heartbeat_payload, spool=self._spool
+            self._publisher,
+            self._heartbeat_payload,
+            spool=self._spool,
+            renewal_check=self._renewal_check if self._identity is not None else None,
         )
         self._router.start()
         self._heartbeat.start()
@@ -232,4 +263,32 @@ class FleetService:
             spool_stats=self._spool.stats(),
             disk_free_bytes=disk_free(settings.CACHE_DIRECTORY),
             reconnects=getattr(self._publisher, "reconnects", 0),
+            cert_expires_at=self._identity.expires_at if self._identity is not None else None,
         )
+
+    def _renewal_check(self) -> None:
+        """Renew `self._identity`'s certificate if it's due (wired as the heartbeat's hook).
+
+        Only ever installed on the `HeartbeatThread` when this service was
+        constructed with an `identity` (see `_launch_runtime`), so
+        `self._identity` is never `None` here. On a successful renewal,
+        `self._identity` is swapped to the new `Identity` `renew()` returns
+        -- but the LIVE publisher connection keeps authenticating with the
+        OLD cert until its own next reconnect; this does not force one (see
+        `identity.renew`'s docstring).
+
+        Exceptions are deliberately NOT caught here: `HeartbeatThread._tick`
+        already runs `renewal_check` inside its own try/except, and `renew()`
+        itself never raises -- so there is nothing left for this method to
+        guard against beyond what those two already cover.
+        """
+        if self._identity is None:  # pragma: no cover -- guarded by _launch_runtime's wiring
+            return
+        now = time.time()
+        due = should_attempt_renewal(now, self._identity.expires_at, self._last_renewal_attempt_at)
+        if not due:
+            return
+        self._last_renewal_attempt_at = now
+        new_identity = renew(self._identity)
+        if new_identity is not None:
+            self._identity = new_identity

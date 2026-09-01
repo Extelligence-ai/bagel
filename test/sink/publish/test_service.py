@@ -1,5 +1,6 @@
 """FleetService lifecycle: start/stop/pause/resume/status (fleet streaming spec §2/§5)."""
 
+import dataclasses
 import importlib
 import json
 import pathlib
@@ -10,7 +11,9 @@ import pyarrow as pa
 import pytest
 
 from src.sink.publish import StreamConfigError
+from src.sink.publish import service as service_mod
 from src.sink.publish.config import StreamsConfig
+from src.sink.publish.identity import Identity
 from src.sink.publish.publisher import Publisher, PublishError
 from src.sink.publish.service import FleetService
 from src.sink.publish.spool import Spool
@@ -117,6 +120,27 @@ def _wait_until(predicate: object, timeout_s: float = 2.0) -> bool:
             return True
         time.sleep(0.01)
     return predicate()
+
+
+def _fake_identity(tmp_path: pathlib.Path, expires_at: str = "2027-01-01T00:00:00Z") -> Identity:
+    """A well-formed Identity pointing at files that don't need to exist for these tests.
+
+    Nothing here does a live mTLS POST -- these tests monkeypatch
+    `service_mod.renew`/`service_mod.should_attempt_renewal` directly rather
+    than exercising the real transport (that's `test_identity.py`'s job), so
+    the cert/key/ca paths never actually need to be read.
+    """
+    directory = tmp_path / "identity"
+    return Identity(
+        tenant="acme",
+        robot_id="robot-42",
+        broker_url="mqtts://fleet.example.com:8883",
+        enroll_url="https://enroll.example.com",
+        expires_at=expires_at,
+        key_path=directory / "robot.key",
+        cert_path=directory / "robot.crt",
+        ca_path=directory / "ca.crt",
+    )
 
 
 class TestStart:
@@ -332,6 +356,7 @@ class TestStatus:
                 "heartbeat_spool_failures",
                 "heartbeat_alive",
                 "heartbeat_error",
+                "cert_expires_at",
             }
             assert status["subscriptions"] == ["/imu"]
             assert status["channels_active"] == 1
@@ -342,6 +367,7 @@ class TestStatus:
             assert status["heartbeat_spool_failures"] == 0
             assert status["heartbeat_alive"] is True
             assert status["heartbeat_error"] is None
+            assert status["cert_expires_at"] is None  # no identity wired in this test
         finally:
             service.stop()
 
@@ -382,5 +408,189 @@ class TestStatus:
             json.dumps(status)
             assert status["router_alive"] is False
             assert status["router_error"] is not None and "core exploded" in status["router_error"]
+        finally:
+            service.stop()
+
+
+class TestIdentityWiring:
+    def test_cert_expires_at_none_without_identity(self, tmp_path: pathlib.Path) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            assert service.status()["cert_expires_at"] is None
+            assert _wait_until(lambda: service._heartbeat.is_alive())
+        finally:
+            service.stop()
+
+    def test_cert_expires_at_flows_into_status_and_heartbeat_with_identity(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        identity = _fake_identity(tmp_path, expires_at="2027-06-01T00:00:00Z")
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher()
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=pub,
+            spool=Spool(tmp_path / "spool"),
+            identity=identity,
+        )
+        service.start()
+        try:
+            assert service.status()["cert_expires_at"] == "2027-06-01T00:00:00Z"
+            payload = service._heartbeat_payload()
+            assert payload["cert_expires_at"] == "2027-06-01T00:00:00Z"
+        finally:
+            service.stop()
+
+    def test_no_identity_wires_no_renewal_check_into_heartbeat(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            assert service._heartbeat._renewal_check is None
+        finally:
+            service.stop()
+
+    def test_identity_wires_renewal_check_into_heartbeat(self, tmp_path: pathlib.Path) -> None:
+        identity = _fake_identity(tmp_path)
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+            identity=identity,
+        )
+        service.start()
+        try:
+            # Bound methods aren't cached (`obj.meth is obj.meth` is False in
+            # general), so compare the underlying function and the bound
+            # instance rather than object identity of the bound method itself.
+            wired = service._heartbeat._renewal_check
+            assert wired is not None
+            assert wired.__func__ is FleetService._renewal_check
+            assert wired.__self__ is service
+        finally:
+            service.stop()
+
+    def test_renewal_check_calls_renew_when_due_and_updates_identity(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Exercises `_renewal_check` directly rather than via a running
+        # HeartbeatThread -- a live service.start() would tick (and thus
+        # call this same closure through the real thread) immediately and
+        # asynchronously, racing this test's own explicit call.
+        old_identity = _fake_identity(tmp_path, expires_at="2026-09-05T00:00:00Z")  # soon
+        new_identity = dataclasses.replace(old_identity, expires_at="2027-09-05T00:00:00Z")
+        renew_calls: list[Identity] = []
+
+        monkeypatch.setattr(service_mod, "should_attempt_renewal", lambda *a, **kw: True)
+
+        def fake_renew(identity: Identity) -> Identity:
+            renew_calls.append(identity)
+            return new_identity
+
+        monkeypatch.setattr(service_mod, "renew", fake_renew)
+
+        service = FleetService(
+            sink=FakeSink({}),
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+            identity=old_identity,
+        )
+
+        service._renewal_check()
+
+        assert renew_calls == [old_identity]
+        assert service._identity is new_identity
+        assert service.status()["cert_expires_at"] == "2027-09-05T00:00:00Z"
+        assert service._last_renewal_attempt_at is not None
+
+    def test_renewal_check_skips_when_not_due(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        identity = _fake_identity(tmp_path, expires_at="2030-01-01T00:00:00Z")  # far off
+
+        monkeypatch.setattr(service_mod, "should_attempt_renewal", lambda *a, **kw: False)
+
+        def fail_if_called(identity: Identity) -> Identity:
+            raise AssertionError("renew() must not be called when not due")
+
+        monkeypatch.setattr(service_mod, "renew", fail_if_called)
+
+        service = FleetService(
+            sink=FakeSink({}),
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+            identity=identity,
+        )
+
+        service._renewal_check()
+
+        assert service._identity is identity
+        assert service._last_renewal_attempt_at is None
+
+    def test_renewal_check_leaves_identity_unchanged_when_renew_returns_none(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        identity = _fake_identity(tmp_path, expires_at="2026-09-05T00:00:00Z")
+
+        monkeypatch.setattr(service_mod, "should_attempt_renewal", lambda *a, **kw: True)
+        monkeypatch.setattr(service_mod, "renew", lambda identity: None)
+
+        service = FleetService(
+            sink=FakeSink({}),
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+            identity=identity,
+        )
+
+        service._renewal_check()
+
+        assert service._identity is identity  # unchanged: renew() reported no update
+        assert service._last_renewal_attempt_at is not None  # attempt still recorded
+
+    def test_heartbeat_tick_invokes_renewal_check_and_survives_its_exception(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        identity = _fake_identity(tmp_path, expires_at="2030-01-01T00:00:00Z")
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher()
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=pub,
+            spool=Spool(tmp_path / "spool"),
+            identity=identity,
+        )
+        service._renewal_check = lambda: (_ for _ in ()).throw(RuntimeError("boom"))  # type: ignore[method-assign]
+        service.start()
+        try:
+            # The hook raises on every tick; the heartbeat thread must stay
+            # alive and keep publishing regardless.
+            assert _wait_until(lambda: bool(pub.heartbeat_calls))
+            assert service._heartbeat.is_alive()
         finally:
             service.stop()

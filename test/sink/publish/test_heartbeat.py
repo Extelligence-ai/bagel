@@ -98,6 +98,35 @@ class TestBuildHeartbeat:
         )
         assert payload["spool"] == {"bytes": 0, "pending": 0, "evicted": 0}
 
+    def test_cert_expires_at_defaults_to_none(self) -> None:
+        payload = build_heartbeat(
+            started_at=0.0,
+            subscriptions=[],
+            channels_active=0,
+            queue_depth=0,
+            queue_dropped=0,
+            spool_stats={},
+            disk_free_bytes=0,
+            reconnects=0,
+            now=1.0,
+        )
+        assert payload["cert_expires_at"] is None
+
+    def test_cert_expires_at_passed_through_when_given(self) -> None:
+        payload = build_heartbeat(
+            started_at=0.0,
+            subscriptions=[],
+            channels_active=0,
+            queue_depth=0,
+            queue_dropped=0,
+            spool_stats={},
+            disk_free_bytes=0,
+            reconnects=0,
+            now=1.0,
+            cert_expires_at="2027-01-01T00:00:00Z",
+        )
+        assert payload["cert_expires_at"] == "2027-01-01T00:00:00Z"
+
     def test_accepts_lanestats_like_objects_with_attributes(self) -> None:
         class FakeLaneStats:
             def __init__(self, bytes_: int, pending: int, evicted: int) -> None:
@@ -360,3 +389,79 @@ class TestHeartbeatThread:
 
     def test_module_constant_is_thirty_seconds(self) -> None:
         assert HEARTBEAT_INTERVAL_S == 30.0
+
+
+class TestRenewalCheckHook:
+    def test_synchronous_tick_invokes_renewal_check(self) -> None:
+        pub = FakePublisher()
+        calls = []
+        thread = HeartbeatThread(
+            pub, lambda: {"v": 1}, interval_s=10.0, renewal_check=lambda: calls.append(1)
+        )
+
+        thread._tick()
+
+        assert calls == [1]
+        assert pub.heartbeat_calls == [{"v": 1}]
+
+    def test_no_renewal_check_is_a_safe_default(self) -> None:
+        pub = FakePublisher()
+        thread = HeartbeatThread(pub, lambda: {"v": 1}, interval_s=10.0)
+
+        thread._tick()  # must not raise -- renewal_check defaults to None
+
+        assert pub.heartbeat_calls == [{"v": 1}]
+
+    def test_renewal_check_exception_is_swallowed_and_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        pub = FakePublisher()
+
+        def boom() -> None:
+            raise RuntimeError("renewal exploded")
+
+        thread = HeartbeatThread(pub, lambda: {"v": 1}, interval_s=10.0, renewal_check=boom)
+
+        with caplog.at_level(logging.WARNING):
+            thread._tick()  # must not raise
+
+        # The payload still gets built and published -- the hook's failure
+        # has no bearing on the rest of this tick.
+        assert pub.heartbeat_calls == [{"v": 1}]
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("renewal_check" in r.getMessage() for r in warnings)
+
+    def test_renewal_check_exception_never_kills_the_thread(self) -> None:
+        pub = FakePublisher()
+        ticks = {"n": 0}
+
+        def boom() -> None:
+            ticks["n"] += 1
+            raise RuntimeError("renewal exploded")
+
+        thread = HeartbeatThread(pub, lambda: {"v": 1}, interval_s=0.01, renewal_check=boom)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 2.0
+            while ticks["n"] < 3 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert thread.is_alive()
+            assert ticks["n"] >= 3
+        finally:
+            thread.stop()
+        assert not thread.is_alive()  # stop() still joins cleanly afterward
+
+    def test_renewal_check_runs_every_tick(self) -> None:
+        pub = FakePublisher()
+        calls = []
+        thread = HeartbeatThread(
+            pub, lambda: {"v": 1}, interval_s=0.01, renewal_check=lambda: calls.append(1)
+        )
+        thread.start()
+        try:
+            deadline = time.monotonic() + 2.0
+            while len(calls) < 3 and time.monotonic() < deadline:
+                time.sleep(0.01)
+        finally:
+            thread.stop()
+        assert len(calls) >= 3
