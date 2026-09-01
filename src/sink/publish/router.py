@@ -242,6 +242,13 @@ class StreamRouter(threading.Thread):
 
         Always starts from `spool.pending("channels")` -- see class
         docstring for why that alone makes replay-then-live emergent.
+
+        Checks `self._stop_event` between iterations: a post-outage backlog
+        (the channels lane is capped but can still hold thousands of
+        records) can take longer to drain than stop()'s join(timeout=5)
+        bound. Breaking early leaves the remaining records spooled and
+        unacked, which is correct -- they replay on the next start, in the
+        same seq order, exactly like any other still-unacked backlog.
         """
         if not self._online:
             if now < self._next_attempt:
@@ -250,6 +257,8 @@ class StreamRouter(threading.Thread):
             if not self._online:
                 return
         for seq, payload in self._spool.pending("channels"):
+            if self._stop_event.is_set():
+                return
             try:
                 self._publisher.publish_channels(payload)
             except PublishError:

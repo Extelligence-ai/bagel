@@ -261,6 +261,41 @@ class TestReconnectCounter:
         p.close()
         assert p.reconnects == 0
 
+    def test_replace_path_teardown_does_not_count_as_reconnect(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        first = fake["client"]
+
+        # Simulate paho's "socket still live" semantics: when the prior
+        # client's TCP session is still up (e.g. we are replacing it after a
+        # wait_for_publish timeout, not a broker-side drop), disconnect()
+        # fires on_disconnect synchronously -- same as the clean-close case
+        # above. connect()'s replace-path teardown must gate this the same
+        # way close() does.
+        def fake_disconnect() -> None:
+            first.calls.append(("disconnect",))
+            first._connected = False
+            first.on_disconnect(first, None, object(), object(), None)
+
+        first.disconnect = fake_disconnect  # type: ignore[method-assign]
+        p.connect()  # replace-path: tears down `first` before building the new client
+
+        assert p.reconnects == 0
+
+    def test_genuine_drop_outside_our_own_teardown_still_counts(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+        # An ordinary broker-drop callback -- not fired from within our own
+        # connect()/close() teardown -- must still be counted; the _closing
+        # gate must not swallow this too.
+        client.on_disconnect(client, None, object(), object(), None)
+        assert p.reconnects == 1
+
     def test_handler_exceptions_are_swallowed(self, fake: dict[str, FakeFleetPaho]) -> None:
         p = _publisher()
         p.connect()

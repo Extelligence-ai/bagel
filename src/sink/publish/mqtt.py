@@ -106,7 +106,17 @@ class MqttPublisher(Publisher):
         """
         require_fleet()
         if self._client is not None:
-            _finalize(self._client)
+            # Same _closing gate as close(): tearing down the prior client
+            # here is our own doing, not an unexpected drop. If the prior
+            # client's socket is still live (e.g. we are replacing it after
+            # a wait_for_publish timeout, not a broker-side drop), paho can
+            # fire on_disconnect synchronously from this teardown, and it
+            # must not count as a reconnect.
+            self._closing = True
+            try:
+                _finalize(self._client)
+            finally:
+                self._closing = False
         paho = _paho()
         client = paho.Client(
             callback_api_version=paho.CallbackAPIVersion.VERSION2,

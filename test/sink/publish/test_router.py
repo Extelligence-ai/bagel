@@ -169,12 +169,15 @@ class TestRateCapAndBatch:
 class FakePublisher(Publisher):
     """In-memory Publisher double: records calls, can be told to fail."""
 
-    def __init__(self, *, connect_should_fail: bool = False) -> None:
+    def __init__(
+        self, *, connect_should_fail: bool = False, channel_publish_delay_s: float = 0.0
+    ) -> None:
         self.connect_should_fail = connect_should_fail
         self.connect_calls = 0
         self.schema_calls: list[dict] = []
         self.channel_calls: list[dict] = []
         self._fail_channel_publishes = 0
+        self._channel_publish_delay_s = channel_publish_delay_s
         self._connected = False
 
     def connect(self) -> None:
@@ -189,6 +192,8 @@ class FakePublisher(Publisher):
         if kind == "schema":
             self.schema_calls.append(payload)
         elif kind == "channels":
+            if self._channel_publish_delay_s:
+                time.sleep(self._channel_publish_delay_s)
             if self._fail_channel_publishes > 0:
                 self._fail_channel_publishes -= 1
                 raise PublishError("channels publish failed")
@@ -324,6 +329,33 @@ class TestStreamRouterTick:
         assert [c["seq"] for c in pub.channel_calls] == [1, 2]
         assert list(spool.pending("channels")) == []
 
+    def test_pump_checks_stop_event_between_replay_iterations(self, tmp_path: pathlib.Path) -> None:
+        # A post-outage backlog can hold thousands of records (the channels
+        # lane is size-capped, not count-capped); _pump must notice
+        # self._stop_event mid-replay rather than draining the whole
+        # backlog first.
+        router, _q, spool, pub = _router(tmp_path)
+        for seq in range(1, 6):
+            spool.append("channels", seq, {"seq": seq, "v": 1, "samples": []})
+        router._online = True  # skip _reconnect(); exercise the replay loop directly
+
+        publish = pub.publish
+
+        def publish_then_stop_after_two(
+            kind: str, payload: dict, *, retain: bool = False, timeout_s: float = 10.0
+        ) -> None:
+            publish(kind, payload, retain=retain, timeout_s=timeout_s)
+            if kind == "channels" and len(pub.channel_calls) == 2:
+                router._stop_event.set()
+
+        pub.publish = publish_then_stop_after_two  # type: ignore[method-assign]
+
+        router._pump(now=0.0)
+
+        assert [c["seq"] for c in pub.channel_calls] == [1, 2]
+        # The loop broke before seq 3: unacked, still spooled, correct watermark.
+        assert [seq for seq, _ in spool.pending("channels")] == [3, 4, 5]
+
 
 class TestStreamRouterThread:
     def test_stop_joins_promptly(self, tmp_path: pathlib.Path) -> None:
@@ -337,3 +369,30 @@ class TestStreamRouterThread:
 
         assert not router.is_alive()
         assert elapsed < 2.0
+
+    def test_stop_joins_promptly_mid_large_replay_backlog(self, tmp_path: pathlib.Path) -> None:
+        # Regression for the normal-path violation: a large post-outage
+        # backlog draining slowly must still let stop() honor its
+        # join(timeout=5) bound, not just the connect()-blocking edge case.
+        publish_delay_s = 0.05
+        total_records = 40
+        pub = FakePublisher(channel_publish_delay_s=publish_delay_s)
+        router, _q, spool, _ = _router(tmp_path, publisher=pub)
+        for seq in range(1, total_records + 1):
+            spool.append("channels", seq, {"seq": seq, "v": 1, "samples": []})
+
+        router.start()
+        time.sleep(publish_delay_s * 3)  # a handful of records go out, nowhere near all 40
+
+        start = time.monotonic()
+        router.stop()
+        elapsed = time.monotonic() - start
+
+        assert not router.is_alive()
+        assert elapsed < 5.0
+        remaining = [seq for seq, _ in spool.pending("channels")]
+        assert remaining  # stopped mid-backlog: work was left for next start
+        assert len(remaining) < total_records
+        # The unacked tail is a contiguous run up to total_records -- no gaps,
+        # no out-of-order acks.
+        assert remaining == list(range(remaining[0], total_records + 1))
