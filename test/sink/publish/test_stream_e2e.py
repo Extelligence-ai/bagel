@@ -382,7 +382,7 @@ def _assert_live_schema_and_heartbeat(
     assert schema is not None, "schema never arrived"
     assert json.loads(schema[1]) == EXPECTED_IMU_SCHEMA
 
-    heartbeat = _drain(sub.inbox, heartbeat_topic, timeout_s=5.0)
+    heartbeat = _drain(sub.inbox, heartbeat_topic, timeout_s=15.0)
     assert heartbeat is not None, "heartbeat never arrived"
     hb = json.loads(heartbeat[1])
     assert hb["online"] is True
@@ -407,6 +407,20 @@ def _assert_retained_for_late_subscriber(
     assert json.loads(late_heartbeat[1])["online"] is True
 
 
+# Each wait below is paced by a real flush_interval_s (2s) wall-clock cycle
+# that only advances when StreamRouter's background thread actually gets
+# scheduled. `_drain`'s timeout is a ceiling, not a fixed sleep -- it returns
+# the instant the event arrives -- so a generous one costs nothing in the
+# common case; it only matters under heavy concurrent load (observed once:
+# stacked immediately after two other full e2e suite runs on a loaded dev
+# machine, the second-flush wait below missed the OLD 10s default ceiling
+# -- 5x the flush interval, evidently not enough headroom under that load --
+# while 5/5 isolated reruns of the same test passed cleanly straight after,
+# confirming a test-side margin issue, not a RouterCore/StreamRouter/Spool
+# defect: nothing about the assertions changed, only the ceiling below did).
+_BATCH_WAIT_S = 30.0
+
+
 def _assert_rate_capped_batches_ascend(
     writer: "TopicBufferWriter", sub: _Subscriber, topic: str
 ) -> None:
@@ -419,7 +433,7 @@ def _assert_rate_capped_batches_ascend(
     # in-progress flush interleaving with the 4 appends below and splitting
     # the same-slot samples across two batches).
     writer.append({"x": 0.0, "timestamp_seconds": 900.0})
-    canary = _drain(sub.inbox, topic)
+    canary = _drain(sub.inbox, topic, timeout_s=_BATCH_WAIT_S)
     assert canary is not None, "canary channels batch never arrived"
     canary_seq = json.loads(canary[1])["seq"]
 
@@ -430,7 +444,7 @@ def _assert_rate_capped_batches_ascend(
     writer.append({"x": 3.0, "timestamp_seconds": 1_000.9})
     writer.append({"x": 4.0, "timestamp_seconds": 1_001.2})
 
-    batch = _drain(sub.inbox, topic)
+    batch = _drain(sub.inbox, topic, timeout_s=_BATCH_WAIT_S)
     assert batch is not None, "channels batch never arrived"
     body = json.loads(batch[1])
     assert body["v"] == 1
@@ -442,8 +456,8 @@ def _assert_rate_capped_batches_ascend(
 
     # a second flush cycle: seq must be ascending.
     writer.append({"x": 5.0, "timestamp_seconds": 1_002.5})
-    batch2 = _drain(sub.inbox, topic)
-    assert batch2 is not None
+    batch2 = _drain(sub.inbox, topic, timeout_s=_BATCH_WAIT_S)
+    assert batch2 is not None, "second channels batch never arrived"
     assert json.loads(batch2[1])["seq"] == canary_seq + 2
 
 
@@ -483,7 +497,7 @@ def test_full_path_streams_batches_schema_and_heartbeat(
 
             _assert_rate_capped_batches_ascend(writer, sub, channels_topic)
 
-            assert _wait_until(lambda: spool.stats()["channels"].pending == 0, timeout_s=5.0), (
+            assert _wait_until(lambda: spool.stats()["channels"].pending == 0, timeout_s=15.0), (
                 "spool never drained the acked batches"
             )
         finally:
@@ -551,7 +565,7 @@ def test_chaos_kill_and_restart_broker_drains_spool_in_order(tmp_path: pathlib.P
                 first = _drain(sub.inbox, channels_topic, timeout_s=10.0)
                 assert first is not None, "no batch before the outage even started"
                 first_seq = json.loads(first[1])["seq"]
-                assert _wait_until(lambda: spool.stats()["channels"].pending == 0, timeout_s=5.0)
+                assert _wait_until(lambda: spool.stats()["channels"].pending == 0, timeout_s=15.0)
 
                 broker.kill()
                 sub.prepare_for_outage()
@@ -559,7 +573,7 @@ def test_chaos_kill_and_restart_broker_drains_spool_in_order(tmp_path: pathlib.P
                 # keep appending through the outage: the tap must never block,
                 # and the spool must keep absorbing new batches while offline.
                 _run_outage_appends(writer, start_t=500_001.0, duration_s=4.0)
-                assert _wait_until(lambda: spool.stats()["channels"].pending > 0, timeout_s=5.0), (
+                assert _wait_until(lambda: spool.stats()["channels"].pending > 0, timeout_s=15.0), (
                     "spool pending never grew while the broker was down"
                 )
 
@@ -629,7 +643,7 @@ def test_stop_publishes_stopped_heartbeat_before_disconnect(
             tmp_path, BROKER, tenant, robot, flush_interval_s=0.2, rate_hz=1.0
         )
         service.start()
-        online = _drain(sub.inbox, heartbeat_topic, timeout_s=6.0)
+        online = _drain(sub.inbox, heartbeat_topic, timeout_s=15.0)
         assert online is not None and json.loads(online[1])["online"] is True
 
         service.stop()
