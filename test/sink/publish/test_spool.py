@@ -6,7 +6,7 @@ import pathlib
 import pytest
 
 from src.sink.publish import spool as spool_mod
-from src.sink.publish.spool import Spool
+from src.sink.publish.spool import Spool, SpoolCorruptError
 
 
 @pytest.fixture()
@@ -115,8 +115,135 @@ class TestCrashTolerance:
 
         # Restart fails because pending encounters corrupted line in the middle.
         s2 = Spool(root)
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(SpoolCorruptError, match="channels") as exc_info:
             list(s2.pending("channels"))
+        # Typed contract: message names the lane and the segment file, and chains
+        # the underlying parse failure.
+        assert seg.name in str(exc_info.value)
+        assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+
+
+class TestRollBoundaryCrashRecovery:
+    """Final-review Critical 1: a crash exactly at a segment roll must not reset seq.
+
+    With SEGMENT_MAX_BYTES forced to 1, every append rolls into its own segment, so
+    each segment holds exactly one record and its name's first_seq equals that
+    record's seq. This makes "the last segment lost its only record" deterministic
+    to set up: whatever is left in segments[:-1] proves seqs up to
+    first_seq_of(segments[-1]) - 1 were durably written, even though the last
+    segment itself now looks empty (or wholly torn).
+    """
+
+    def test_empty_last_segment_floors_seq_at_segment_name_not_watermark(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 1)
+        s = Spool(root)
+        for i in range(1, 4):
+            s.append("channels", i, {"n": i})
+        segments = sorted((root / "channels").glob("segment-*.jsonl"))
+        assert len(segments) == 3  # one record per segment, as designed above
+        last_first_seq = spool_mod._first_seq_of(segments[-1])
+        del s
+
+        # Crash landed after the roll created the file but before any bytes landed.
+        segments[-1].write_bytes(b"")
+
+        s2 = Spool(root)
+        assert s2.next_seq("channels") == last_first_seq  # floor, not a reset to 1
+        s2.append("channels", last_first_seq, {"n": last_first_seq})
+        assert [seq for seq, _ in s2.pending("channels")] == list(range(1, last_first_seq + 1))
+
+    def test_torn_only_line_of_last_segment_floors_seq_at_segment_name_not_watermark(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 1)
+        s = Spool(root)
+        for i in range(1, 4):
+            s.append("channels", i, {"n": i})
+        segments = sorted((root / "channels").glob("segment-*.jsonl"))
+        assert len(segments) == 3
+        last_first_seq = spool_mod._first_seq_of(segments[-1])
+        del s
+
+        # Tear the segment's only line mid-record (simulate a crash mid-write).
+        text = segments[-1].read_text()
+        assert text
+        segments[-1].write_text(text[:-5])
+
+        s2 = Spool(root)
+        assert s2.next_seq("channels") == last_first_seq  # floor from the segment name
+        s2.append("channels", last_first_seq, {"n": last_first_seq})
+        assert [seq for seq, _ in s2.pending("channels")] == list(range(1, last_first_seq + 1))
+
+
+class TestTornTailSealedOnRestart:
+    """Final-review Critical 2: a torn tail must be repaired before the next append,
+    or the next append grafts onto the partial line and corrupts the segment.
+    """
+
+    def test_torn_tail_then_append_yields_prefix_plus_new_record_no_graft(
+        self, root: pathlib.Path
+    ) -> None:
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})
+        s.append("channels", 2, {"n": 2})
+        s.append("channels", 3, {"n": 3})
+        del s
+
+        seg = next((root / "channels").glob("segment-*.jsonl"))
+        text = seg.read_text()
+        seg.write_text(text[:-15])  # tear the final record mid-write
+
+        s2 = Spool(root)
+        # The torn tail is sealed (truncated away) before this first append lands,
+        # so the new record starts on a clean line boundary.
+        s2.append("channels", 3, {"n": 3, "resent": True})
+        assert [seq for seq, _ in s2.pending("channels")] == [1, 2, 3]
+
+        # A second append must still parse cleanly (no garbage mid-file to trip on).
+        s2.append("channels", 4, {"n": 4})
+        assert [seq for seq, _ in s2.pending("channels")] == [1, 2, 3, 4]
+
+        # Nothing grafted: every line in the segment is valid, standalone JSON.
+        for line in seg.read_text().splitlines():
+            json.loads(line)
+
+    def test_never_drop_lane_torn_tail_repaired_on_restart(self, root: pathlib.Path) -> None:
+        """Same repair, exercised explicitly on a never-drop lane ("events")."""
+        s = Spool(root)
+        s.append("events", 1, {"n": 1})
+        s.append("events", 2, {"n": 2})
+        s.append("events", 3, {"n": 3})
+        del s
+
+        seg = next((root / "events").glob("segment-*.jsonl"))
+        text = seg.read_text()
+        seg.write_text(text[:-15])
+
+        s2 = Spool(root)
+        s2.append("events", 3, {"n": 3, "resent": True})
+        assert [seq for seq, _ in s2.pending("events")] == [1, 2, 3]
+        s2.append("events", 4, {"n": 4})
+        assert [seq for seq, _ in s2.pending("events")] == [1, 2, 3, 4]
+        for line in seg.read_text().splitlines():
+            json.loads(line)
+
+
+class TestReadPathPurity:
+    def test_pending_and_stats_do_not_create_dirs_for_unknown_lane(
+        self, root: pathlib.Path
+    ) -> None:
+        s = Spool(root)
+        assert list(s.pending("ghost")) == []
+        assert not (root / "ghost").exists()
+
+        stats = s.stats()
+        assert "ghost" not in stats
+        assert not (root / "ghost").exists()
+
+        s.ack("ghost", 5)  # acking an unwritten lane must not conjure a dir either
+        assert not (root / "ghost").exists()
 
 
 class TestAckAndWatermark:

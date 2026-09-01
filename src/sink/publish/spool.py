@@ -32,6 +32,10 @@ class SpoolFullError(SpoolError):
     """Raised when a never-drop lane cannot write (disk full or failing)."""
 
 
+class SpoolCorruptError(SpoolError):
+    """Raised when a segment has mid-file JSON corruption (not a crash-torn final line)."""
+
+
 @dataclasses.dataclass
 class LaneStats:
     """Per-lane counters for heartbeat/status reporting."""
@@ -51,32 +55,61 @@ def _first_seq_of(path: pathlib.Path) -> int:
     return int(path.stem.split("-", 1)[1])
 
 
-def _parse_lines(segment: pathlib.Path, *, tolerate_torn_tail: bool = False) -> Iterator[dict]:
-    """Parse JSONL lines from a segment, optionally tolerating a torn final line.
+def _scan_segment(
+    segment: pathlib.Path, *, lane: str, tolerate_torn_tail: bool = False
+) -> tuple[list[dict], int, bool]:
+    r"""Parse JSONL lines from a segment, tracking the good-data boundary.
+
+    Reads raw bytes (not text) so the returned offset is directly usable with
+    ``os.truncate``. A "line" is a chunk ending in ``b"\n"``; the final chunk of
+    a file that does not end in a newline is a crash-torn write in progress.
 
     Args:
         segment: Path to segment file.
-        tolerate_torn_tail: If True, ignore JSONDecodeError on the final line only.
-            Corruption in any non-final line still raises.
+        lane: Lane name, used only for the corruption error message.
+        tolerate_torn_tail: If True, a torn or unparseable *final* line is dropped
+            instead of raised. Corruption in any earlier line always raises.
 
-    Yields:
-        Parsed JSON objects.
+    Returns:
+        (records, good_end_offset, torn):
+            records: Parsed JSON objects, in file order, excluding a dropped torn tail.
+            good_end_offset: Byte offset immediately after the last good line's
+                trailing newline (0 if the segment has no good lines). Truncating
+                the file to this offset discards exactly the torn tail, if any.
+            torn: True if the final line was torn/unparseable and dropped.
 
     Raises:
-        JSONDecodeError: If any non-final line fails to parse, or if any line fails
-            and tolerate_torn_tail is False.
+        SpoolCorruptError: A non-final line fails to parse, or the final line fails
+            to parse and tolerate_torn_tail is False.
 
     """
-    lines = segment.read_text(encoding="utf-8").splitlines()
-    for i, line in enumerate(lines):
-        is_final = i == len(lines) - 1
-        try:
-            yield json.loads(line)
-        except json.JSONDecodeError:
+    data = segment.read_bytes()
+    chunks = data.splitlines(keepends=True)
+    records: list[dict] = []
+    good_end = 0
+    torn = False
+    for i, chunk in enumerate(chunks):
+        is_final = i == len(chunks) - 1
+        line_no = i + 1
+        if not chunk.endswith(b"\n"):
             if is_final and tolerate_torn_tail:
-                # Skip the torn final line; preceding lines win
-                continue
-            raise
+                torn = True
+                break
+            raise SpoolCorruptError(
+                f"lane '{lane}': segment '{segment.name}': truncated line {line_no} (no newline)"
+            )
+        try:
+            record = json.loads(chunk.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            if is_final and tolerate_torn_tail:
+                torn = True
+                break
+            raise SpoolCorruptError(
+                f"lane '{lane}': segment '{segment.name}': corrupt JSON at line {line_no}"
+            ) from exc
+        records.append(record)
+        good_end += len(chunk)
+    return records, good_end, torn
 
 
 class Spool:
@@ -103,13 +136,23 @@ class Spool:
 
     # -- paths ---------------------------------------------------------------
 
-    def _lane_dir(self, lane: str) -> pathlib.Path:
+    def _lane_dir(self, lane: str, *, create: bool = True) -> pathlib.Path:
         path = self._root / lane
-        path.mkdir(parents=True, exist_ok=True)
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def _segments(self, lane: str) -> list[pathlib.Path]:
-        return sorted(self._lane_dir(lane).glob("segment-*.jsonl"))
+    def _segments(self, lane: str, *, create: bool = True) -> list[pathlib.Path]:
+        """List a lane's segments in order.
+
+        Read paths (pending/stats/ack) must pass create=False: a never-written
+        lane has no directory, and a read must not conjure one into existence
+        (that would pollute stats with a phantom, permanently-empty lane).
+        """
+        lane_dir = self._lane_dir(lane, create=create)
+        if not lane_dir.exists():
+            return []
+        return sorted(lane_dir.glob("segment-*.jsonl"))
 
     # -- watermark (read side; persistence arrives with ack()) ----------------
 
@@ -125,13 +168,27 @@ class Spool:
     # -- seq allocation --------------------------------------------------------
 
     def _scan_last_seq(self, lane: str) -> int:
+        """Recover the last written seq for a lane and seal its active segment.
+
+        Segment file names encode history: even when the last segment is empty or
+        wholly torn by a crash, the previous segment's records prove seqs up to
+        ``_first_seq_of(last_segment) - 1`` were already written, so the recovered
+        seq must never fall below that floor (falling below it would let ``next_seq``
+        reissue already-used seqs). If the last segment has a crash-torn tail, this
+        also truncates the file to the last good line's end offset so the next
+        ``append`` starts from a clean line boundary instead of writing onto the
+        partial line.
+        """
         segments = self._segments(lane)
         if not segments:
             return self._watermark(lane)
-        last = 0
-        for record in _parse_lines(segments[-1], tolerate_torn_tail=True):
-            last = record["seq"]
-        return max(last, self._watermark(lane))
+        last_segment = segments[-1]
+        records, good_end, torn = _scan_segment(last_segment, lane=lane, tolerate_torn_tail=True)
+        if torn and good_end < last_segment.stat().st_size:
+            os.truncate(last_segment, good_end)
+        last = records[-1]["seq"] if records else 0
+        floor = _first_seq_of(last_segment) - 1
+        return max(last, floor, self._watermark(lane))
 
     def next_seq(self, lane: str) -> int:
         """Get the next sequence number for a lane.
@@ -141,6 +198,10 @@ class Spool:
 
         Returns:
             Next monotonic sequence number (1-based).
+
+        Raises:
+            SpoolCorruptError: The lane's active segment has mid-file corruption
+                (only on the first call for this lane in this process's lifetime).
 
         """
         with self._lock:
@@ -162,6 +223,8 @@ class Spool:
             ValueError: If seq is not monotonic.
             SpoolFullError: If lane is never-capped and write fails.
             SpoolError: If lane is capped and write fails.
+            SpoolCorruptError: The lane's active segment has mid-file corruption
+                (only on the first call for this lane in this process's lifetime).
 
         """
         with self._lock:
@@ -218,7 +281,7 @@ class Spool:
             tmp_path.unlink(missing_ok=True)
 
     def _prune(self, lane: str, watermark: int) -> None:
-        segments = self._segments(lane)
+        segments = self._segments(lane, create=False)
         for index, segment in enumerate(segments):
             if index + 1 < len(segments):
                 last_in_segment = _first_seq_of(segments[index + 1]) - 1
@@ -324,11 +387,23 @@ class Spool:
         Yields:
             Tuples of (seq, payload) in ascending seq order.
 
+        Raises:
+            SpoolCorruptError: A non-final segment line, or a non-final segment's
+                final line, fails to parse (mid-file corruption).
+
+        Note:
+            This is a read path: it never creates a lane directory. An ack for a
+            yielded record may arrive on the publisher's callback thread only after
+            that record has been yielded here; the segment list is captured once, at
+            the start of iteration, so segments rolled or pruned mid-iteration by a
+            concurrent ack do not change what this call sees.
+
         """
         watermark = self._watermark(lane)
-        segments = self._segments(lane)
+        segments = self._segments(lane, create=False)
         for i, segment in enumerate(segments):
             is_final = i == len(segments) - 1
-            for record in _parse_lines(segment, tolerate_torn_tail=is_final):
+            records, _, _ = _scan_segment(segment, lane=lane, tolerate_torn_tail=is_final)
+            for record in records:
                 if record["seq"] > watermark:
                     yield record["seq"], record["payload"]
