@@ -104,6 +104,23 @@ class TestMqttRequiresDevInsecure:
         with pytest.raises(StreamConfigError, match="FLEET_DEV_INSECURE"):
             connect_mod.resolve_publisher_kwargs(streams, None)
 
+    def test_identity_sourced_mqtt_scheme_still_gated_by_dev_flag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Compromised/misbehaving enroll server scenario: streams.broker is
+        # unset, and identity.broker_url (assigned by the enrollment server,
+        # not validated by load_identity) is a plaintext mqtt:// URL pointed
+        # at an arbitrary host. The dev-insecure gate must still apply to a
+        # broker sourced from identity, not just one sourced from the
+        # manifest -- the scheme check runs after streams/identity are
+        # merged into a single broker_url, so there is no separate path
+        # around it.
+        monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", False)
+        identity = _identity(broker_url="mqtt://attacker.example.com")
+        streams = _streams(broker=None)
+        with pytest.raises(StreamConfigError, match="FLEET_DEV_INSECURE"):
+            connect_mod.resolve_publisher_kwargs(streams, identity)
+
 
 class TestMqttDevInsecureHostPolicy:
     def test_localhost_literal_ok(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -166,6 +183,28 @@ class TestMqttDevInsecureHostPolicy:
             "robot": "r2d2",
         }
 
+    def test_bracketed_ipv6_literal_loopback_url_ok(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+        streams = _streams(broker="mqtt://[::1]:1883")
+        kwargs = connect_mod.resolve_publisher_kwargs(streams, None)
+        assert kwargs["broker_url"] == "mqtt://[::1]:1883"
+        assert kwargs["tenant"] == "dev"
+        assert kwargs["robot"] == "robot"
+
+
+class TestUnsupportedScheme:
+    def test_identity_sourced_unvalidated_scheme_raises_naming_it(self) -> None:
+        # load_identity/enroll never validate broker_url's scheme (unlike
+        # StreamsConfig.build, which constrains streams.broker to
+        # mqtt/mqtts), so a compromised enroll server or a hand-edited
+        # identity.yaml can hand back any scheme at all. This branch is the
+        # last-line-of-defense guard against that -- reachable, not dead code.
+        identity = _identity(broker_url="ws://fleet.example.com")
+        streams = _streams(broker=None)
+        with pytest.raises(StreamConfigError, match="ws") as excinfo:
+            connect_mod.resolve_publisher_kwargs(streams, identity)
+        assert "ws" in str(excinfo.value)
+
 
 class TestIsLocalOrPrivate:
     def test_localhost_literal(self) -> None:
@@ -180,6 +219,17 @@ class TestIsLocalOrPrivate:
 
     def test_public_ip_literal(self) -> None:
         assert connect_mod._is_local_or_private("8.8.8.8") is False
+
+    def test_loopback_ipv6_literal(self) -> None:
+        assert connect_mod._is_local_or_private("::1") is True
+
+    def test_private_ipv6_literal(self) -> None:
+        # fd00::/8 is the IPv6 unique-local range (RFC4193), the v6 analog
+        # of RFC1918.
+        assert connect_mod._is_local_or_private("fd00::1") is True
+
+    def test_public_ipv6_literal(self) -> None:
+        assert connect_mod._is_local_or_private("2001:4860:4860::8888") is False
 
     def test_hostname_all_private_via_fake_getaddrinfo(
         self, monkeypatch: pytest.MonkeyPatch

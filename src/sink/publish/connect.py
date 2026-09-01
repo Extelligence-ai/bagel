@@ -103,10 +103,13 @@ def resolve_publisher_kwargs(streams: StreamsConfig, identity: Identity | None) 
     this is a dev-only, unenrolled robot and the kwargs use the documented
     placeholder identity ``tenant="dev"``, ``robot="robot"``.
 
-    Any other broker scheme raises ``StreamConfigError`` (``StreamsConfig``
-    and ``Identity.broker_url`` both already constrain the scheme to
-    ``mqtt``/``mqtts``, so this is a defensive fallback, not a reachable
-    default path).
+    Any other broker scheme raises ``StreamConfigError`` naming the scheme.
+    ``StreamsConfig.build`` constrains ``streams.broker`` to ``mqtt``/``mqtts``,
+    but ``load_identity``/``enroll`` do NOT validate ``broker_url``'s scheme --
+    an ``identity.yaml`` written by a compromised or misbehaving enrollment
+    server (or hand-edited on disk) can carry any scheme at all. This branch
+    is that guard, not dead code: it is the last line of defense against a
+    malicious ``broker_url`` reaching ``MqttPublisher`` unchecked.
 
     Returns:
         A dict of exactly the kwargs ``MqttPublisher(**kwargs)`` accepts.
