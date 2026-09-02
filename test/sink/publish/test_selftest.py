@@ -111,6 +111,13 @@ class TestRunSelftest:
         assert result["channels_seq"] == [seqs[0], seqs[-1]]
         assert result["events_seq"] == pub.event_calls[0]["seq"]
 
+        # -- "samples" counts what was actually published, not a formula:
+        # pin it against the real per-batch sample counts captured on the
+        # FakePublisher, not just the expected 5*4 total.
+        total_captured_samples = sum(len(batch["samples"]) for batch in pub.channel_calls)
+        assert result["samples"] == 5 * 4
+        assert result["samples"] == total_captured_samples
+
     def test_cleanup_on_failure_acks_past_last_appended_seq(self, tmp_path: pathlib.Path) -> None:
         from src.sink.publish.selftest import run_selftest
 

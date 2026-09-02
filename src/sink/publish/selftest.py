@@ -103,12 +103,11 @@ def _build_batch(i: int, t: float) -> dict:
     }
 
 
-def run_selftest(  # noqa: PLR0913
+def run_selftest(
     publisher: Publisher,
     spool: Spool,
     *,
     batches: int = DEFAULT_BATCHES,
-    samples_per_batch: int = 4,
     interval_s: float = 0.0,
     now: Callable[[], float] = time.time,
 ) -> dict:
@@ -127,9 +126,6 @@ def run_selftest(  # noqa: PLR0913
             `MqttPublisher`).
         spool: The target robot's real `Spool` (see `Spool.for_robot`).
         batches: Number of channel batches to publish.
-        samples_per_batch: Samples per batch, for the returned summary's
-            `"samples"` count -- the batch content itself is the fixed
-            4-sample fixture regardless of this value.
         interval_s: Delay between batches (0 in tests; the CLI defaults this
             to 0.5s so a subscriber can observe batches arriving over time).
         now: Clock, injectable for deterministic tests.
@@ -147,6 +143,7 @@ def run_selftest(  # noqa: PLR0913
     last_channels_seq: int | None = None
     last_events_seq: int | None = None
     channels_seqs: list[int] = []
+    total_samples = 0
     t0 = now()
 
     try:
@@ -163,6 +160,7 @@ def run_selftest(  # noqa: PLR0913
             publisher.publish_channels(batch)
             spool.ack("channels", seq)
             channels_seqs.append(seq)
+            total_samples += len(batch["samples"])
             if interval_s:
                 time.sleep(interval_s)
 
@@ -206,7 +204,7 @@ def run_selftest(  # noqa: PLR0913
     return {
         "channels": len(SELFTEST_CHANNELS),
         "batches": batches,
-        "samples": batches * samples_per_batch,
+        "samples": total_samples,
         "heartbeat": 1,
         "events": 1,
         "channels_seq": [channels_seqs[0], channels_seqs[-1]] if channels_seqs else [],
