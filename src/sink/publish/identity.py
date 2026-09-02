@@ -508,17 +508,24 @@ def delete_identity(directory: pathlib.Path) -> list[str]:
     belt-and-braces, applied here to reads-become-deletes) before anything is
     unlinked:
 
-    1. If ``directory / "identity.yaml"`` doesn't exist, this is a no-op
-       returning ``[]`` -- nothing enrolled, nothing to do, so a repeat
-       ``unenroll`` call never raises.
-    2. ``load_identity(directory)`` is tried. If it parses, the deletion set
-       starts as ``{key_path, cert_path, ca_path}``: each must resolve
-       INSIDE ``directory`` or this raises ``ValueError`` immediately --
-       BEFORE any unlink -- so a hand-edited ``key_file: ../../victim``
-       pointer can never delete outside the directory. If it doesn't parse
-       (``FleetNotEnrolledError`` -- a corrupt identity.yaml), this step is
-       skipped entirely: a corrupt identity must still be removable via the
-       pattern sweep below, not permanently stuck.
+    1. If ``directory / "identity.yaml"`` doesn't exist, steps 2 and 4's
+       pointer-set/whole-file work are skipped, but the pattern sweep
+       (step 3) still runs unconditionally (Codex round 3, P2) -- it's
+       contained and non-recursive, so it's always safe, and it's the only
+       way to clean up an enroll that crashed between writing key material
+       and writing ``identity.yaml`` itself: without this, those orphaned
+       key/cert files would never be swept, since nothing else ever points
+       at them. Idempotent either way: a directory with nothing left in it
+       returns ``[]`` on the next call.
+    2. ``load_identity(directory)`` is tried (only when ``identity.yaml``
+       exists). If it parses, the deletion set starts as ``{key_path,
+       cert_path, ca_path}``: each must resolve INSIDE ``directory`` or this
+       raises ``ValueError`` immediately -- BEFORE any unlink -- so a
+       hand-edited ``key_file: ../../victim`` pointer can never delete
+       outside the directory. If it doesn't parse (``FleetNotEnrolledError``
+       -- a corrupt identity.yaml), this step is skipped entirely: a corrupt
+       identity must still be removable via the pattern sweep below, not
+       permanently stuck.
     3. This module's own naming patterns (see ``_DELETE_GLOB_PATTERNS``) are
        globbed inside ``directory`` (non-recursive) to additionally sweep up
        renewal orphans identity.yaml no longer points at. The same
@@ -531,10 +538,11 @@ def delete_identity(directory: pathlib.Path) -> list[str]:
        opportunistic best-effort sweep over whatever happens to match a
        filename pattern, so one bad entry must not block cleanup of
        everything else.
-    4. The union of steps 2+3, plus ``identity.yaml`` itself, is unlinked
-       (``missing_ok=True``); then ``directory.rmdir()`` is attempted,
-       best-effort (``OSError`` -- e.g. "not empty", because a skipped
-       symlink or an unrelated file is still in there -- is swallowed).
+    4. The union of steps 2+3, plus ``identity.yaml`` itself (only when it
+       exists), is unlinked (``missing_ok=True``); then ``directory.rmdir()``
+       is attempted, best-effort (``OSError`` -- e.g. "not empty", because a
+       skipped symlink or an unrelated file is still in there, or the
+       directory never existed at all -- is swallowed).
 
     Never uses ``shutil.rmtree``: only paths derived from steps 2 and 3
     above are ever touched.
@@ -542,9 +550,10 @@ def delete_identity(directory: pathlib.Path) -> list[str]:
     Returns:
         Sorted basenames of every file actually targeted for deletion (the
         pointer set that passed containment, the pattern-set matches that
-        passed containment, and ``identity.yaml``) -- not necessarily the
-        basenames actually removed, since ``missing_ok=True`` tolerates a
-        concurrent removal, but in the ordinary case these coincide.
+        passed containment, and ``identity.yaml`` when it exists) -- not
+        necessarily the basenames actually removed, since ``missing_ok=True``
+        tolerates a concurrent removal, but in the ordinary case these
+        coincide.
 
     Raises:
         ValueError: a pointer field in a parsable identity.yaml resolves
@@ -553,20 +562,21 @@ def delete_identity(directory: pathlib.Path) -> list[str]:
     """
     directory = pathlib.Path(directory).resolve()
     identity_path = directory / "identity.yaml"
-    if not identity_path.is_file():
-        return []
+    identity_yaml_exists = identity_path.is_file()
 
     to_delete: dict[str, pathlib.Path] = {}
-    to_delete.update(_delete_identity_pointer_set(directory))
+    if identity_yaml_exists:
+        to_delete.update(_delete_identity_pointer_set(directory))
     to_delete.update(_delete_identity_pattern_set(directory))
-    to_delete["identity.yaml"] = identity_path
+    if identity_yaml_exists:
+        to_delete["identity.yaml"] = identity_path
 
     for path in to_delete.values():
         path.unlink(missing_ok=True)
     try:
         directory.rmdir()
     except OSError:
-        pass  # not empty (a skipped entry or unrelated file remains) -- fine, best-effort
+        pass  # not empty (a skipped entry or unrelated file remains), or never existed -- fine
 
     return sorted(to_delete)
 

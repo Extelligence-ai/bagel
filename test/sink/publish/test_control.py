@@ -33,7 +33,7 @@ from src.sink.publish import (
     identity,
 )
 from src.sink.publish.service import FleetService
-from src.sink.publish.spool import Spool
+from src.sink.publish.spool import Spool, SpoolCorruptError
 
 # `fake_server` is imported only to be re-exported as a pytest fixture (used
 # by parameter name in TestEnrollIdentity, never referenced by name in this
@@ -241,6 +241,56 @@ class TestFleetStatusNoGate:
         assert status["enrolled"] is False
         assert status["identity"] is None
 
+    def test_find_spec_raising_module_not_found_reports_not_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """P2 (Codex round 3): `find_spec("paho.mqtt")` itself can raise when the
+        parent `paho` package on the path is a half-installed namespace package
+        -- must degrade to "not installed", never propagate out of a
+        never-raises function."""
+
+        def _boom(_name: str) -> None:
+            raise ModuleNotFoundError("paho")
+
+        monkeypatch.setattr(control.importlib.util, "find_spec", _boom)
+
+        status = control.fleet_status()
+
+        assert status["installed"] is False
+
+    def test_find_spec_raising_value_error_reports_not_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same guard, the other exception `find_spec` can raise for a broken
+        namespace package."""
+
+        def _boom(_name: str) -> None:
+            raise ValueError("half-installed namespace package")
+
+        monkeypatch.setattr(control.importlib.util, "find_spec", _boom)
+
+        status = control.fleet_status()
+
+        assert status["installed"] is False
+
+    def test_corrupt_spool_status_reports_error_instead_of_raising(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """P2 (Codex round 3): `FleetService.status()` rescans spool segments on
+        first access and can raise `SpoolCorruptError` -- `fleet_status()` must
+        surface that as `status: {"error": ...}`, never let it propagate."""
+        service, _pub = _running_service(tmp_path)
+        startup.set_fleet_service(service)
+
+        def _boom() -> dict:
+            raise SpoolCorruptError("lane 'channels': segment corrupt")
+
+        monkeypatch.setattr(service, "status", _boom)
+
+        status = control.fleet_status()
+
+        assert status["status"] == {"error": "SpoolCorruptError: lane 'channels': segment corrupt"}
+
 
 def test_control_module_does_not_import_paho_or_cryptography_eagerly(
     monkeypatch: pytest.MonkeyPatch,
@@ -300,6 +350,27 @@ class TestPauseStreaming:
         result = control.pause_streaming(discard=True)
 
         assert result == {"service": "paused", "changed": True, "discarded": True}
+        assert list(spool.pending("channels")) == []
+
+    def test_discard_true_while_already_paused_still_empties_and_reports_unchanged(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """P2 (Codex round 3): `changed: False` (the service was already
+        paused) but `discarded: True` still actually empties the backlog --
+        the tool-level ruling `{"service": "paused", "changed": False,
+        "discarded": True}`."""
+        service, _pub = _running_service(tmp_path)
+        spool = service._spool
+        startup.set_fleet_service(service)
+        control.pause_streaming()  # first pause, no discard
+
+        seq = spool.next_seq("channels")
+        spool.append("channels", seq, {"v": 1, "samples": []})
+        assert list(spool.pending("channels"))
+
+        result = control.pause_streaming(discard=True)
+
+        assert result == {"service": "paused", "changed": False, "discarded": True}
         assert list(spool.pending("channels")) == []
 
     def test_no_service_is_idempotent_no_op(self) -> None:
@@ -637,7 +708,36 @@ class TestStreamTopics:
         names = {c["c"] for c in new_service.channels}
         assert {"imu.x", "odom.y"} <= names
         assert result["service"] == "running"
-        assert result["events"] == []
+        assert result["events_configured"] == []
+        assert result["events_active"] is False
+
+    def test_unparsable_manifest_does_not_undo_a_successful_restart(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """P2 (Codex round 3): live-vs-persisted atomicity -- a valid rule
+        change against a RUNNING service (so `_current_streams()` never
+        touches the manifest) must still restart the service even when the
+        configured manifest file is unparsable; the persist failure is
+        reported, not raised, and the bad file is left untouched."""
+        old_service = self._running_multi_topic_service(tmp_path)
+        manifest_path = tmp_path / "manifest.yaml"
+        original_text = "not: valid: yaml: ["
+        manifest_path.write_text(original_text)
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+
+        result = control.stream_topics(
+            channels=[{"topic": "/odom", "fields": ["y"], "rate_hz": 2}], events=None
+        )
+
+        new_service = startup.fleet_service()
+        assert new_service is not None
+        assert new_service is not old_service
+        names = {c["c"] for c in new_service.channels}
+        assert {"imu.x", "odom.y"} <= names
+        assert result["persisted"] is False
+        assert "persist_error" in result
+        assert "unparsable manifest" in result["persist_error"]
+        assert manifest_path.read_text() == original_text
 
     def test_same_topic_rule_is_replaced_not_duplicated(self, tmp_path: pathlib.Path) -> None:
         self._running_multi_topic_service(tmp_path)
@@ -810,7 +910,40 @@ class TestStreamTopics:
         assert len(new_service.streams.events) == 1
         assert new_service.streams.events[0].predicate == "x < -20"
         assert new_service.streams.events[0].pre_seconds == 5.0
-        assert result["events"] == ["hard_decel"]
+        assert result["events_configured"] == ["hard_decel"]
+        assert result["events_active"] is False
+
+    def test_configuring_an_event_rule_logs_a_not_active_warning(
+        self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """P1a (Codex round 3): honest-reporting -- event rules are stored and
+        forwarded, but nothing on-robot evaluates them yet, so every call that
+        leaves an event rule configured logs a WARNING saying so."""
+        self._running_multi_topic_service(tmp_path)
+
+        with caplog.at_level("WARNING", logger="src.sink.publish.control"):
+            control.stream_topics(
+                channels=None,
+                events=[{"name": "hard_decel", "topic": "/imu", "predicate": "x < -10"}],
+            )
+
+        assert any(
+            "not evaluated until the event runtime ships" in record.message
+            for record in caplog.records
+        )
+
+    def test_no_event_rules_configured_logs_no_warning(
+        self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The warning fires only when an event rule is actually configured."""
+        self._running_multi_topic_service(tmp_path)
+
+        with caplog.at_level("WARNING", logger="src.sink.publish.control"):
+            control.stream_topics(
+                channels=[{"topic": "/odom", "fields": ["y"], "rate_hz": 2}], events=None
+            )
+
+        assert caplog.records == []
 
     def test_disabled_raises_before_any_state_change(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
@@ -946,6 +1079,29 @@ class TestStopStreams:
 
         assert startup.fleet_service().streams.events == []
         assert result["changed"] is True
+        assert result["events_configured"] == []
+        assert result["events_active"] is False
+
+    def test_leftover_event_rule_after_stop_streams_logs_a_not_active_warning(
+        self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """P1a: the same honest-reporting warning fires from stop_streams too,
+        whenever event rules remain configured after the call."""
+        streams = config.StreamsConfig.build(
+            {
+                "channels": [{"topic": "/imu", "fields": ["x"], "rate_hz": 50}],
+                "events": [{"name": "hard_decel", "topic": "/imu", "predicate": "true"}],
+            }
+        )
+        self._service_with_streams(tmp_path, streams)
+
+        with caplog.at_level("WARNING", logger="src.sink.publish.control"):
+            control.stop_streams(channels=["imu.x"], events=None)
+
+        assert any(
+            "not evaluated until the event runtime ships" in record.message
+            for record in caplog.records
+        )
 
     def test_unknown_name_is_a_no_op_and_does_not_restart(self, tmp_path: pathlib.Path) -> None:
         service, _pub = _running_service(tmp_path)
@@ -1018,6 +1174,33 @@ class TestStopStreams:
         assert resume_result == {"service": "running", "changed": True}
         assert new_service.paused is False
 
+    def test_unparsable_manifest_does_not_undo_a_successful_restart(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """P2 (Codex round 3): same live-vs-persisted atomicity ruling as
+        stream_topics's -- a rule removal that actually changes and restarts
+        a running service must not be undone by an unparsable manifest;
+        the persist failure is reported, not raised."""
+        streams = config.StreamsConfig.build(
+            {"channels": [{"topic": "/imu", "fields": ["x", "y"], "rate_hz": 50}]}
+        )
+        old_service = self._service_with_streams(tmp_path, streams)
+        manifest_path = tmp_path / "manifest.yaml"
+        original_text = "not: valid: yaml: ["
+        manifest_path.write_text(original_text)
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+
+        result = control.stop_streams(channels=["imu.x"], events=None)
+
+        new_service = startup.fleet_service()
+        assert new_service is not old_service
+        assert {c["c"] for c in new_service.channels} == {"imu.y"}
+        assert result["changed"] is True
+        assert result["persisted"] is False
+        assert "persist_error" in result
+        assert "unparsable manifest" in result["persist_error"]
+        assert manifest_path.read_text() == original_text
+
     def test_no_service_persist_only_reports_stopped(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1043,7 +1226,8 @@ class TestStopStreams:
         assert result == {
             "service": "stopped",
             "channels": [],
-            "events": [],
+            "events_configured": [],
+            "events_active": False,
             "changed": True,
             "persisted": True,
         }

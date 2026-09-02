@@ -83,6 +83,12 @@ reconnects briefly to republish the schema, then re-pauses -- it never
 silently comes back online. Rules applied this way are persisted to the
 startup manifest's `streams:` section, so they survive container restarts.
 
+Event rules are accepted, validated, merged, and persisted the same way
+channel rules are, and `stream_live_topics`/`stop_live_streams` report them
+back as `events_configured` -- but on-robot evaluation ships in a later
+release; configuration is forward-compatible, not yet active
+(`events_active` is always `False`).
+
 `pause_fleet_streaming` / `resume_fleet_streaming` take the connection
 offline and back without touching identity or rules -- a paused robot leaves
 a retained `reason: "paused"` heartbeat on the broker, so fleet-side

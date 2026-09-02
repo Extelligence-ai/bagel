@@ -204,14 +204,26 @@ class FleetService:
     def pause(self, discard: bool = False) -> None:
         """Go offline, keeping the resolved config so `resume()` needs no re-resolve.
 
-        Idempotent: a no-op if not started or already paused. `discard=True`
-        additionally acks the channels lane up to its last written seq,
-        dropping any still-unacked backlog (events/heartbeat are never-drop
-        lanes and are left untouched). Closes the publisher with
-        `reason="paused"` (spec §3), so the retained clean-stop heartbeat a
-        broker-side subscriber sees reads distinctly from a genuine `stop()`.
+        Idempotent on the pause transition itself: a no-op if not started,
+        and if already paused, the offline state is left exactly as it was
+        (threads already stopped, publisher already closed -- stopping them
+        again would be wrong, not merely redundant). `discard=True` is
+        honored independently of that transition, though (Codex round 3,
+        P2): an explicit discard request empties the channels lane's
+        still-unacked backlog (events/heartbeat are never-drop lanes and are
+        left untouched) even when the service was ALREADY paused -- e.g. two
+        `pause_streaming(discard=True)` calls in a row must both actually
+        discard, not have the second silently no-op just because the service
+        was already offline. Closes the publisher with `reason="paused"`
+        (spec §3) on the transition itself, so the retained clean-stop
+        heartbeat a broker-side subscriber sees reads distinctly from a
+        genuine `stop()`.
         """
-        if not self._started or self._paused:
+        if not self._started:
+            return
+        if self._paused:
+            if discard:
+                self._discard_channels_backlog()
             return
         self._clear_taps()
         if self._heartbeat is not None:
@@ -220,9 +232,13 @@ class FleetService:
             self._router.stop()
         self._publisher.close(reason="paused")
         if discard:
-            last_seq = self._spool.next_seq("channels") - 1
-            self._spool.ack("channels", last_seq)
+            self._discard_channels_backlog()
         self._paused = True
+
+    def _discard_channels_backlog(self) -> None:
+        """Ack the channels lane up to its last written seq, dropping any unacked backlog."""
+        last_seq = self._spool.next_seq("channels") - 1
+        self._spool.ack("channels", last_seq)
 
     def resume(self) -> None:
         """Restart threads (fresh queue/core/router/heartbeat) and reconnect.

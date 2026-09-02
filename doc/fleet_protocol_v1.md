@@ -173,6 +173,11 @@ The on-robot event *emitter* ships in a future release; this shape is
 contractual now, and the conformance selftest (§10) already publishes one
 event (without `artifact`).
 
+Likewise, the `stream_live_topics`/`stop_live_streams` tools already accept
+and persist event *rules* (the predicate that would decide when to emit):
+on-robot evaluation ships in a later release; configuration is
+forward-compatible.
+
 ## 8. `heartbeat` payload
 
 Published retained every **30 s** (first beat immediately at session start):

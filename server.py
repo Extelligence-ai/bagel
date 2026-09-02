@@ -1230,8 +1230,16 @@ def stream_live_topics(
     Returns:
         dict[str, Any]: ``service`` ("running" or "paused" -- "paused" when
             the service this replaced was paused), the resolved
-            ``channels``, the ``events`` names, and whether the change was
-            ``persisted`` to the manifest.
+            ``channels``, the ``events_configured`` names, whether the
+            change was ``persisted`` to the manifest, and ``events_active``
+            (always ``False``: event rules are stored and forwarded but not
+            evaluated until the event runtime ships -- configuring one now
+            is forward-compatible, not a no-op). If the streaming change
+            itself succeeded but writing it back to the manifest failed
+            (e.g. an unparsable manifest file), this does not raise:
+            ``persisted`` is ``False`` and a ``persist_error`` message is
+            included, so the truthful state is reported -- the robot IS
+            running the new rules; only the on-disk manifest didn't get them.
 
     Raises:
         StreamConfigError: An invalid rule, or no viable broker/covering
@@ -1285,9 +1293,14 @@ def stop_live_streams(
     Returns:
         dict[str, Any]: ``service`` ("running", "paused", or "stopped" --
             "paused" when a restart happened and the service it replaced was
-            paused), the remaining ``channels``, the remaining ``events``
-            names, whether anything ``changed``, and whether that change was
-            ``persisted``.
+            paused), the remaining ``channels``, the remaining
+            ``events_configured`` names, whether anything ``changed``,
+            whether that change was ``persisted``, and ``events_active``
+            (always ``False``: event rules are stored and forwarded but not
+            evaluated until the event runtime ships). If something changed
+            and the restart succeeded but writing it back to the manifest
+            failed, this does not raise: ``persisted`` is ``False`` and a
+            ``persist_error`` message is included.
 
     Raises:
         FleetNotEnrolledError | StreamConfigError: Only reachable when

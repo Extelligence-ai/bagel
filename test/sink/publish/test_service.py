@@ -274,6 +274,59 @@ class TestPauseResume:
         finally:
             service.stop()
 
+    def test_pause_discard_true_while_already_paused_still_empties_backlog(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """P2 (Codex round 3): an explicit discard request must actually
+        discard even when the service was already paused -- the already-
+        paused early-return used to skip the discard entirely, silently
+        keeping backlog a caller explicitly asked to drop."""
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher(connect_should_fail=True)
+        spool = Spool(tmp_path / "spool")
+        service = FleetService(sink=sink, streams=_imu_streams(), publisher=pub, spool=spool)
+        service.start()
+        try:
+            seq = spool.next_seq("channels")
+            spool.append("channels", seq, {"v": 1, "samples": []})
+
+            service.pause(discard=False)  # already offline now; backlog kept
+            assert list(spool.pending("channels"))
+
+            service.pause(discard=True)  # same already-paused state, discard=True this time
+            assert list(spool.pending("channels")) == []
+        finally:
+            service.stop()
+
+    def test_pause_discard_true_twice_in_a_row_discards_both_times(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """The other order: discard=True while running, then more backlog
+        accrues while paused, then discard=True again (now already-paused)
+        must drop that too -- not just the first call's."""
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher(connect_should_fail=True)
+        spool = Spool(tmp_path / "spool")
+        service = FleetService(sink=sink, streams=_imu_streams(), publisher=pub, spool=spool)
+        service.start()
+        try:
+            seq = spool.next_seq("channels")
+            spool.append("channels", seq, {"v": 1, "samples": []})
+
+            service.pause(discard=True)
+            assert list(spool.pending("channels")) == []
+
+            seq2 = spool.next_seq("channels")
+            spool.append("channels", seq2, {"v": 1, "samples": []})
+            assert list(spool.pending("channels"))
+
+            service.pause(discard=True)  # already paused; must discard again
+            assert list(spool.pending("channels")) == []
+        finally:
+            service.stop()
+
     def test_pause_and_resume_are_idempotent_and_restart_threads(
         self, tmp_path: pathlib.Path
     ) -> None:
