@@ -287,6 +287,39 @@ class TestOversizedRecord:
         assert s.stats()["heartbeat"].evicted == 0
 
 
+class TestPendingToleratesConcurrentEviction:
+    def test_segment_evicted_mid_iteration_is_skipped_not_raised(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex review (3909414307): pending()'s segment list is a
+        # point-in-time snapshot; a concurrent _evict() unlinking one of the
+        # captured paths mid-iteration used to raise an uncaught
+        # FileNotFoundError, aborting replay entirely instead of tolerating
+        # the race (skip the evicted segment, keep going).
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 40)
+        s = Spool(root)
+        for i in range(1, 4):
+            s.append("channels", i, {"n": i})
+        segments = sorted((root / "channels").glob("segment-*.jsonl"))
+        assert len(segments) == 3  # one record per (small-capped) segment
+
+        real_scan_segment = spool_mod._scan_segment
+        call_count = {"n": 0}
+
+        def scan_and_evict_first(segment: pathlib.Path, **kwargs: object) -> object:
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                segments[1].unlink()  # simulate a concurrent _evict() mid-iteration
+            return real_scan_segment(segment, **kwargs)
+
+        monkeypatch.setattr(spool_mod, "_scan_segment", scan_and_evict_first)
+
+        result = list(s.pending("channels"))  # must not raise
+
+        seqs = [seq for seq, _ in result]
+        assert seqs == [1, 3]  # the evicted segment's record (seq 2) is skipped
+
+
 class TestReadPathPurity:
     def test_pending_and_stats_do_not_create_dirs_for_unknown_lane(
         self, root: pathlib.Path

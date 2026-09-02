@@ -435,14 +435,21 @@ class Spool:
             yielded record may arrive on the publisher's callback thread only after
             that record has been yielded here; the segment list is captured once, at
             the start of iteration, so segments rolled or pruned mid-iteration by a
-            concurrent ack do not change what this call sees.
+            concurrent ack do not change what this call sees. A segment that
+            existed at snapshot time but is unlinked by a concurrent
+            eviction before this loop reaches it (Codex review) is treated
+            as "already gone" and skipped, rather than raising
+            FileNotFoundError and aborting the rest of the replay.
 
         """
         watermark = self._watermark(lane)
         segments = self._segments(lane, create=False)
         for i, segment in enumerate(segments):
             is_final = i == len(segments) - 1
-            records, _, _ = _scan_segment(segment, lane=lane, tolerate_torn_tail=is_final)
+            try:
+                records, _, _ = _scan_segment(segment, lane=lane, tolerate_torn_tail=is_final)
+            except FileNotFoundError:
+                continue  # concurrently evicted between the snapshot and this read
             for record in records:
                 if record["seq"] > watermark:
                     yield record["seq"], record["payload"]
