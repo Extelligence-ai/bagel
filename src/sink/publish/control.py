@@ -23,6 +23,13 @@ paho/cryptography eagerly either (see each module's own docstring), so
 doing so does not trip the package's no-eager-import invariant; a lazy
 regression test for THIS module lives in `test_control.py` alongside the
 existing gate/service ones.
+
+`_control_lock` (I2 ruling) serializes every mutating operation here --
+`stream_topics`, `stop_streams`, `unenroll_identity`, `pause_streaming`,
+`resume_streaming`, `enroll_identity` -- since an MCP client may invoke
+tools concurrently and stop-old/start-new is not itself atomic across two
+interleaved callers. `fleet_status()` intentionally never acquires it: it
+is read-only and must never block on a slow mutating call.
 """
 
 import importlib.util
@@ -31,6 +38,7 @@ import os
 import pathlib
 import stat
 import tempfile
+import threading
 from collections.abc import Callable
 
 import yaml
@@ -49,6 +57,13 @@ from src.sink.publish.connect import resolve_publisher_kwargs
 from src.sink.publish.mqtt import MqttPublisher
 from src.sink.publish.service import FleetService
 from src.sink.publish.spool import Spool
+
+# Serializes tool-driven lifecycle transitions (I2 ruling): MCP workers may
+# run tools concurrently, and stop-old/start-new (`_restart_service`) is not
+# itself atomic across two interleaved callers. `fleet_status()` is
+# intentionally left unlocked -- it is read-only and must never block on a
+# slow mutating call.
+_control_lock = threading.Lock()
 
 
 def fleet_status() -> dict:
@@ -136,12 +151,13 @@ def pause_streaming(discard: bool = False) -> dict:
 
     """
     require_fleet()
-    service = startup.fleet_service()
-    if service is None:
-        return {"service": "stopped", "changed": False}
-    changed = not service.paused
-    service.pause(discard=discard)
-    return {"service": "paused", "changed": changed, "discarded": discard}
+    with _control_lock:
+        service = startup.fleet_service()
+        if service is None:
+            return {"service": "stopped", "changed": False}
+        changed = not service.paused
+        service.pause(discard=discard)
+        return {"service": "paused", "changed": changed, "discarded": discard}
 
 
 def resume_streaming() -> dict:
@@ -162,12 +178,13 @@ def resume_streaming() -> dict:
 
     """
     require_fleet()
-    service = startup.fleet_service()
-    if service is None:
-        return {"service": "stopped", "changed": False}
-    changed = service.paused
-    service.resume()
-    return {"service": "running", "changed": changed}
+    with _control_lock:
+        service = startup.fleet_service()
+        if service is None:
+            return {"service": "stopped", "changed": False}
+        changed = service.paused
+        service.resume()
+        return {"service": "running", "changed": changed}
 
 
 def enroll_identity(token: str, enroll_url: str) -> dict:
@@ -189,16 +206,17 @@ def enroll_identity(token: str, enroll_url: str) -> dict:
 
     """
     require_fleet()
-    directory = pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY)
-    if identity.is_enrolled(directory):
-        raise EnrollmentError(0, "already enrolled; run unenroll_fleet_identity first")
-    enrolled = identity.enroll(token, enroll_url, directory)
-    return {
-        "tenant": enrolled.tenant,
-        "robot_id": enrolled.robot_id,
-        "broker_url": enrolled.broker_url,
-        "expires_at": enrolled.expires_at,
-    }
+    with _control_lock:
+        directory = pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY)
+        if identity.is_enrolled(directory):
+            raise EnrollmentError(0, "already enrolled; run unenroll_fleet_identity first")
+        enrolled = identity.enroll(token, enroll_url, directory)
+        return {
+            "tenant": enrolled.tenant,
+            "robot_id": enrolled.robot_id,
+            "broker_url": enrolled.broker_url,
+            "expires_at": enrolled.expires_at,
+        }
 
 
 def unenroll_identity() -> dict:
@@ -220,17 +238,18 @@ def unenroll_identity() -> dict:
         `{"deleted": list[str], "streams_removed": bool, "service": "stopped"}`.
 
     """
-    service = startup.fleet_service()
-    if service is not None:
-        try:
-            service.stop()
-        except Exception:
-            logging.warning("Best-effort stop of the live FleetService during unenroll failed")
-        finally:
-            startup.set_fleet_service(None)
-    deleted = identity.delete_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
-    streams_removed = _persist_streams(None)
-    return {"deleted": deleted, "streams_removed": streams_removed, "service": "stopped"}
+    with _control_lock:
+        service = startup.fleet_service()
+        if service is not None:
+            try:
+                service.stop()
+            except Exception:
+                logging.warning("Best-effort stop of the live FleetService during unenroll failed")
+            finally:
+                startup.set_fleet_service(None)
+        deleted = identity.delete_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+        streams_removed = _persist_streams(None)
+        return {"deleted": deleted, "streams_removed": streams_removed, "service": "stopped"}
 
 
 def stream_topics(channels: list[dict] | None, events: list[dict] | None) -> dict:
@@ -247,8 +266,11 @@ def stream_topics(channels: list[dict] | None, events: list[dict] | None) -> dic
     configured.
 
     Returns:
-        `{"service": "running", "channels": list[dict], "events":
-        list[str], "persisted": bool}`.
+        `{"service": "running" | "paused", "channels": list[dict], "events":
+        list[str], "persisted": bool}`. `"paused"` when the service this
+        replaced was paused: `_restart_service` preserves paused-ness across
+        the rule-change restart (I1 ruling) -- a brief reconnect blip to
+        republish the schema, then straight back to paused.
 
     Raises:
         FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
@@ -268,31 +290,33 @@ def stream_topics(channels: list[dict] | None, events: list[dict] | None) -> dic
 
     """
     require_fleet()
-    new_channels = [
-        config.ChannelRule.build(entry, label=f"channels[{i}]")
-        for i, entry in enumerate(channels or [])
-    ]
-    new_events = [
-        config.EventRule.build(entry, label=f"events[{i}]") for i, entry in enumerate(events or [])
-    ]
+    with _control_lock:
+        new_channels = [
+            config.ChannelRule.build(entry, label=f"channels[{i}]")
+            for i, entry in enumerate(channels or [])
+        ]
+        new_events = [
+            config.EventRule.build(entry, label=f"events[{i}]")
+            for i, entry in enumerate(events or [])
+        ]
 
-    current = _current_streams()
-    merged = config.StreamsConfig(
-        broker=current.broker,
-        flush_interval_s=current.flush_interval_s,
-        channels=_merge_by_key(current.channels, new_channels, key=lambda rule: rule.topic),
-        events=_merge_by_key(current.events, new_events, key=lambda rule: rule.name),
-    )
+        current = _current_streams()
+        merged = config.StreamsConfig(
+            broker=current.broker,
+            flush_interval_s=current.flush_interval_s,
+            channels=_merge_by_key(current.channels, new_channels, key=lambda rule: rule.topic),
+            events=_merge_by_key(current.events, new_events, key=lambda rule: rule.name),
+        )
 
-    _restart_service(merged)
-    persisted = _persist_streams(merged.to_manifest())
-    service = startup.fleet_service()
-    return {
-        "service": "running",
-        "channels": service.channels,
-        "events": [rule.name for rule in merged.events],
-        "persisted": persisted,
-    }
+        _restart_service(merged)
+        persisted = _persist_streams(merged.to_manifest())
+        service = startup.fleet_service()
+        return {
+            "service": "paused" if service.paused else "running",
+            "channels": service.channels,
+            "events": [rule.name for rule in merged.events],
+            "persisted": persisted,
+        }
 
 
 def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
@@ -318,8 +342,12 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
     `persisted` reports `False`.
 
     Returns:
-        `{"service": "running" | "stopped", "channels": list[dict],
-        "events": list[str], "changed": bool, "persisted": bool}`.
+        `{"service": "running" | "paused" | "stopped", "channels":
+        list[dict], "events": list[str], "changed": bool, "persisted":
+        bool}`. `"paused"` when a restart happened and the service it
+        replaced was paused: `_restart_service` preserves paused-ness across
+        the restart (I1 ruling) -- a brief reconnect blip to republish the
+        schema, then straight back to paused.
 
     Raises:
         FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
@@ -331,38 +359,45 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
 
     """
     require_fleet()
-    channel_names = set(channels or [])
-    event_names = set(events or [])
-    current = _current_streams()
+    with _control_lock:
+        channel_names = set(channels or [])
+        event_names = set(events or [])
+        current = _current_streams()
 
-    remaining_channels, channels_changed = _drop_channel_names(current.channels, channel_names)
-    remaining_events = [rule for rule in current.events if rule.name not in event_names]
-    events_changed = len(remaining_events) != len(current.events)
-    changed = channels_changed or events_changed
+        remaining_channels, channels_changed = _drop_channel_names(current.channels, channel_names)
+        remaining_events = [rule for rule in current.events if rule.name not in event_names]
+        events_changed = len(remaining_events) != len(current.events)
+        changed = channels_changed or events_changed
 
-    remaining = config.StreamsConfig(
-        broker=current.broker,
-        flush_interval_s=current.flush_interval_s,
-        channels=remaining_channels,
-        events=remaining_events,
-    )
+        remaining = config.StreamsConfig(
+            broker=current.broker,
+            flush_interval_s=current.flush_interval_s,
+            channels=remaining_channels,
+            events=remaining_events,
+        )
 
-    service = startup.fleet_service()
-    if changed and service is not None:
-        _restart_service(remaining)
         service = startup.fleet_service()
+        if changed and service is not None:
+            _restart_service(remaining)
+            service = startup.fleet_service()
 
-    # A pure no-op must not touch the manifest at all (not even a rewrite
-    # with identical content) -- a manifest with no `streams:` section stays
-    # byte-identical, and `persisted` truthfully reports `False`.
-    persisted = _persist_streams(remaining.to_manifest()) if changed else False
-    return {
-        "service": "running" if service is not None else "stopped",
-        "channels": service.channels if service is not None else [],
-        "events": [rule.name for rule in remaining.events],
-        "changed": changed,
-        "persisted": persisted,
-    }
+        # A pure no-op must not touch the manifest at all (not even a rewrite
+        # with identical content) -- a manifest with no `streams:` section
+        # stays byte-identical, and `persisted` truthfully reports `False`.
+        persisted = _persist_streams(remaining.to_manifest()) if changed else False
+        if service is None:
+            service_state = "stopped"
+        elif service.paused:
+            service_state = "paused"
+        else:
+            service_state = "running"
+        return {
+            "service": service_state,
+            "channels": service.channels if service is not None else [],
+            "events": [rule.name for rule in remaining.events],
+            "changed": changed,
+            "persisted": persisted,
+        }
 
 
 def _merge_by_key(current: list, new: list, *, key: Callable[[object], object]) -> list:
@@ -495,8 +530,16 @@ def _restart_service(streams: config.StreamsConfig) -> None:
     Any failure here propagates typed -- unlike `startup._start_fleet`
     (a boot-time path that swallows everything into a report), these are
     interactive tools: a caller needs to see exactly why a restart failed.
+
+    Paused-ness is preserved across the restart (I1 ruling): `old.paused` is
+    captured BEFORE `old` is touched at all, and if it was paused, the new
+    service is paused again immediately after `service.start()`. A rule
+    change on a paused service must not silently bring it back online --
+    the brief reconnect (to republish the retained schema) is an accepted,
+    documented blip, not a resume.
     """
     old = startup.fleet_service()
+    was_paused = old.paused if old is not None else False
     sink = _resolve_sink(streams, old)
 
     identity_obj = _load_identity_or_none()
@@ -516,6 +559,8 @@ def _restart_service(streams: config.StreamsConfig) -> None:
             startup.set_fleet_service(None)
 
     service.start()
+    if was_paused:
+        service.pause()
     startup.set_fleet_service(service)
 
 

@@ -11,6 +11,7 @@ import importlib
 import pathlib
 import stat
 import sys
+import threading
 
 import pyarrow as pa
 import pytest
@@ -444,6 +445,37 @@ class TestEnrollIdentity:
         with pytest.raises(FleetDisabledError, match="FLEET_ENABLED"):
             control.enroll_identity("some-token", "https://enroll.example.com")
 
+    def test_not_installed_raises_before_any_keygen(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """M1: paho not installed raises via require_fleet(), before any keygen."""
+
+        def poison(*_a: object, **_kw: object) -> None:
+            raise AssertionError(
+                "generate_key_and_csr must not be reached: paho not installed gates first"
+            )
+
+        monkeypatch.setattr(identity, "generate_key_and_csr", poison)
+        _simulate_paho_not_installed(monkeypatch)
+
+        with pytest.raises(FleetNotInstalledError):
+            control.enroll_identity("some-token", "https://enroll.example.com")
+
+    def test_enroll_while_dev_service_running_leaves_it_unchanged(
+        self, tmp_path: pathlib.Path, fake_server: str
+    ) -> None:
+        """M2: enrolling while a dev-identity service is already running (an
+        unenrolled robot's placeholder `dev/robot` service) must not
+        retroactively touch it -- the new identity only takes effect on the
+        next restart/rule change (stream_topics/stop_streams)."""
+        service, _pub = _running_service(tmp_path)
+        startup.set_fleet_service(service)
+        assert service.status()["cert_expires_at"] is None
+
+        result = control.enroll_identity(VALID_TOKEN, fake_server)
+
+        assert result["robot_id"] == "robot-42"
+        assert startup.fleet_service() is service  # unchanged, same object
+        assert service.status()["cert_expires_at"] is None  # still the dev-identity service
+
 
 class TestUnenrollIdentity:
     def test_running_service_stopped_and_holder_cleared(self, tmp_path: pathlib.Path) -> None:
@@ -780,6 +812,55 @@ class TestStreamTopics:
         assert new_service.streams.events[0].pre_seconds == 5.0
         assert result["events"] == ["hard_decel"]
 
+    def test_disabled_raises_before_any_state_change(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M1: FLEET_ENABLED=0 raises before touching the holder/validation at all."""
+        old_service = self._running_multi_topic_service(tmp_path)
+        monkeypatch.setattr(settings, "FLEET_ENABLED", False)
+
+        with pytest.raises(FleetDisabledError, match="FLEET_ENABLED"):
+            control.stream_topics(
+                channels=[{"topic": "/odom", "fields": ["y"], "rate_hz": 2}], events=None
+            )
+
+        assert startup.fleet_service() is old_service
+
+    def test_not_installed_raises(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M1: paho not installed raises via require_fleet(), before any state change."""
+        old_service = self._running_multi_topic_service(tmp_path)
+        _simulate_paho_not_installed(monkeypatch)
+
+        with pytest.raises(FleetNotInstalledError):
+            control.stream_topics(
+                channels=[{"topic": "/odom", "fields": ["y"], "rate_hz": 2}], events=None
+            )
+
+        assert startup.fleet_service() is old_service
+
+    def test_paused_service_stays_paused_across_a_rule_change(self, tmp_path: pathlib.Path) -> None:
+        """I1 (important): a rule change must not silently un-pause a paused
+        service -- the brief reconnect-to-republish-schema blip is accepted,
+        but the service must land back in `paused`, not `running`."""
+        old_service = self._running_multi_topic_service(tmp_path)
+        old_service.pause()
+        assert old_service.paused is True
+
+        result = control.stream_topics(
+            channels=[{"topic": "/odom", "fields": ["y"], "rate_hz": 2}], events=None
+        )
+
+        new_service = startup.fleet_service()
+        assert new_service is not old_service
+        assert new_service.paused is True
+        assert result["service"] == "paused"
+
+        resume_result = control.resume_streaming()
+        assert resume_result == {"service": "running", "changed": True}
+        assert new_service.paused is False
+
 
 class TestStopStreams:
     """`stop_streams` removes rules by resolved name; unknown names are idempotent no-ops."""
@@ -913,3 +994,135 @@ class TestStopStreams:
         assert doc["streams"]["channels"] == []
         assert doc["streams"]["events"] == []
         assert config.load_streams(doc) is not None
+
+    def test_paused_service_stays_paused_across_a_rule_removal(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """I1 (important): same ruling as stream_topics's -- a paused service
+        must still be paused after stop_streams restarts it."""
+        streams = config.StreamsConfig.build(
+            {"channels": [{"topic": "/imu", "fields": ["x", "y"], "rate_hz": 50}]}
+        )
+        old_service = self._service_with_streams(tmp_path, streams)
+        old_service.pause()
+        assert old_service.paused is True
+
+        result = control.stop_streams(channels=["imu.x"], events=None)
+
+        new_service = startup.fleet_service()
+        assert new_service is not old_service
+        assert new_service.paused is True
+        assert result["service"] == "paused"
+
+        resume_result = control.resume_streaming()
+        assert resume_result == {"service": "running", "changed": True}
+        assert new_service.paused is False
+
+    def test_no_service_persist_only_reports_stopped(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M1: with no service running, stop_streams only updates the
+        persisted manifest -- it never starts one -- and reports "stopped"."""
+        manifest_path = tmp_path / "manifest.yaml"
+        manifest_path.write_text(
+            yaml.safe_dump(
+                {
+                    "subscriptions": [],
+                    "streams": {
+                        "channels": [{"topic": "/imu", "fields": ["x"], "rate_hz": 50}],
+                        "events": [],
+                    },
+                }
+            )
+        )
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+        startup.set_fleet_service(None)
+
+        result = control.stop_streams(channels=["imu.x"], events=None)
+
+        assert result == {
+            "service": "stopped",
+            "channels": [],
+            "events": [],
+            "changed": True,
+            "persisted": True,
+        }
+        assert startup.fleet_service() is None
+        doc = yaml.safe_load(manifest_path.read_text())
+        assert doc["streams"]["channels"] == []
+
+
+class TestControlLock:
+    """I2 (important): one module-level lock serializes tool-driven lifecycle
+    transitions across the mutating control-plane operations. `fleet_status`
+    stays deliberately unlocked (read-only, must never block) -- not tested
+    here since it never touches `_control_lock` at all.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _enrolled(self) -> None:
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+
+    def test_second_mutating_call_blocks_until_the_first_releases_the_lock(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        monkeypatch.setattr(sink_base, "live_sinks", lambda: [sink])
+        startup.set_fleet_service(None)
+
+        original_restart = control._restart_service
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_restart(streams: object) -> None:
+            entered.set()
+            assert release.wait(timeout=5), "test setup: release was never signaled"
+            original_restart(streams)
+
+        monkeypatch.setattr(control, "_restart_service", blocking_restart)
+
+        first_done = threading.Event()
+
+        def call_stream_topics() -> None:
+            control.stream_topics(
+                channels=[{"topic": "/imu", "fields": ["x"], "rate_hz": 5}], events=None
+            )
+            first_done.set()
+
+        first = threading.Thread(target=call_stream_topics)
+        first.start()
+        assert entered.wait(timeout=2), "first call never reached the blocked _restart_service"
+
+        # A second mutating call (stop_streams, resolved as a no-op -- it never
+        # itself calls _restart_service) must still block on the module lock
+        # `stream_topics` is holding, proving the lock spans the whole
+        # mutating body, not just the _restart_service call.
+        second_done = threading.Event()
+
+        def call_stop_streams() -> None:
+            control.stop_streams(channels=["nope.x"], events=None)
+            second_done.set()
+
+        second = threading.Thread(target=call_stop_streams)
+        second.start()
+        second.join(timeout=0.3)
+        assert not second_done.is_set(), (
+            "second mutating call ran before the first released the lock"
+        )
+
+        release.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+        assert first_done.is_set()
+        assert second_done.is_set()
+
+    def test_fleet_status_never_blocks_on_a_held_lock(self, tmp_path: pathlib.Path) -> None:
+        assert control._control_lock.acquire(blocking=False)
+        try:
+            # fleet_status is read-only and must not try to acquire the lock
+            # at all -- if it did, this call would deadlock right here.
+            status = control.fleet_status()
+        finally:
+            control._control_lock.release()
+        assert status["service"] == "stopped"

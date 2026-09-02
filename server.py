@@ -1151,7 +1151,10 @@ def enroll_fleet_identity(token: str, enroll_url: str) -> dict[str, Any]:
     Generates a keypair locally (the private key never leaves this robot),
     submits a CSR to `enroll_url` alongside the one-time `token`, and stores
     the returned identity on disk. Already enrolled -> raises; run
-    `unenroll_fleet_identity` first.
+    `unenroll_fleet_identity` first. If a streaming service is already
+    running on the dev-placeholder identity, enrolling leaves it unchanged;
+    the new identity takes effect on the next `stream_live_topics`/
+    `stop_live_streams` restart.
 
     Args:
         token (str): One-time enrollment token issued out of band. Sent once
@@ -1167,6 +1170,8 @@ def enroll_fleet_identity(token: str, enroll_url: str) -> dict[str, Any]:
     Raises:
         EnrollmentError: Already enrolled, a rejected/expired token, a
             malformed response, or a transport failure.
+        FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
+        FleetNotInstalledError: The `fleet` dependency group isn't installed.
 
     Examples:
         As an LLM prompt:
@@ -1204,7 +1209,9 @@ def stream_live_topics(
     leaves a previously-running service completely untouched. Valid rules
     are merged onto the currently running (or persisted) rule set and become
     the new live streaming service; the merged set is also persisted back to
-    the manifest, if one is configured.
+    the manifest, if one is configured. Rule changes preserve paused state:
+    if the service was paused, it reconnects briefly to republish the
+    schema, then re-pauses -- it does not come back online.
 
     Args:
         channels (list[dict[str, Any]] | None, optional): Channel rules, in
@@ -1221,15 +1228,18 @@ def stream_live_topics(
             `artifact`. Defaults to None (no event changes).
 
     Returns:
-        dict[str, Any]: ``service`` ("running"), the resolved ``channels``,
-            the ``events`` names, and whether the change was ``persisted``
-            to the manifest.
+        dict[str, Any]: ``service`` ("running" or "paused" -- "paused" when
+            the service this replaced was paused), the resolved
+            ``channels``, the ``events`` names, and whether the change was
+            ``persisted`` to the manifest.
 
     Raises:
         StreamConfigError: An invalid rule, or no viable broker/covering
             sink for the merged topics.
         FleetNotEnrolledError: No broker configured and this robot isn't
             enrolled.
+        FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
+        FleetNotInstalledError: The `fleet` dependency group isn't installed.
 
     Examples:
         As an LLM prompt:
@@ -1260,6 +1270,10 @@ def stop_live_streams(
 ) -> dict[str, Any]:
     """Remove channel/event rules by name, restart, persist.
 
+    A restart (when something changed and a service was running) preserves
+    paused state: if the service was paused, it reconnects briefly to
+    republish the schema, then re-pauses -- it does not come back online.
+
     Args:
         channels (list[str] | None, optional): Channel names to remove, as
             reported by `describe_stream_status` (the resolved/renamed
@@ -1269,15 +1283,19 @@ def stop_live_streams(
             Unknown names are no-ops. Defaults to None.
 
     Returns:
-        dict[str, Any]: ``service`` ("running" or "stopped"), the remaining
-            ``channels``, the remaining ``events`` names, whether anything
-            ``changed``, and whether that change was ``persisted``.
+        dict[str, Any]: ``service`` ("running", "paused", or "stopped" --
+            "paused" when a restart happened and the service it replaced was
+            paused), the remaining ``channels``, the remaining ``events``
+            names, whether anything ``changed``, and whether that change was
+            ``persisted``.
 
     Raises:
         FleetNotEnrolledError | StreamConfigError: Only reachable when
             something changed and a service is running -- and, per the
             failure-outcome contract, such a failure leaves the previously
             running service running, untouched.
+        FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
+        FleetNotInstalledError: The `fleet` dependency group isn't installed.
 
     Examples:
         As an LLM prompt:
@@ -1319,6 +1337,10 @@ def pause_fleet_streaming(discard: bool = False) -> dict[str, Any]:
             running service (calling this again on an already-paused service
             reports ``changed: False``).
 
+    Raises:
+        FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
+        FleetNotInstalledError: The `fleet` dependency group isn't installed.
+
     Examples:
         As an LLM prompt:
             Pause fleet streaming, and drop any backlog we haven't sent yet.
@@ -1349,6 +1371,10 @@ def resume_fleet_streaming() -> dict[str, Any]:
             "running", "changed": bool}``, where ``changed`` is True only
             when this call actually resumed a paused service (calling this
             again on an already-running service reports ``changed: False``).
+
+    Raises:
+        FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
+        FleetNotInstalledError: The `fleet` dependency group isn't installed.
 
     Examples:
         As an LLM prompt:

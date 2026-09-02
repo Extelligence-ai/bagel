@@ -28,7 +28,9 @@ Once `identity.yaml` exists, both variables are ignored and can be removed.
 > Enroll this robot with the fleet broker at `https://fleet.example.com` using token `<token>`.
 
 (`enroll_fleet_identity`). An already-enrolled robot refuses rather than
-overwriting -- unenroll first.
+overwriting -- unenroll first. Enrolling while a dev-placeholder streaming
+service is already running leaves that service unchanged; the new identity
+only takes effect on the next `stream_live_topics`/`stop_live_streams` restart.
 
 ### Token pitfalls
 
@@ -76,8 +78,10 @@ Add or replace streaming rules with `stream_live_topics`, remove them with
 
 Rule changes restart the streaming service: expect a brief reconnect blip
 (the retained schema is republished, and the disk spool preserves anything
-queued across the gap). Rules applied this way are persisted to the startup
-manifest's `streams:` section, so they survive container restarts.
+queued across the gap). Rule changes preserve paused state; the service
+reconnects briefly to republish the schema, then re-pauses -- it never
+silently comes back online. Rules applied this way are persisted to the
+startup manifest's `streams:` section, so they survive container restarts.
 
 `pause_fleet_streaming` / `resume_fleet_streaming` take the connection
 offline and back without touching identity or rules -- a paused robot leaves
