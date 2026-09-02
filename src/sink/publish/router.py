@@ -224,6 +224,12 @@ class StreamRouter(threading.Thread):
         that is merely still offline -- log it, record it as `_fatal_error`,
         and exit the loop so `alive`/`last_error` surface it to
         `FleetService.status()`.
+
+        On a clean exit (the stop signal, not a fatal `_tick` error), this
+        calls `_final_flush()` as the very last thing before returning --
+        see its docstring for why samples the tap already accepted (via
+        `offer()`) but that hadn't yet crossed a flush boundary would
+        otherwise be silently dropped on `stop()` (Codex review).
         """
         while not self._stop_event.is_set():
             try:
@@ -232,6 +238,37 @@ class StreamRouter(threading.Thread):
                 logging.getLogger(__name__).exception("StreamRouter thread died")
                 self._fatal_error = repr(exc)
                 return
+        self._final_flush()
+
+    def _final_flush(self) -> None:
+        """Drain the queue into the core and spool whatever it hands back, once.
+
+        Runs as the last act of `run()`, after the stop signal has been
+        observed and the tick loop has exited -- entirely on this thread, so
+        it never races a concurrent `_tick()` touching the same
+        `_core`/`_queue`/`_spool` (Codex review: `stop()` doing this
+        directly on the CALLER's thread instead would race the router
+        thread's own in-flight `_tick`). Mirrors `_tick`'s own
+        drain-then-offer-then-flush-then-spool path, minus `_pump` --
+        publishing the result is not this method's job, only making sure it
+        is durably spooled for the router's normal replay-on-restart path
+        (or the next `_pump` after a `resume()`) to pick up.
+
+        `pause(discard=True)` is unaffected: it flushes here same as any
+        other stop, then FleetService acks past the newly-spooled batch's
+        seq, same as it always could for anything already in the spool.
+        """
+        while True:
+            samples = self._queue.drain(max_items=500, timeout_s=0.0)
+            if not samples:
+                break
+            for topic, t, msg in samples:
+                self._core.offer(topic, t, msg)
+        batch = self._core.flush(time.time())
+        if batch is not None:
+            seq = self._spool.next_seq("channels")
+            batch["seq"] = seq
+            self._spool.append("channels", seq, batch)
 
     def _tick(self, now: float) -> None:
         """One iteration: drain+offer+maybe-flush-to-spool, then publish.

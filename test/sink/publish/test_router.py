@@ -417,6 +417,78 @@ class TestStreamRouterThread:
         assert remaining == list(range(remaining[0], total_records + 1))
 
 
+class TestStreamRouterStopFlushesAcceptedSamples:
+    def _start_and_let_initial_tick_pass(self, router: StreamRouter) -> None:
+        """Start the router and wait past its first tick.
+
+        `RouterCore._last_flush` starts at 0.0, and `run()` drives `_tick`
+        with a real `time.time()` -- so the very first tick's
+        `should_flush()` is unconditionally True (any real epoch timestamp
+        minus 0.0 dwarfs `flush_interval_s`), flushing an (empty) batch and
+        setting `_last_flush` to a real recent timestamp. Only after that
+        can a *subsequent* sample reliably sit in `_pending` without
+        crossing a long `flush_interval_s`'s boundary.
+        """
+        router.start()
+        time.sleep(0.3)
+
+    def test_stop_spools_samples_offered_but_below_flush_threshold(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        # Codex review (3906982911): stop() used to only set the stop event
+        # and join -- it never forced the queue/core's already-accepted
+        # samples into the spool first, so a sample the tap had accepted
+        # (offer()'d into RouterCore._pending) but that hadn't yet crossed a
+        # flush boundary was silently dropped on stop(). A long
+        # flush_interval_s (10s) guarantees should_flush() would say "not
+        # yet" on any tick that happened to run before stop() lands.
+        router, q, spool, pub = _router(tmp_path, flush_interval_s=10.0)
+        self._start_and_let_initial_tick_pass(router)
+
+        q.put(("/imu", 1.0, {"x": 1.0}))
+        deadline = time.monotonic() + 2.0
+        while router._core.pending_count == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert router._core.pending_count == 1  # accepted by offer(), not yet flushed
+
+        router.stop()
+
+        assert list(spool.pending("channels"))  # the accepted sample was spooled, not lost
+        batch = next(payload for _seq, payload in spool.pending("channels"))
+        assert [s["v"] for s in batch["samples"]] == [1.0]
+
+    def test_stop_on_an_idle_router_with_nothing_pending_is_a_clean_noop(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        router, _q, spool, _pub = _router(tmp_path, flush_interval_s=10.0)
+        self._start_and_let_initial_tick_pass(router)
+
+        router.stop()  # must not raise even with nothing to flush
+
+        assert list(spool.pending("channels")) == []
+
+    def test_pause_discard_still_discards_after_stop_flushes_pending(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        # pause(discard=True) is FleetService's job (it acks past the
+        # channels lane's last written seq after stop()) -- this just
+        # documents that stop()'s new flush-on-stop doesn't fight that: the
+        # newly-spooled batch is still ack-able/discardable like any other.
+        router, q, spool, _pub = _router(tmp_path, flush_interval_s=10.0)
+        self._start_and_let_initial_tick_pass(router)
+        q.put(("/imu", 1.0, {"x": 1.0}))
+        deadline = time.monotonic() + 2.0
+        while router._core.pending_count == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        router.stop()
+        assert list(spool.pending("channels"))  # flushed on stop
+
+        last_seq = spool.next_seq("channels") - 1
+        spool.ack("channels", last_seq)
+        assert list(spool.pending("channels")) == []  # discard still works
+
+
 class TestStreamRouterStopResetsOnline:
     def test_stop_resets_online_to_false(self, tmp_path: pathlib.Path) -> None:
         # Codex review (3906982938): StreamRouter._online was never reset on
