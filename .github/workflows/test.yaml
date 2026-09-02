@@ -110,6 +110,29 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
 
+  # MQTT round-trip integration tests against a real broker (spec §8). The
+  # broker is started as a step, not a `services:` container: GitHub starts
+  # service containers before `actions/checkout`, so a workspace-path config
+  # volume mount would be empty at container start, and service containers
+  # don't support command overrides either. Running mosquitto via `docker
+  # run` with its built-in /mosquitto-no-auth.conf sidesteps both problems
+  # and is the locally-verified route (test/sink/publish/test_mqtt_integration.py).
+  iot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.0"
+      - name: Install dependencies
+        run: uv sync --group fleet --group dev
+      - name: Start mosquitto
+        run: docker run -d --name mosq -p 1883:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf
+      - name: Broker round-trip tests
+        env:
+          MQTT_TEST_BROKER: mqtt://localhost:1883
+        run: uv run pytest -q test/sink/publish/test_mqtt_integration.py -p no:cacheprovider
+
   coverage-gate:
     needs: [docker, host-tests]
     runs-on: ubuntu-latest
