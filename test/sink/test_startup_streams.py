@@ -383,6 +383,62 @@ class TestFleetFailures:
         assert "robot/telemetry_b" in error
         assert startup._FLEET_SERVICE is None
 
+    def test_topics_split_across_two_same_sink_entries_coverage_passes(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex review (3909413506): TopicSink.__new__ is a (host, port)
+        # singleton -- two `subscriptions:` entries pointed at the SAME
+        # host/port get the SAME sink object, with each entry's topics list
+        # only naming what THAT entry subscribed. _find_covering_sink used
+        # to test each (sink, topics) tuple independently, so a manifest
+        # whose needed topics were split across two same-sink entries was
+        # wrongly rejected even though the singleton sink is actually
+        # subscribed to their union. RULING A's own docstring assumes this
+        # would work ("each entry's sink is a fresh instance"), which the
+        # singleton falsifies -- this is the real gap the ruling didn't
+        # intend, not the genuine two-different-sinks v1 limitation covered
+        # by test_topics_spanning_two_subscription_entries_fails_with_v1_limitation.
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+        monkeypatch.setattr(startup.MqttPublisher, "connect", lambda self: None)
+
+        fake = FakePahoClient()
+        fake.retained = {
+            "robot/telemetry_a": [b'{"speed": 1.5, "t": 100.0}'],
+            "robot/telemetry_b": [b'{"battery": 90.0, "t": 100.0}'],
+        }
+        monkeypatch.setattr(sink_mqtt.paho, "Client", lambda **_: fake)
+
+        same_port = next(_PORT_COUNTER)
+        entry_a = {
+            "sink": "mqtt",
+            "host": "manifest.test",
+            "port": same_port,
+            "args": {"discovery_seconds": 0.0, "timestamp_field": "t"},
+            "topics": ["robot/telemetry_a"],
+        }
+        entry_b = {
+            "sink": "mqtt",
+            "host": "manifest.test",
+            "port": same_port,
+            "args": {"discovery_seconds": 0.0, "timestamp_field": "t"},
+            "topics": ["robot/telemetry_b"],
+        }
+        manifest = {
+            "subscriptions": [entry_a, entry_b],
+            "streams": {
+                "channels": [
+                    {"topic": "robot/telemetry_a", "fields": ["speed"], "rate_hz": 1},
+                    {"topic": "robot/telemetry_b", "fields": ["battery"], "rate_hz": 1},
+                ]
+            },
+        }
+        manifest_file = _write_manifest(tmp_path, manifest)
+
+        reports = startup.start(manifest_file)
+
+        assert reports[-1] == {"fleet": "started"}
+        assert startup._FLEET_SERVICE is not None
+
     def test_no_subscription_covers_streams_topics_fails(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

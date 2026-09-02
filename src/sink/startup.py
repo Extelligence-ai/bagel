@@ -234,9 +234,25 @@ def _find_covering_sink(
     caller to turn into one actionable report entry, whether that is because
     no entry subscribes to any of them, only some of them, or they are split
     across more than one entry's topics.
+
+    RULING A's premise ("each entry's sink is a fresh instance") does NOT
+    hold when two entries share the same (host, port): `TopicSink.__new__`
+    is a singleton keyed on that pair, so they get the SAME sink object,
+    each entry's `topics` list naming only what THAT entry itself
+    subscribed. Testing each `(sink, topics)` tuple in isolation would
+    therefore wrongly reject a manifest split across two same-sink entries
+    even though the singleton is actually subscribed to their union (Codex
+    review) -- so entries are grouped by sink identity (`id(sink)`) first,
+    and coverage is tested against each group's UNIONED topics.
     """
+    topics_by_sink_id: dict[int, tuple[object, set[str]]] = {}
     for sink, topics in subscribed:
-        if source_topics <= set(topics):
+        sink_id = id(sink)
+        if sink_id not in topics_by_sink_id:
+            topics_by_sink_id[sink_id] = (sink, set())
+        topics_by_sink_id[sink_id][1].update(topics)
+    for sink, topics in topics_by_sink_id.values():
+        if source_topics <= topics:
             return sink
     return None
 
