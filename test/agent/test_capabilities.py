@@ -16,7 +16,8 @@ def test_lists_every_poml_under_src_agent() -> None:
         for file in pathlib.Path("src/agent").rglob("*.poml")
     }
     assert found == on_disk
-    assert len(found) >= 5  # compose/pipeline, diagnose/latency, describe/*, examples/woof
+    assert len(found) >= 6  # compose/pipeline, diagnose/{latency,robot_health},
+    # describe/*, examples/woof
 
 
 def test_every_capability_has_path_that_exists_and_nonempty_summary() -> None:
@@ -60,3 +61,20 @@ def test_triage_capability_renders() -> None:
     joined = " ".join(str(message.get("content", "")) for message in rendered)
     assert "describe_data_source" in joined
     assert "start_seconds" in joined
+
+
+def test_robot_health_capability_is_discovered() -> None:
+    names = {capability["name"] for capability in list_capabilities()}
+    assert "diagnose/robot_health" in names
+
+
+def test_robot_health_capability_renders() -> None:
+    from poml import poml
+
+    rendered = poml("./src/agent/diagnose/robot_health.poml")
+    assert isinstance(rendered, list)
+    assert all(isinstance(message, dict) for message in rendered)
+    joined = " ".join(str(message.get("content", "")) for message in rendered)
+    assert "describe_data_source" in joined
+    assert "query_messages" in joined
+    assert "VERDICT" in joined
