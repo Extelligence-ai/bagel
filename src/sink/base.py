@@ -21,6 +21,35 @@ from src.sink.buffer import TopicBufferWriter
 _global_sink_singletons: dict[tuple[str, int], "TopicSink"] = {}  # (host, port) -> instance
 _global_sink_singletons_lock = threading.Lock()
 
+# Callbacks run as the FIRST act of every `TopicSink.close()`, before any
+# teardown -- the supported seam for something else to react to a sink
+# closing (e.g. a fleet service tapping its buffers; see startup.py).
+_close_hooks: list[Callable[["TopicSink"], None]] = []
+
+
+def register_close_hook(hook: Callable[["TopicSink"], None]) -> Callable[[], None]:
+    """Register a callback to run at the start of every `TopicSink.close()`.
+
+    Returns an unregister closure; calling it (even more than once, or after
+    the hook was never registered) is always a safe no-op.
+    """
+    _close_hooks.append(hook)
+
+    def _unregister() -> None:
+        if hook in _close_hooks:
+            _close_hooks.remove(hook)
+
+    return _unregister
+
+
+def live_sinks() -> list["TopicSink"]:
+    """Snapshot of all currently live TopicSink singletons.
+
+    Needed by callers (e.g. `control.stream_topics`) that must find an
+    already-connected sink without a fleet service running yet.
+    """
+    return list(_global_sink_singletons.values())
+
 
 class TopicNotFoundError(Exception):
     """Raised when topic is not found."""
@@ -181,6 +210,21 @@ class TopicSink(abc.ABC):
         """Topics currently subscribed on this sink, in insertion order."""
         return list(self._buffers)
 
+    def buffer_writer(self, topic: str) -> TopicBufferWriter:
+        """Return the live `TopicBufferWriter` for a subscribed topic.
+
+        The supported seam for fleet taps (spec §2): callers that need to
+        attach a tap to a topic's live buffer (e.g. `FleetService.start()`)
+        use this rather than reaching into the private `_buffers` mapping.
+
+        Raises:
+            TopicNotFoundError: If `topic` is not currently subscribed.
+
+        """
+        if topic not in self._buffers:
+            raise TopicNotFoundError([topic])
+        return self._buffers[topic]
+
     def ensure_capacity(
         self,
         topics: list[str],
@@ -336,6 +380,13 @@ class TopicSink(abc.ABC):
                 logging.debug("Best-effort disconnect of a partially constructed sink failed")
             return
         try:
+            for hook in list(_close_hooks):
+                try:
+                    hook(self)
+                except Exception:
+                    logging.warning(
+                        "Close hook %r raised while closing sink %r", hook, self, exc_info=True
+                    )
             self.pause()
             self._disconnect()
         finally:

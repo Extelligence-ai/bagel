@@ -194,9 +194,7 @@ class TestPyprojectVersionRegexFallback:
         )
         assert heartbeat_mod._pyproject_version(root=tmp_path) == "9.9.9"
 
-    def test_finds_the_version_line_among_surrounding_content(
-        self, tmp_path: pathlib.Path
-    ) -> None:
+    def test_finds_the_version_line_among_surrounding_content(self, tmp_path: pathlib.Path) -> None:
         (tmp_path / "pyproject.toml").write_text(
             '[project]\nname = "bagel"\nversion = "2.3.0"\n\n[tool.other]\nfoo = "bar"\n'
         )

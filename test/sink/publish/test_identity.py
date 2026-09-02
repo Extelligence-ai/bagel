@@ -222,13 +222,19 @@ class _FakeRenewHandler(http.server.BaseHTTPRequestHandler):
             return
 
         robot_cert_pem, ca_cert_pem = _build_ca_and_robot_cert("renewed-cn", csr.public_key())
-        body = json.dumps(
-            {
-                "cert_pem": robot_cert_pem.decode(),
-                "ca_pem": ca_cert_pem.decode(),
-                "expires_at": "2028-01-01T00:00:00Z",
-            }
-        ).encode()
+        response_fields = {
+            "cert_pem": robot_cert_pem.decode(),
+            "ca_pem": ca_cert_pem.decode(),
+            "expires_at": "2028-01-01T00:00:00Z",
+        }
+        # A "renew-url:<base>" scenario (mirroring the enroll fake server's
+        # "renew-url:<base>" token convention) additionally returns that
+        # base as `renew_url` -- proves a renew response can itself rotate
+        # the renew base (staging->prod cutover) without re-enrollment. See
+        # TestRenewUrl's rotation tests.
+        if scenario.startswith("renew-url:"):
+            response_fields["renew_url"] = scenario[len("renew-url:") :]
+        body = json.dumps(response_fields).encode()
         self._respond(200, body)
 
     def _respond(self, status: int, body: bytes) -> None:
@@ -678,9 +684,7 @@ class TestMaybeEnrollOnFirstBootKillSwitch:
         with caplog.at_level(logging.DEBUG):
             identity_mod.maybe_enroll_on_first_boot()
 
-        assert any(
-            "FLEET_ENABLED" in record.getMessage() for record in caplog.records
-        )
+        assert any("FLEET_ENABLED" in record.getMessage() for record in caplog.records)
 
 
 class TestMaybeEnrollOnFirstBootNeverRaisesOnCorruptIdentity:
@@ -877,6 +881,120 @@ class TestRenewUrl:
         doc = yaml.safe_load((directory / "identity.yaml").read_text())
         assert doc["renew_url"] == fake_renew_server
 
+    def test_renew_response_can_rotate_renew_url_to_a_new_base(
+        self, fake_server: str, fake_renew_server: str, tmp_path: object
+    ) -> None:
+        # `_FakeRenewHandler` recognizes a "renew-url:<base>" scenario CN
+        # (mirroring the enroll fake server's "renew-url:<base>" token
+        # convention) and echoes that base back as the response's
+        # `renew_url` -- proving a renew response can itself rotate the
+        # base (e.g. a staging->prod cutover) without a fresh enrollment.
+        new_base = "https://renew2.example"
+        identity = _identity_for_renew(
+            fake_server, fake_renew_server, tmp_path, f"renew-url:{new_base}"
+        )
+        assert identity.renew_url is None  # starting state: no renew_url yet
+
+        result = identity_mod.renew(identity)
+
+        assert result is not None
+        assert result.renew_url == new_base
+        doc = yaml.safe_load((result.key_path.parent / "identity.yaml").read_text())
+        assert doc["renew_url"] == new_base
+
+    def test_renew_response_rotated_renew_url_is_targeted_by_the_next_renewal(
+        self,
+        fake_server: str,
+        fake_renew_server: str,
+        tmp_path: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        new_base = "https://renew2.example"
+        identity = _identity_for_renew(
+            fake_server, fake_renew_server, tmp_path, f"renew-url:{new_base}"
+        )
+        result = identity_mod.renew(identity)
+        assert result is not None
+        assert result.renew_url == new_base
+
+        # A follow-up renewal must target the NEW base, not the old
+        # fake_renew_server (identity.enroll_url) -- new_base is
+        # unreachable in this test (no real listener), so the POST itself
+        # fails, but the constructed request URL proves which host+path it
+        # targeted before that failure (same spy-on-Request technique as
+        # TestBaseUrlTrailingSlash/TestRenewUrlSchemeGate elsewhere in this
+        # file).
+        request_calls: list[str] = []
+        real_request = identity_mod.urllib.request.Request
+
+        def spy_request(url: str, *a: object, **kw: object) -> object:
+            request_calls.append(url)
+            return real_request(url, *a, **kw)
+
+        monkeypatch.setattr(identity_mod.urllib.request, "Request", spy_request)
+
+        follow_up = identity_mod.renew(result)
+
+        assert follow_up is None  # new_base is unreachable -- expected
+        assert request_calls == [f"{new_base}/v1/renew"]
+
+    def test_renew_without_renew_url_in_response_leaves_absent_value_unchanged(
+        self, fake_server: str, fake_renew_server: str, tmp_path: object
+    ) -> None:
+        # The "renew-ok" scenario's response never carries renew_url -- a
+        # renewal must not invent one when the identity never had one.
+        identity = _identity_for_renew(fake_server, fake_renew_server, tmp_path, "renew-ok")
+        assert identity.renew_url is None
+
+        result = identity_mod.renew(identity)
+
+        assert result is not None
+        assert result.renew_url is None
+        doc = yaml.safe_load((result.key_path.parent / "identity.yaml").read_text())
+        assert "renew_url" not in doc
+
+    def test_renew_without_renew_url_in_response_preserves_existing_value(
+        self, fake_server: str, fake_renew_server: str, tmp_path: object
+    ) -> None:
+        # Now the identity already HAS a renew_url (from a prior rotation);
+        # a subsequent renewal whose response omits renew_url entirely must
+        # not wipe it back to None -- absent means "no change", not "clear".
+        # The rotation target is fake_renew_server's OWN base (reachable),
+        # not an inert example.com host, so the follow-up renewal below can
+        # actually complete and prove the value survives it unchanged.
+        identity = _identity_for_renew(
+            fake_server, fake_renew_server, tmp_path, f"renew-url:{fake_renew_server}"
+        )
+        rotated = identity_mod.renew(identity)
+        assert rotated is not None
+        assert rotated.renew_url == fake_renew_server
+
+        again = dataclasses.replace(rotated, robot_id="renew-ok")
+        result = identity_mod.renew(again)
+
+        assert result is not None
+        assert result.renew_url == fake_renew_server  # unchanged, not wiped
+        doc = yaml.safe_load((result.key_path.parent / "identity.yaml").read_text())
+        assert doc["renew_url"] == fake_renew_server
+
+    def test_failed_renewal_leaves_renew_url_untouched(
+        self, fake_server: str, fake_renew_server: str, tmp_path: object
+    ) -> None:
+        new_base = "https://renew2.example"
+        identity = _identity_for_renew(
+            fake_server, fake_renew_server, tmp_path, f"renew-url:{new_base}"
+        )
+        rotated = identity_mod.renew(identity)
+        assert rotated is not None
+        assert rotated.renew_url == new_base
+
+        failing = dataclasses.replace(rotated, robot_id="renew-501", enroll_url=fake_renew_server)
+        result = identity_mod.renew(failing)
+
+        assert result is None
+        doc = yaml.safe_load((failing.key_path.parent / "identity.yaml").read_text())
+        assert doc["renew_url"] == new_base  # a failed attempt never touches it
+
 
 class TestEnrollUrlSchemeGate:
     """Codex review (3909074259): enroll() only checked that enroll_url was
@@ -1018,9 +1136,7 @@ class TestBaseUrlTrailingSlash:
         tmp_path: object,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        identity = _identity_for_renew(
-            fake_server, f"{fake_renew_server}/", tmp_path, "renew-ok"
-        )
+        identity = _identity_for_renew(fake_server, f"{fake_renew_server}/", tmp_path, "renew-ok")
         assert identity.enroll_url == f"{fake_renew_server}/"  # renew_url absent -> falls back
 
         captured_urls: list[str] = []
@@ -1579,6 +1695,143 @@ class TestRenewNeverRaises:
         assert "last_renewal_attempt_at" in doc  # even an unexpected failure records the attempt
         warnings_ = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert warnings_
+
+
+class TestDeleteIdentity:
+    """delete_identity() is the ONLY deletion path unenroll uses (see the brief).
+
+    It must: (1) be idempotent on a directory with no identity.yaml, (2)
+    sweep both the pointer set (from identity.yaml, when parsable) and the
+    module's own renewal-orphan naming patterns, (3) never unlink anything
+    before every pointer-set path has passed a resolved-containment check
+    against `directory`, and (4) tolerate a corrupt identity.yaml (still
+    remove what it safely can).
+    """
+
+    def test_delete_after_enroll_removes_all_four_files_and_the_empty_directory(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        assert directory.is_dir()
+
+        deleted = identity_mod.delete_identity(directory)
+
+        assert deleted == sorted(["robot.key", "robot.crt", "ca.crt", "identity.yaml"])
+        assert not directory.exists()
+
+    def test_delete_after_renewal_and_planted_orphans_removes_versioned_and_orphan_files(
+        self, fake_server: str, fake_renew_server: str, tmp_path: object
+    ) -> None:
+        identity = _identity_for_renew(fake_server, fake_renew_server, tmp_path, "renew-ok")
+        directory = identity.key_path.parent
+        result = identity_mod.renew(identity)
+        assert result is not None
+
+        # Renewal orphans identity.yaml no longer points at (e.g. left
+        # behind by a crash between step 1 and step 2 of a DIFFERENT
+        # renewal attempt) -- planted directly here rather than relying on
+        # renew()'s own best-effort cleanup, which already removes its own
+        # superseded files.
+        (directory / "robot-111.key").write_bytes(b"orphan-key")
+        (directory / "ca-222.crt").write_bytes(b"orphan-ca")
+
+        deleted = identity_mod.delete_identity(directory)
+
+        assert result.key_path.name in deleted
+        assert result.cert_path.name in deleted
+        assert result.ca_path.name in deleted
+        assert "identity.yaml" in deleted
+        assert "robot-111.key" in deleted
+        assert "ca-222.crt" in deleted
+        assert not directory.exists()
+
+    def test_traversal_pointer_raises_and_deletes_nothing(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        victim = tmp_path / "victim.key"
+        victim.write_bytes(b"victim-data")
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        doc["key_file"] = "../victim.key"
+        (directory / "identity.yaml").write_text(yaml.safe_dump(doc))
+
+        with pytest.raises(ValueError, match="escapes"):
+            identity_mod.delete_identity(directory)
+
+        assert victim.exists()
+        assert victim.read_bytes() == b"victim-data"
+        assert (directory / "identity.yaml").exists()
+        assert (directory / "robot.crt").exists()
+        assert (directory / "ca.crt").exists()
+
+    def test_symlinked_orphan_pattern_file_pointing_outside_is_skipped_target_intact(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        outside_target = tmp_path / "outside.key"
+        outside_target.write_bytes(b"outside-data")
+        escaping_symlink = directory / "robot-333.key"
+        escaping_symlink.symlink_to(outside_target)
+
+        deleted = identity_mod.delete_identity(directory)
+
+        assert outside_target.exists()
+        assert outside_target.read_bytes() == b"outside-data"
+        assert escaping_symlink.is_symlink()  # the escaping link itself is left alone
+        assert "robot-333.key" not in deleted
+        # The legitimate identity files are still cleaned up -- one
+        # escaping pattern-glob entry doesn't block the rest.
+        assert "robot.key" in deleted
+        assert "robot.crt" in deleted
+        assert "ca.crt" in deleted
+        assert "identity.yaml" in deleted
+        # The leftover symlink keeps the directory non-empty, so the
+        # best-effort rmdir() is a no-op (swallowed OSError).
+        assert directory.exists()
+
+    def test_missing_identity_yaml_returns_empty_list_and_does_not_raise(
+        self, tmp_path: object
+    ) -> None:
+        assert identity_mod.delete_identity(tmp_path / "never-enrolled") == []
+
+    def test_missing_identity_yaml_is_idempotent_on_repeat_calls(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        identity_mod.delete_identity(directory)
+        assert identity_mod.delete_identity(directory) == []  # unenroll's repeat call
+
+    def test_corrupt_identity_yaml_still_deletes_pattern_set_files_no_raise(
+        self, fake_server: str, tmp_path: object
+    ) -> None:
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        (directory / "identity.yaml").write_text("not: valid: yaml: [")
+
+        deleted = identity_mod.delete_identity(directory)
+
+        assert "identity.yaml" in deleted
+        assert "robot.key" in deleted
+        assert "robot.crt" in deleted
+        assert "ca.crt" in deleted
+        assert not directory.exists()
+
+    def test_never_uses_shutil_rmtree(self, fake_server: str, tmp_path: object) -> None:
+        # Belt-and-braces against a future edit reaching for the "easy" full
+        # tree wipe -- delete_identity must only ever remove files it
+        # derived from the pointer set or the naming-pattern sweep.
+        directory = tmp_path / "identity"
+        identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        (directory / "unrelated-file.txt").write_bytes(b"leave me alone")
+
+        identity_mod.delete_identity(directory)
+
+        assert directory.exists()  # not empty (unrelated file survives) -- rmdir is a no-op
+        assert (directory / "unrelated-file.txt").exists()
 
 
 class TestFailedRenewalLeavesIdentityIntact:

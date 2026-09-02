@@ -8,18 +8,25 @@ import sys
 import time
 import types
 
-import pyarrow as pa
 import pytest
 
+from publish.conftest import (
+    FakePublisher,
+    FakeSink,
+    FakeSinkNoPrivateBuffers,
+    FakeWriter,
+    _fake_identity,
+    _imu_streams,
+    _imu_struct,
+    _wait_until,
+)
 from publish.test_identity import VALID_TOKEN, fake_renew_server, fake_server
 from src.sink.publish import StreamConfigError
 from src.sink.publish import identity as identity_mod
 from src.sink.publish import mqtt as publish_mqtt
 from src.sink.publish import service as service_mod
-from src.sink.publish.config import StreamsConfig
 from src.sink.publish.identity import Identity
 from src.sink.publish.mqtt import MqttPublisher
-from src.sink.publish.publisher import Publisher, PublishError
 from src.sink.publish.service import FleetService
 from src.sink.publish.spool import Spool
 
@@ -34,122 +41,6 @@ def test_service_module_does_not_import_paho_eagerly(monkeypatch: pytest.MonkeyP
     monkeypatch.delitem(sys.modules, "src.sink.publish.service", raising=False)
     importlib.import_module("src.sink.publish.service")
     assert not any(m == "paho" or m.startswith("paho.") for m in sys.modules)
-
-
-class FakeWriter:
-    """Duck-typed stand-in for TopicBufferWriter: struct + set_tap recording."""
-
-    def __init__(self, struct: pa.StructType) -> None:
-        self._struct = struct
-        self._tap = None
-        self.tap_calls: list[object] = []
-
-    @property
-    def struct(self) -> pa.StructType:
-        return self._struct
-
-    def set_tap(self, tap: object) -> None:
-        self._tap = tap
-        self.tap_calls.append(tap)
-
-    def feed(self, topic: str, t: float, msg: dict) -> None:
-        """Simulate a live message arriving: fire the tap, like buffer.append() does."""
-        if self._tap is not None:
-            self._tap(topic, t, msg)
-
-
-class FakeSink:
-    """Duck-typed stand-in for TopicSink: a `_buffers` dict, like the real sink."""
-
-    def __init__(self, buffers: dict[str, FakeWriter]) -> None:
-        self._buffers = buffers
-
-    @property
-    def subscribed_topics(self) -> list[str]:
-        return list(self._buffers)
-
-
-class FakePublisher(Publisher):
-    """In-memory Publisher double: records every kind of publish; can fail on demand."""
-
-    def __init__(self, *, connect_should_fail: bool = False) -> None:
-        self.connect_should_fail = connect_should_fail
-        self.connect_calls = 0
-        self.schema_calls: list[dict] = []
-        self.channel_calls: list[dict] = []
-        self.heartbeat_calls: list[dict] = []
-        self.close_calls = 0
-        self.reconnects = 0
-        self._connected = False
-
-    def connect(self) -> None:
-        self.connect_calls += 1
-        if self.connect_should_fail:
-            raise PublishError("connect failed")
-        self._connected = True
-
-    def publish(
-        self, kind: str, payload: dict, *, retain: bool = False, timeout_s: float = 10.0
-    ) -> None:
-        if kind == "schema":
-            self.schema_calls.append(payload)
-        elif kind == "channels":
-            self.channel_calls.append(payload)
-        elif kind == "heartbeat":
-            self.heartbeat_calls.append(payload)
-        else:
-            raise AssertionError(f"FakePublisher: unexpected kind {kind!r}")
-
-    def close(self) -> None:
-        self.close_calls += 1
-        self._connected = False
-
-    @property
-    def connected(self) -> bool:
-        return self._connected
-
-
-def _imu_streams(**overrides: object) -> StreamsConfig:
-    config = {
-        "flush_interval_s": overrides.pop("flush_interval_s", 0.05),
-        "channels": [{"topic": "/imu", "fields": ["x"], "rate_hz": 50.0}],
-    }
-    config.update(overrides)
-    return StreamsConfig.build(config)
-
-
-def _imu_struct() -> pa.StructType:
-    return pa.struct([pa.field("x", pa.float64())])
-
-
-def _wait_until(predicate: object, timeout_s: float = 2.0) -> bool:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return predicate()
-
-
-def _fake_identity(tmp_path: pathlib.Path, expires_at: str = "2027-01-01T00:00:00Z") -> Identity:
-    """A well-formed Identity pointing at files that don't need to exist for these tests.
-
-    Nothing here does a live mTLS POST -- these tests monkeypatch
-    `service_mod.renew`/`service_mod.should_attempt_renewal` directly rather
-    than exercising the real transport (that's `test_identity.py`'s job), so
-    the cert/key/ca paths never actually need to be read.
-    """
-    directory = tmp_path / "identity"
-    return Identity(
-        tenant="acme",
-        robot_id="robot-42",
-        broker_url="mqtts://fleet.example.com:8883",
-        enroll_url="https://enroll.example.com",
-        expires_at=expires_at,
-        key_path=directory / "robot.key",
-        cert_path=directory / "robot.crt",
-        ca_path=directory / "ca.crt",
-    )
 
 
 class TestStart:
@@ -222,6 +113,81 @@ class TestStart:
         try:
             with pytest.raises(RuntimeError, match="already started"):
                 service.start()
+        finally:
+            service.stop()
+
+
+class TestSinkSurface:
+    """Task 3: `start()` builds taps via `sink.buffer_writer()`, never `sink._buffers`
+    directly, plus the `sink`/`streams`/`channels` accessors Task 4 needs."""
+
+    def test_start_works_with_a_sink_that_has_no_private_buffers_attribute(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSinkNoPrivateBuffers({"/imu": writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            assert writer._tap is not None
+        finally:
+            service.stop()
+
+    def test_sink_property_returns_the_constructor_sink(self, tmp_path: pathlib.Path) -> None:
+        sink = FakeSink({})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        assert service.sink is sink
+
+    def test_streams_property_returns_the_constructor_streams(self, tmp_path: pathlib.Path) -> None:
+        streams = _imu_streams()
+        service = FleetService(
+            sink=FakeSink({}),
+            streams=streams,
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        assert service.streams is streams
+
+    def test_channels_returns_the_resolved_schema_channels(self, tmp_path: pathlib.Path) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            assert service.channels == service._schema_payload["channels"]
+        finally:
+            service.stop()
+
+    def test_channels_returns_a_copy_not_a_live_reference(self, tmp_path: pathlib.Path) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            channels = service.channels
+            channels.append({"bogus": "entry"})
+            assert service.channels == service._schema_payload["channels"]
+            assert {"bogus": "entry"} not in service._schema_payload["channels"]
         finally:
             service.stop()
 
@@ -337,6 +303,72 @@ class TestPauseResume:
             assert service._router.is_alive()
         finally:
             service.stop()
+
+
+class TestPauseReasonAndPausedProperty:
+    """Task 4: `pause()`'s clean-stop heartbeat carries `reason="paused"` (spec §3);
+    `stop()` keeps the default `"stopped"`. `paused` exposes `_started and _paused`
+    for `control.fleet_status()`'s "running"/"paused"/"stopped" service state."""
+
+    def test_pause_closes_with_reason_paused(self, tmp_path: pathlib.Path) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher()
+        service = FleetService(
+            sink=sink, streams=_imu_streams(), publisher=pub, spool=Spool(tmp_path / "spool")
+        )
+        service.start()
+        try:
+            service.pause()
+            assert pub.close_reasons == ["paused"]
+        finally:
+            service.stop()
+
+    def test_stop_closes_with_reason_stopped(self, tmp_path: pathlib.Path) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher()
+        service = FleetService(
+            sink=sink, streams=_imu_streams(), publisher=pub, spool=Spool(tmp_path / "spool")
+        )
+        service.start()
+        service.stop()
+        assert pub.close_reasons == ["stopped"]
+
+    def test_pause_then_stop_records_both_reasons_in_order(self, tmp_path: pathlib.Path) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher()
+        service = FleetService(
+            sink=sink, streams=_imu_streams(), publisher=pub, spool=Spool(tmp_path / "spool")
+        )
+        service.start()
+        service.pause()
+        service.resume()
+        service.stop()
+        assert pub.close_reasons == ["paused", "stopped"]
+
+    def test_paused_property_truth_table(self, tmp_path: pathlib.Path) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher()
+        service = FleetService(
+            sink=sink, streams=_imu_streams(), publisher=pub, spool=Spool(tmp_path / "spool")
+        )
+        assert service.paused is False  # fresh: never started
+
+        service.start()
+        try:
+            assert service.paused is False  # started, not paused
+
+            service.pause()
+            assert service.paused is True  # paused
+
+            service.resume()
+            assert service.paused is False  # resumed
+        finally:
+            service.stop()
+        assert service.paused is False  # stopped
 
 
 class TestStatus:

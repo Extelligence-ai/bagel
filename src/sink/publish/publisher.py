@@ -41,8 +41,19 @@ class Publisher(abc.ABC):
         """Publish a message to the broker."""
 
     @abc.abstractmethod
-    def close(self) -> None:
-        """Close the broker connection."""
+    def close(self, reason: str = "stopped") -> None:
+        """Close the broker connection.
+
+        Args:
+            reason: Carried in the clean-stop heartbeat payload by
+                implementations that publish one before disconnecting (see
+                `MqttPublisher.close`) -- spec §3's `{"online": false,
+                "reason": ...}` shape. Defaults to `"stopped"`;
+                `FleetService.pause()` passes `"paused"` so a paused robot's
+                last-known-state is distinguishable from a genuinely stopped
+                one.
+
+        """
 
     @property
     @abc.abstractmethod

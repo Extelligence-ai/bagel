@@ -12,11 +12,10 @@ thread-lifecycle precedent: every long-running fleet thread is
 `daemon=True`, stops via a `threading.Event` (so `stop()`/`join()` never
 requires a sleep-based poll and returns as soon as the event is observed),
 and its `stop()` joins with a bounded timeout (5s) so a slow or stuck thread
-can never hang the caller -- mirrored from `TopicSink.close()`
-(`src/sink/base.py:323`)'s try/finally shape: `stop()`/`pause()` do their
-teardown in a `try` and always release the publisher session in a `finally`,
-so a failure partway through still leaves the service in a consistent,
-re-enterable state.
+can never hang the caller -- mirrored from `TopicSink.close()`'s try/finally
+shape: `stop()`/`pause()` do their teardown in a `try` and always release
+the publisher session in a `finally`, so a failure partway through still
+leaves the service in a consistent, re-enterable state.
 
 Startup/manifest wiring (deciding *when* to call `start()`) is explicitly
 out of scope here -- step 6 ruling, since it's conditioned on identity
@@ -90,6 +89,45 @@ class FleetService:
         self._started = False
         self._paused = False
 
+    # -- accessors ---------------------------------------------------------------
+
+    @property
+    def sink(self) -> object:
+        """The `TopicSink` this service taps.
+
+        Lets a caller (e.g. `startup.py`'s close hook) identity-compare a
+        sink against the one this service is running against, without
+        reaching into the private `_sink` attribute.
+        """
+        return self._sink
+
+    @property
+    def streams(self) -> StreamsConfig:
+        """The `StreamsConfig` this service was constructed with."""
+        return self._streams
+
+    @property
+    def channels(self) -> list[dict]:
+        """A copy of the resolved schema payload's `channels` list.
+
+        A copy, not a live reference: mutating the returned list must never
+        affect this service's own schema payload.
+        """
+        return list(self._schema_payload["channels"])
+
+    @property
+    def paused(self) -> bool:
+        """Whether this service is started AND currently paused.
+
+        `self._started and self._paused` rather than `self._paused` alone: a
+        fresh, never-started service also has `_paused = False`, so that bit
+        alone can't distinguish "never started" from "resumed" -- both would
+        read `False` either way here, but requiring `_started` too keeps this
+        property's contract explicit for `control.fleet_status()`, which
+        derives its `"running"` vs `"paused"` service state from this.
+        """
+        return self._started and self._paused
+
     # -- lifecycle -------------------------------------------------------------
 
     def start(self) -> None:
@@ -111,12 +149,8 @@ class FleetService:
             raise RuntimeError("FleetService already started")
         require_fleet()
         configured_topics = {rule.topic for rule in self._streams.channels}
-        # TopicSink exposes no public per-topic buffer accessor (only the
-        # aggregate `subscribed_topics` list), so this reaches into `_buffers`
-        # directly -- same attribute name a real TopicSink and this module's
-        # FakeSink test doubles both use.
         structs = {
-            topic: self._sink._buffers[topic].struct
+            topic: self._sink.buffer_writer(topic).struct
             for topic in configured_topics
             if topic in self._sink.subscribed_topics
         }
@@ -137,7 +171,7 @@ class FleetService:
             ],
         }
         self._writers = {
-            topic: self._sink._buffers[topic]
+            topic: self._sink.buffer_writer(topic)
             for topic in sorted({channel.source_topic for channel in resolved})
         }
 
@@ -173,7 +207,9 @@ class FleetService:
         Idempotent: a no-op if not started or already paused. `discard=True`
         additionally acks the channels lane up to its last written seq,
         dropping any still-unacked backlog (events/heartbeat are never-drop
-        lanes and are left untouched).
+        lanes and are left untouched). Closes the publisher with
+        `reason="paused"` (spec §3), so the retained clean-stop heartbeat a
+        broker-side subscriber sees reads distinctly from a genuine `stop()`.
         """
         if not self._started or self._paused:
             return
@@ -182,7 +218,7 @@ class FleetService:
             self._heartbeat.stop()
         if self._router is not None:
             self._router.stop()
-        self._publisher.close()
+        self._publisher.close(reason="paused")
         if discard:
             last_seq = self._spool.next_seq("channels") - 1
             self._spool.ack("channels", last_seq)

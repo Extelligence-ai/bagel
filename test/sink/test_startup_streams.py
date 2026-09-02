@@ -458,6 +458,90 @@ class TestFleetFailures:
         assert startup._FLEET_SERVICE is None
 
 
+class TestSinkCloseStopsFleetService:
+    """Task 3: `TopicSink.close()` -> `FleetService.stop()` coupling (spec §2; step 6's
+    ruling B retired) -- wired via `base.register_close_hook`."""
+
+    def test_closing_the_fleet_sink_stops_the_service(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+        monkeypatch.setattr(startup.MqttPublisher, "connect", lambda self: None)
+
+        closed_publishers: list[object] = []
+        real_close = startup.MqttPublisher.close
+
+        def spy_close(self: object) -> None:
+            closed_publishers.append(self)
+            real_close(self)
+
+        monkeypatch.setattr(startup.MqttPublisher, "close", spy_close)
+
+        fake = FakePahoClient()
+        fake.retained = {"robot/telemetry": [b'{"speed": 1.5, "t": 100.0}']}
+        monkeypatch.setattr(sink_mqtt.paho, "Client", lambda **_: fake)
+
+        entry = _subscription_entry("manifest.test", "robot/telemetry")
+        manifest = {
+            "subscriptions": [entry],
+            "streams": {
+                "channels": [{"topic": "robot/telemetry", "fields": ["speed"], "rate_hz": 1}]
+            },
+        }
+        manifest_file = _write_manifest(tmp_path, manifest)
+
+        reports = startup.start(manifest_file)
+        assert reports[-1] == {"fleet": "started"}
+        service = startup.fleet_service()
+        assert service is not None
+        sink = service.sink
+
+        sink.close()
+
+        assert startup.fleet_service() is None
+        assert service._publisher in closed_publishers
+
+    def test_closing_an_unrelated_sink_leaves_the_service_running(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+        monkeypatch.setattr(startup.MqttPublisher, "connect", lambda self: None)
+
+        fake = FakePahoClient()
+        fake.retained = {"robot/telemetry": [b'{"speed": 1.5, "t": 100.0}']}
+        monkeypatch.setattr(sink_mqtt.paho, "Client", lambda **_: fake)
+
+        entry = _subscription_entry("manifest.test", "robot/telemetry")
+        manifest = {
+            "subscriptions": [entry],
+            "streams": {
+                "channels": [{"topic": "robot/telemetry", "fields": ["speed"], "rate_hz": 1}]
+            },
+        }
+        manifest_file = _write_manifest(tmp_path, manifest)
+
+        reports = startup.start(manifest_file)
+        assert reports[-1] == {"fleet": "started"}
+        service = startup.fleet_service()
+        assert service is not None
+
+        other_fake = FakePahoClient()
+        monkeypatch.setattr(sink_mqtt.paho, "Client", lambda **_: other_fake)
+        unrelated_sink = sink_mqtt.TopicSink(
+            host="unrelated.test",
+            port=next(_PORT_COUNTER),
+            discovery_seconds=0.0,
+            timestamp_field="t",
+        )
+        try:
+            unrelated_sink.close()
+
+            assert startup.fleet_service() is service
+            assert service._started is True
+        finally:
+            service.stop()
+
+
 class TestNoStreamsKey:
     def test_manifest_without_streams_key_produces_no_fleet_report_entry(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch

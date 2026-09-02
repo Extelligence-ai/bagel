@@ -456,9 +456,7 @@ class TestStreamRouterThread:
 
 
 class TestTickChunksOversizedFlush:
-    def test_tick_spools_each_chunk_with_its_own_seq_in_order(
-        self, tmp_path: pathlib.Path
-    ) -> None:
+    def test_tick_spools_each_chunk_with_its_own_seq_in_order(self, tmp_path: pathlib.Path) -> None:
         # Codex review (3909414784): every chunk of a capped flush must get
         # its own seq and its own spool append within one tick, not just the
         # first chunk. connect_should_fail keeps _pump from acking anything,

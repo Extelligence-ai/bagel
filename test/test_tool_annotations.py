@@ -7,6 +7,11 @@ whether caller-selected external endpoints can be reached (open-world).
 A new tool fails here until it classifies itself.
 """
 
+import importlib
+import sys
+
+import pytest
+
 import server
 
 # name: (read_only, idempotent, destructive, open_world)
@@ -30,6 +35,13 @@ EXPECTED = {
     "export_for_lichtblick": (False, True, False, False),
     "export_for_lerobot": (False, True, False, False),
     "snap_hardware": (False, False, False, False),
+    "enroll_fleet_identity": (False, False, False, True),
+    "stream_live_topics": (False, False, False, True),
+    "stop_live_streams": (False, True, False, True),
+    "pause_fleet_streaming": (False, True, False, True),
+    "resume_fleet_streaming": (False, True, False, True),
+    "describe_stream_status": (True, True, False, False),
+    "unenroll_fleet_identity": (False, True, True, False),
 }
 
 
@@ -52,3 +64,30 @@ def test_annotations_match_the_declared_matrix() -> None:
             annotations.openWorldHint,
         )
         assert got == (read_only, idempotent, destructive, open_world), name
+
+
+def test_server_module_does_not_import_paho_or_cryptography_eagerly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Lazy-import regression: server.py now imports `control` at module scope
+    (alongside the existing `fleet_identity` import) to register the fleet
+    tools below -- neither drags paho or cryptography in eagerly (see each
+    module's own docstring), mirroring test_control.py's/test_service.py's
+    sweep idiom.
+    """
+    stray = [
+        m
+        for m in sys.modules
+        if m == "paho"
+        or m.startswith("paho.")
+        or m == "cryptography"
+        or m.startswith("cryptography.")
+    ]
+    if stray:
+        pytest.skip(f"paho/cryptography already preloaded by another plugin: {stray}")
+    monkeypatch.delitem(sys.modules, "server", raising=False)
+    importlib.import_module("server")
+    assert not any(
+        m == "paho" or m.startswith("paho.") or m == "cryptography" or m.startswith("cryptography.")
+        for m in sys.modules
+    )

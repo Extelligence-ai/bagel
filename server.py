@@ -28,6 +28,7 @@ from src.pipeline import (
 )
 from src.pipeline.tasks.waffle import snap as waffle_snap
 from src.sink import startup
+from src.sink.publish import control as fleet_control
 from src.sink.publish import identity as fleet_identity
 
 server = mcp_compat.create_server(
@@ -1127,6 +1128,344 @@ def snap_hardware(directory: str = ".") -> dict[str, Any]:
         f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": str(form)}
     )
     return {"form": str(form), **factory.metadata}
+
+
+@server.tool(
+    title="Enroll this robot with a fleet broker",
+    description=(
+        "Use this tool to enroll this robot with a fleet broker using a one-time "
+        "enrollment token issued out of band. The token is single-use and is "
+        "never stored on disk or logged: it is sent once, in the enrollment "
+        "request body, and forgotten. If the server responds 200 but this "
+        "process crashes before finishing, the token has already been consumed "
+        "server-side -- the operator must re-issue a fresh token and retry "
+        "(mirrors the enrollment runbook)."
+    ),
+    annotations=mcp_compat.tool_annotations(
+        read_only=False, idempotent=False, destructive=False, open_world=True
+    ),
+)
+def enroll_fleet_identity(token: str, enroll_url: str) -> dict[str, Any]:
+    """Enroll this robot with a fleet broker: keygen, CSR, store identity.
+
+    Generates a keypair locally (the private key never leaves this robot),
+    submits a CSR to `enroll_url` alongside the one-time `token`, and stores
+    the returned identity on disk. Already enrolled -> raises; run
+    `unenroll_fleet_identity` first. If a streaming service is already
+    running on the dev-placeholder identity, enrolling leaves it unchanged;
+    the new identity takes effect on the next `stream_live_topics`/
+    `stop_live_streams` restart.
+
+    Args:
+        token (str): One-time enrollment token issued out of band. Sent once
+            in the request body; never stored or logged.
+        enroll_url (str): Base URL of the fleet broker's enrollment endpoint
+            (e.g. ``https://fleet.example.com``); ``/v1/enroll`` is appended.
+
+    Returns:
+        dict[str, Any]: ``tenant``, ``robot_id``, ``broker_url``, and
+            ``expires_at`` for the new identity. Never the token, never key
+            material or paths.
+
+    Raises:
+        EnrollmentError: Already enrolled, a rejected/expired token, a
+            malformed response, or a transport failure.
+        FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
+        FleetNotInstalledError: The `fleet` dependency group isn't installed.
+
+    Examples:
+        As an LLM prompt:
+            Enroll this robot with the fleet broker using the token the
+            operator gave me.
+
+        As a Python call:
+            >>> enroll_fleet_identity("abc123", "https://fleet.example.com")
+
+    """
+    return fleet_control.enroll_identity(token, enroll_url)
+
+
+@server.tool(
+    title="Start or update live streaming rules",
+    description=(
+        "Use this tool to add or replace channel and event rules that stream "
+        "data to a fleet broker in real time, then (re)start streaming with "
+        "the merged rule set. A channel rule projects fields (or a `lat`/`lon` "
+        "geo pair) off a topic at a capped rate; an event rule fires a named "
+        "predicate with optional pre/post capture windows. A matching "
+        "`topic`/`name` REPLACES the existing rule; anything new is appended."
+    ),
+    annotations=mcp_compat.tool_annotations(
+        read_only=False, idempotent=False, destructive=False, open_world=True
+    ),
+)
+def stream_live_topics(
+    channels: list[dict[str, Any]] | None = None,
+    events: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Add/replace channel and event streaming rules, restart, persist.
+
+    Every rule is validated before any state changes: an invalid entry
+    leaves a previously-running service completely untouched. Valid rules
+    are merged onto the currently running (or persisted) rule set and become
+    the new live streaming service; the merged set is also persisted back to
+    the manifest, if one is configured. Rule changes preserve paused state:
+    if the service was paused, it reconnects briefly to republish the
+    schema, then re-pauses -- it does not come back online.
+
+    Args:
+        channels (list[dict[str, Any]] | None, optional): Channel rules, in
+            the manifest `streams: channels:` shape. Each entry needs
+            `topic`, `rate_hz`, and exactly one of `fields` or `geo`, plus an
+            optional `as` rename map. For example, a fields rule:
+            ``{"topic": "/imu", "fields": ["orientation.w"], "rate_hz": 10}``;
+            a geo rule: ``{"topic": "/gps", "geo": {"lat": "latitude", "lon":
+            "longitude"}, "rate_hz": 1}``. Defaults to None (no channel
+            changes).
+        events (list[dict[str, Any]] | None, optional): Event rules, in the
+            manifest `streams: events:` shape: `name`, `topic`, `predicate`,
+            and optional `pre_seconds`/`post_seconds`/`debounce_seconds`/
+            `artifact`. Defaults to None (no event changes).
+
+    Returns:
+        dict[str, Any]: ``service`` ("running" or "paused" -- "paused" when
+            the service this replaced was paused), the resolved
+            ``channels``, the ``events`` names, and whether the change was
+            ``persisted`` to the manifest.
+
+    Raises:
+        StreamConfigError: An invalid rule, or no viable broker/covering
+            sink for the merged topics.
+        FleetNotEnrolledError: No broker configured and this robot isn't
+            enrolled.
+        FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
+        FleetNotInstalledError: The `fleet` dependency group isn't installed.
+
+    Examples:
+        As an LLM prompt:
+            Start streaming IMU orientation at 10 Hz and GPS position at 1 Hz.
+
+        As a Python call:
+            >>> stream_live_topics(channels=[{"topic": "/imu",
+            ...     "fields": ["orientation.w"], "rate_hz": 10}])
+
+    """
+    return fleet_control.stream_topics(channels, events)
+
+
+@server.tool(
+    title="Stop live streaming rules",
+    description=(
+        "Use this tool to remove channel and event rules by name from the "
+        "live streaming service, then restart with what remains (or leave a "
+        "running service alone when nothing matched)."
+    ),
+    annotations=mcp_compat.tool_annotations(
+        read_only=False, idempotent=True, destructive=False, open_world=True
+    ),
+)
+def stop_live_streams(
+    channels: list[str] | None = None,
+    events: list[str] | None = None,
+) -> dict[str, Any]:
+    """Remove channel/event rules by name, restart, persist.
+
+    A restart (when something changed and a service was running) preserves
+    paused state: if the service was paused, it reconnects briefly to
+    republish the schema, then re-pauses -- it does not come back online.
+
+    Args:
+        channels (list[str] | None, optional): Channel names to remove, as
+            reported by `describe_stream_status` (the resolved/renamed
+            channel name, not the topic). Unknown names are no-ops. Defaults
+            to None.
+        events (list[str] | None, optional): Event rule names to remove.
+            Unknown names are no-ops. Defaults to None.
+
+    Returns:
+        dict[str, Any]: ``service`` ("running", "paused", or "stopped" --
+            "paused" when a restart happened and the service it replaced was
+            paused), the remaining ``channels``, the remaining ``events``
+            names, whether anything ``changed``, and whether that change was
+            ``persisted``.
+
+    Raises:
+        FleetNotEnrolledError | StreamConfigError: Only reachable when
+            something changed and a service is running -- and, per the
+            failure-outcome contract, such a failure leaves the previously
+            running service running, untouched.
+        FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
+        FleetNotInstalledError: The `fleet` dependency group isn't installed.
+
+    Examples:
+        As an LLM prompt:
+            Stop streaming the IMU channel but leave GPS running.
+
+        As a Python call:
+            >>> stop_live_streams(channels=["imu.orientation.w"])
+
+    """
+    return fleet_control.stop_streams(channels, events)
+
+
+@server.tool(
+    title="Pause fleet streaming",
+    description=(
+        "Use this tool to take the live streaming connection to a fleet "
+        "broker offline while keeping this robot's identity and streaming "
+        "rules intact, so `resume_fleet_streaming` can bring it back exactly "
+        "as it was."
+    ),
+    annotations=mcp_compat.tool_annotations(
+        read_only=False, idempotent=True, destructive=False, open_world=True
+    ),
+)
+def pause_fleet_streaming(discard: bool = False) -> dict[str, Any]:
+    """Pause the live streaming service, if any: go offline, keep identity + rules.
+
+    Args:
+        discard (bool, optional): When True, additionally empties the
+            channel lane's still-unacked spool backlog. The events and
+            heartbeat lanes are never-drop and are left untouched regardless.
+            Defaults to False.
+
+    Returns:
+        dict[str, Any]: ``{"service": "stopped", "changed": False}`` when no
+            service is running (an idempotent no-op). Otherwise ``{"service":
+            "paused", "changed": bool, "discarded": discard}``, where
+            ``changed`` is True only when this call actually paused a
+            running service (calling this again on an already-paused service
+            reports ``changed: False``).
+
+    Raises:
+        FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
+        FleetNotInstalledError: The `fleet` dependency group isn't installed.
+
+    Examples:
+        As an LLM prompt:
+            Pause fleet streaming, and drop any backlog we haven't sent yet.
+
+        As a Python call:
+            >>> pause_fleet_streaming(discard=True)
+
+    """
+    return fleet_control.pause_streaming(discard=discard)
+
+
+@server.tool(
+    title="Resume fleet streaming",
+    description=(
+        "Use this tool to bring a paused streaming connection to a fleet "
+        "broker back online, mirroring `pause_fleet_streaming`."
+    ),
+    annotations=mcp_compat.tool_annotations(
+        read_only=False, idempotent=True, destructive=False, open_world=True
+    ),
+)
+def resume_fleet_streaming() -> dict[str, Any]:
+    """Resume the live streaming service, if any: mirror image of `pause_fleet_streaming`.
+
+    Returns:
+        dict[str, Any]: ``{"service": "stopped", "changed": False}`` when no
+            service is running (an idempotent no-op). Otherwise ``{"service":
+            "running", "changed": bool}``, where ``changed`` is True only
+            when this call actually resumed a paused service (calling this
+            again on an already-running service reports ``changed: False``).
+
+    Raises:
+        FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
+        FleetNotInstalledError: The `fleet` dependency group isn't installed.
+
+    Examples:
+        As an LLM prompt:
+            Resume fleet streaming now that the connection issue is fixed.
+
+        As a Python call:
+            >>> resume_fleet_streaming()
+
+    """
+    return fleet_control.resume_streaming()
+
+
+@server.tool(
+    title="Describe fleet streaming status",
+    description=(
+        "Use this tool to check this robot's fleet-streaming state: whether "
+        "the fleet dependencies are installed, enabled, whether this robot is "
+        "enrolled, and what the live streaming service is currently doing. "
+        "This is the local source of truth -- it works and answers sanely in "
+        "every state, including when a fleet broker itself is unreachable."
+    ),
+    annotations=mcp_compat.tool_annotations(
+        read_only=True, idempotent=True, destructive=False, open_world=False
+    ),
+)
+def describe_stream_status() -> dict[str, Any]:
+    """Report this robot's fleet-streaming state.
+
+    Never raises: answers sanely whether the fleet dependency group is
+    installed, whether fleet streaming is enabled, whether this robot is
+    enrolled, or whether a streaming service is currently running -- useful
+    for diagnosing exactly one of those states without depending on a fleet
+    broker being reachable.
+
+    Returns:
+        dict[str, Any]: ``enabled``, ``installed``, ``enrolled`` (bools);
+            ``identity`` (tenant/robot_id/broker_url/cert_expires_at/
+            renew_url, or None -- never key material or paths); ``service``
+            ("running"/"paused"/"stopped"); ``channels`` (resolved channel
+            descriptors, `[]` if no service); ``status`` (the running
+            service's counters block, or None).
+
+    Examples:
+        As an LLM prompt:
+            Is this robot streaming to the fleet broker right now?
+
+        As a Python call:
+            >>> describe_stream_status()
+
+    """
+    return fleet_control.fleet_status()
+
+
+@server.tool(
+    title="Unenroll this robot from its fleet broker",
+    description=(
+        "Use this tool to permanently remove this robot's fleet identity and "
+        "streaming rules, stopping any live streaming service first. The "
+        "robot returns to local-only operation; re-enrolling later requires a "
+        "fresh enrollment token."
+    ),
+    annotations=mcp_compat.tool_annotations(
+        read_only=False, idempotent=True, destructive=True, open_world=False
+    ),
+)
+def unenroll_fleet_identity() -> dict[str, Any]:
+    """Unenroll this robot: stop any live service, delete identity, clear manifest streams.
+
+    Best-effort stops the live streaming service, if any. Deletes exactly
+    the identity file set (key, cert, CA cert, `identity.yaml`) and, if a
+    manifest is configured, removes its `streams:` section -- nothing else
+    in the manifest (e.g. `subscriptions:`) is touched. Idempotent: calling
+    this again when nothing is enrolled returns `deleted: []` without error.
+
+    Returns:
+        dict[str, Any]: ``deleted`` (the identity file basenames removed, `[]`
+            if none were present), ``streams_removed`` (whether the manifest
+            was rewritten to drop its `streams:` section -- True whenever a
+            manifest is configured, regardless of whether it previously had a
+            `streams:` section to remove; always False when
+            `STARTUP_PIPELINES_FILE` is unset), and ``service`` ("stopped").
+
+    Examples:
+        As an LLM prompt:
+            Unenroll this robot from the fleet broker entirely.
+
+        As a Python call:
+            >>> unenroll_fleet_identity()
+
+    """
+    return fleet_control.unenroll_identity()
 
 
 if __name__ == "__main__":

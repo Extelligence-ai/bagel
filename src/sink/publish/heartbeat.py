@@ -44,7 +44,7 @@ def _pyproject_version(root: pathlib.Path | None = None) -> str:
     text = (root / "pyproject.toml").read_text(encoding="utf-8")
     match = _VERSION_LINE_RE.search(text)
     if match is None:
-        raise ValueError(f"no version = \"...\" line found in {root / 'pyproject.toml'}")
+        raise ValueError(f'no version = "..." line found in {root / "pyproject.toml"}')
     return match.group(1)
 
 
