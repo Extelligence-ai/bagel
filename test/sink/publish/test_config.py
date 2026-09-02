@@ -535,3 +535,235 @@ streams:
     def test_invalid_streams_raises_not_swallows(self) -> None:
         with pytest.raises(StreamConfigError):
             config.load_streams({"streams": {"channels": [{"topic": "/t", "rate_hz": 1}]}})
+
+
+class TestChannelName:
+    """`config.channel_name` -- the single formula both `resolve()` and
+    `control.stop_streams` derive a channel's name from, so it lives in one
+    place rather than being duplicated."""
+
+    def test_default_name_is_stem_dot_field(self) -> None:
+        rule = config.ChannelRule.build({"topic": "/nav/imu", "fields": ["x"], "rate_hz": 1})
+        assert config.channel_name(rule, "x") == "imu.x"
+
+    def test_renamed_field_uses_the_rename(self) -> None:
+        rule = config.ChannelRule.build(
+            {"topic": "/imu", "fields": ["x", "y"], "rate_hz": 1, "as": {"x": "accel.x"}}
+        )
+        assert config.channel_name(rule, "x") == "accel.x"
+        assert config.channel_name(rule, "y") == "imu.y"
+
+    def test_geo_default_name_uses_literal_geo_key(self) -> None:
+        rule = config.ChannelRule.build(
+            {"topic": "/nav/odom", "geo": {"lat": "a", "lon": "b"}, "rate_hz": 1}
+        )
+        assert config.channel_name(rule, "geo") == "odom.geo"
+
+    def test_geo_renamed_uses_the_rename(self) -> None:
+        rule = config.ChannelRule.build(
+            {
+                "topic": "/nav/odom",
+                "geo": {"lat": "a", "lon": "b"},
+                "rate_hz": 1,
+                "as": {"geo": "position"},
+            }
+        )
+        assert config.channel_name(rule, "geo") == "position"
+
+    def test_matches_resolve_s_own_names(self) -> None:
+        struct = pa.struct([pa.field("x", pa.float64())])
+        rule = config.ChannelRule.build(
+            {"topic": "/imu", "fields": ["x"], "rate_hz": 1, "as": {"x": "accel.x"}}
+        )
+        cfg = config.StreamsConfig(channels=[rule])
+        (resolved,) = cfg.resolve({"/imu": struct})
+        assert resolved.name == config.channel_name(rule, "x")
+
+
+class TestChannelRuleToManifest:
+    def test_fields_rule_round_trips(self) -> None:
+        rule = config.ChannelRule.build(
+            {"topic": "/imu", "fields": ["linear_acceleration.x"], "rate_hz": 5}
+        )
+        doc = rule.to_manifest()
+        assert doc == {"topic": "/imu", "fields": ["linear_acceleration.x"], "rate_hz": 5.0}
+        assert config.ChannelRule.build(doc) == rule
+
+    def test_geo_rule_with_alt_round_trips(self) -> None:
+        rule = config.ChannelRule.build(
+            {
+                "topic": "/nav/odom",
+                "geo": {"lat": "pose.x", "lon": "pose.y", "alt": "pose.z"},
+                "rate_hz": 1,
+            }
+        )
+        doc = rule.to_manifest()
+        assert doc == {
+            "topic": "/nav/odom",
+            "geo": {"lat": "pose.x", "lon": "pose.y", "alt": "pose.z"},
+            "rate_hz": 1.0,
+        }
+        assert config.ChannelRule.build(doc) == rule
+
+    def test_renamed_rule_carries_as(self) -> None:
+        rule = config.ChannelRule.build(
+            {
+                "topic": "/odom",
+                "geo": {"lat": "pose.x", "lon": "pose.y"},
+                "rate_hz": 1,
+                "as": {"geo": "position"},
+            }
+        )
+        doc = rule.to_manifest()
+        assert doc["as"] == {"geo": "position"}
+        assert config.ChannelRule.build(doc) == rule
+
+    def test_as_absent_when_no_renames(self) -> None:
+        rule = config.ChannelRule.build({"topic": "/imu", "fields": ["x"], "rate_hz": 1})
+        assert "as" not in rule.to_manifest()
+
+    def test_output_contains_only_manifest_shape_keys(self) -> None:
+        rule = config.ChannelRule.build(
+            {
+                "topic": "/imu",
+                "fields": ["x", "y"],
+                "rate_hz": 1,
+                "as": {"x": "accel.x"},
+            }
+        )
+        doc = rule.to_manifest()
+        assert set(doc) <= {"topic", "fields", "geo", "rate_hz", "as"}
+        config.ChannelRule.build(doc)  # unknown keys would raise
+
+
+class TestEventRuleToManifest:
+    def test_full_event_round_trips(self) -> None:
+        rule = config.EventRule.build(
+            {
+                "name": "hard_decel",
+                "topic": "/imu",
+                "predicate": "true",
+                "pre_seconds": 10,
+                "post_seconds": 10,
+                "debounce_seconds": 2,
+                "artifact": "mcap",
+            }
+        )
+        doc = rule.to_manifest()
+        assert doc == {
+            "name": "hard_decel",
+            "topic": "/imu",
+            "predicate": "true",
+            "pre_seconds": 10.0,
+            "post_seconds": 10.0,
+            "debounce_seconds": 2.0,
+            "artifact": "mcap",
+        }
+        assert config.EventRule.build(doc) == rule
+
+    def test_minimal_event_omits_zero_windows_and_artifact(self) -> None:
+        rule = config.EventRule.build({"name": "n", "topic": "/t", "predicate": "true"})
+        doc = rule.to_manifest()
+        assert doc == {"name": "n", "topic": "/t", "predicate": "true"}
+        assert config.EventRule.build(doc) == rule
+
+    def test_output_contains_only_manifest_shape_keys(self) -> None:
+        rule = config.EventRule.build(
+            {"name": "n", "topic": "/t", "predicate": "true", "pre_seconds": 1}
+        )
+        doc = rule.to_manifest()
+        assert set(doc) <= {
+            "name",
+            "topic",
+            "predicate",
+            "pre_seconds",
+            "post_seconds",
+            "debounce_seconds",
+            "artifact",
+        }
+        config.EventRule.build(doc)  # unknown keys would raise
+
+
+class TestStreamsConfigToManifest:
+    def test_empty_config_round_trips(self) -> None:
+        cfg = config.StreamsConfig()
+        doc = cfg.to_manifest()
+        assert doc == {"channels": [], "events": []}
+        assert config.StreamsConfig.build(doc) == cfg
+
+    def test_non_default_broker_and_flush_round_trip(self) -> None:
+        cfg = config.StreamsConfig.build(
+            {"broker": "mqtts://fleet.example.com:8883", "flush_interval_s": 2, "channels": []}
+        )
+        doc = cfg.to_manifest()
+        assert doc["broker"] == "mqtts://fleet.example.com:8883"
+        assert doc["flush_interval_s"] == 2.0
+        assert config.StreamsConfig.build(doc) == cfg
+
+    def test_default_broker_and_flush_are_omitted(self) -> None:
+        cfg = config.StreamsConfig.build({"channels": []})
+        doc = cfg.to_manifest()
+        assert "broker" not in doc
+        assert "flush_interval_s" not in doc
+
+    @pytest.mark.parametrize(
+        "cfg_dict",
+        [
+            {"channels": [{"topic": "/imu", "fields": ["x"], "rate_hz": 5}]},
+            {
+                "channels": [
+                    {
+                        "topic": "/nav/odom",
+                        "geo": {"lat": "pose.x", "lon": "pose.y", "alt": "pose.z"},
+                        "rate_hz": 1,
+                    }
+                ]
+            },
+            {
+                "channels": [
+                    {
+                        "topic": "/imu",
+                        "fields": ["x"],
+                        "rate_hz": 5,
+                        "as": {"x": "accel.x"},
+                    }
+                ]
+            },
+            {
+                "channels": [],
+                "events": [
+                    {
+                        "name": "hard_decel",
+                        "topic": "/imu",
+                        "predicate": "true",
+                        "pre_seconds": 10,
+                        "post_seconds": 10,
+                        "debounce_seconds": 2,
+                        "artifact": "mcap",
+                    }
+                ],
+            },
+            {"channels": [], "events": []},
+            {
+                "broker": "mqtts://fleet.example.com:8883",
+                "flush_interval_s": 3,
+                "channels": [{"topic": "/imu", "fields": ["x"], "rate_hz": 5}],
+            },
+        ],
+    )
+    def test_build_to_manifest_round_trips_for_any_built_config(self, cfg_dict: dict) -> None:
+        cfg = config.StreamsConfig.build(cfg_dict)
+        assert config.StreamsConfig.build(cfg.to_manifest()) == cfg
+
+    def test_output_contains_only_manifest_shape_keys(self) -> None:
+        cfg = config.StreamsConfig.build(
+            {
+                "broker": "mqtts://fleet.example.com:8883",
+                "flush_interval_s": 2,
+                "channels": [{"topic": "/imu", "fields": ["x"], "rate_hz": 5}],
+                "events": [{"name": "n", "topic": "/imu", "predicate": "true"}],
+            }
+        )
+        doc = cfg.to_manifest()
+        assert set(doc) <= {"broker", "flush_interval_s", "channels", "events"}
+        config.StreamsConfig.build(doc)  # unknown keys would raise

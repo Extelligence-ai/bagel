@@ -1,23 +1,42 @@
-"""control.py: status/pause/resume lifecycle control (fleet streaming step 7, Task 4).
+"""control.py: enroll/unenroll/status/pause/resume/stream-rule control (fleet streaming step 7).
 
 `fleet_status()` calls NO gate -- it is the local source of truth in every
-state (uninstalled, disabled, unenrolled, service down); `pause_streaming`/
-`resume_streaming` call `require_fleet()` first, so `FLEET_ENABLED=0` raises
-before the holder is ever touched.
+state (uninstalled, disabled, unenrolled, service down); `unenroll_identity()`
+is the other gate-free operation (it only makes the subsystem MORE inert).
+Every other operation here calls `require_fleet()` first, so `FLEET_ENABLED=0`
+raises before the holder is ever touched.
 """
 
+import importlib
 import pathlib
 import sys
 
+import pyarrow as pa
 import pytest
 import yaml
 
 from publish.conftest import FakePublisher, FakeSink, FakeWriter, _imu_streams, _imu_struct
+from publish.test_identity import VALID_TOKEN, fake_server
 from settings import settings
+from src.sink import base as sink_base
 from src.sink import startup
-from src.sink.publish import FleetDisabledError, FleetNotInstalledError, control
+from src.sink.publish import (
+    EnrollmentError,
+    FleetDisabledError,
+    FleetNotEnrolledError,
+    FleetNotInstalledError,
+    StreamConfigError,
+    config,
+    control,
+    identity,
+)
 from src.sink.publish.service import FleetService
 from src.sink.publish.spool import Spool
+
+# `fake_server` is imported only to be re-exported as a pytest fixture (used
+# by parameter name in TestEnrollIdentity, never referenced by name in this
+# module's own code) -- see test_service.py's identical idiom.
+__all__ = ["fake_server"]
 
 
 def _simulate_paho_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -89,12 +108,30 @@ def _running_service(
 def _isolated_fleet_state(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
     monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", None)
     startup.set_fleet_service(None)
     yield
     service = startup.fleet_service()
     if service is not None:
         service.stop()
     startup.set_fleet_service(None)
+
+
+@pytest.fixture(autouse=True)
+def _fake_mqtt_publisher(monkeypatch: pytest.MonkeyPatch) -> list[FakePublisher]:
+    """`control._restart_service` builds a real `MqttPublisher` -- swap it for a
+    `FakePublisher` so `stream_topics`/`stop_streams` tests never touch a real
+    socket. Harmless (never invoked) for tests that don't trigger a restart.
+    """
+    built: list[FakePublisher] = []
+
+    def factory(**_kwargs: object) -> FakePublisher:
+        pub = FakePublisher()
+        built.append(pub)
+        return pub
+
+    monkeypatch.setattr(control, "MqttPublisher", factory)
+    return built
 
 
 class TestFleetStatusNoGate:
@@ -175,6 +212,57 @@ class TestFleetStatusNoGate:
         status = control.fleet_status()
 
         assert status["service"] == "paused"
+
+    def test_load_identity_raising_between_checks_degrades_gracefully(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TOCTOU regression: `fleet_status()` must single-load `identity.load_identity`,
+        not check `is_enrolled()` and then separately `load_identity()`.
+
+        A stale `is_enrolled() -> True` immediately followed by a
+        `load_identity()` that raises (the identity was deleted/corrupted in
+        between) must never surface as an unhandled `FleetNotEnrolledError` --
+        `fleet_status()` never raises. Proven structurally: `is_enrolled` is
+        made to return a stale `True` while `load_identity` always raises --
+        a two-call implementation would propagate that raise; a single-load
+        try/except cannot, since it never consults `is_enrolled` at all.
+        """
+        monkeypatch.setattr(identity, "is_enrolled", lambda *_a, **_kw: True)
+
+        def _raise(*_a: object, **_kw: object) -> None:
+            raise FleetNotEnrolledError("deleted between checks")
+
+        monkeypatch.setattr(identity, "load_identity", _raise)
+
+        status = control.fleet_status()
+
+        assert status["enrolled"] is False
+        assert status["identity"] is None
+
+
+def test_control_module_does_not_import_paho_or_cryptography_eagerly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Lazy-import regression for control.py itself -- mirrors test_gate.py's/
+    test_service.py's idiom. control.py imports `connect`/`config`/`spool`/`mqtt`
+    (and `service`) at module scope; none of those may drag paho or cryptography
+    in eagerly either.
+    """
+    for name in [
+        m
+        for m in sys.modules
+        if m == "paho"
+        or m.startswith("paho.")
+        or m == "cryptography"
+        or m.startswith("cryptography.")
+    ]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.delitem(sys.modules, "src.sink.publish.control", raising=False)
+    importlib.import_module("src.sink.publish.control")
+    assert not any(
+        m == "paho" or m.startswith("paho.") or m == "cryptography" or m.startswith("cryptography.")
+        for m in sys.modules
+    )
 
 
 class TestPauseStreaming:
@@ -299,3 +387,406 @@ class TestResumeStreaming:
 
         with pytest.raises(FleetNotInstalledError):
             control.resume_streaming()
+
+
+def _assert_no_token_anywhere(obj: object, token: str) -> None:
+    """Recursively assert `token` never appears -- as a dict key or a substring
+    of any string value -- anywhere in `obj`."""
+    if isinstance(obj, dict):
+        assert "token" not in obj
+        for value in obj.values():
+            _assert_no_token_anywhere(value, token)
+    elif isinstance(obj, list):
+        for value in obj:
+            _assert_no_token_anywhere(value, token)
+    elif isinstance(obj, str):
+        assert token not in obj
+
+
+class TestEnrollIdentity:
+    def test_happy_path_writes_identity_under_tmp_directory(self, fake_server: str) -> None:
+        result = control.enroll_identity(VALID_TOKEN, fake_server)
+
+        directory = pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY)
+        assert (directory / "robot.key").is_file()
+        assert (directory / "robot.crt").is_file()
+        assert (directory / "ca.crt").is_file()
+        assert (directory / "identity.yaml").is_file()
+        assert result == {
+            "tenant": "acme",
+            "robot_id": "robot-42",
+            "broker_url": "mqtts://fleet.example.com:8883",
+            "expires_at": "2027-01-01T00:00:00Z",
+        }
+
+    def test_already_enrolled_raises_with_the_ruling_message(self) -> None:
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+
+        with pytest.raises(EnrollmentError, match="already enrolled") as exc_info:
+            control.enroll_identity("some-token", "https://enroll.example.com")
+
+        assert exc_info.value.status == 0
+
+    def test_result_dict_never_carries_the_token(self, fake_server: str) -> None:
+        result = control.enroll_identity(VALID_TOKEN, fake_server)
+        _assert_no_token_anywhere(result, VALID_TOKEN)
+
+    def test_disabled_raises_before_any_keygen(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def poison(*_a: object, **_kw: object) -> None:
+            raise AssertionError(
+                "generate_key_and_csr must not be reached: FLEET_ENABLED=0 gates first"
+            )
+
+        monkeypatch.setattr(identity, "generate_key_and_csr", poison)
+        monkeypatch.setattr(settings, "FLEET_ENABLED", False)
+
+        with pytest.raises(FleetDisabledError, match="FLEET_ENABLED"):
+            control.enroll_identity("some-token", "https://enroll.example.com")
+
+
+class TestUnenrollIdentity:
+    def test_running_service_stopped_and_holder_cleared(self, tmp_path: pathlib.Path) -> None:
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+        service, pub = _running_service(tmp_path)
+        startup.set_fleet_service(service)
+
+        result = control.unenroll_identity()
+
+        assert pub.close_calls >= 1
+        assert startup.fleet_service() is None
+        assert result["service"] == "stopped"
+
+    def test_delete_identity_is_the_only_deletion_path(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Replace `identity.delete_identity` with a no-op fake that never touches
+        disk: if `unenroll_identity()` did its own separate unlinking, the files
+        would still be gone; since it must go ONLY through `delete_identity`,
+        they must survive untouched."""
+        directory = pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY)
+        _write_identity(directory)
+        calls: list[pathlib.Path] = []
+
+        def fake_delete(dir_arg: pathlib.Path) -> list[str]:
+            calls.append(pathlib.Path(dir_arg))
+            return ["identity.yaml"]
+
+        monkeypatch.setattr(identity, "delete_identity", fake_delete)
+
+        result = control.unenroll_identity()
+
+        assert calls == [directory]
+        assert result["deleted"] == ["identity.yaml"]
+        assert (directory / "identity.yaml").is_file()  # untouched by unenroll_identity itself
+        assert (directory / "robot.key").is_file()
+
+    def test_manifest_streams_section_removed_subscriptions_preserved(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+        manifest_path = tmp_path / "startup.yaml"
+        subscriptions = [{"sink": "mqtt", "topics": ["/imu"]}]
+        manifest_path.write_text(
+            yaml.safe_dump(
+                {
+                    "subscriptions": subscriptions,
+                    "streams": {"channels": [{"topic": "/imu", "fields": ["x"], "rate_hz": 5}]},
+                },
+                sort_keys=False,
+            )
+        )
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+
+        result = control.unenroll_identity()
+
+        assert result["streams_removed"] is True
+        doc = yaml.safe_load(manifest_path.read_text())
+        assert "streams" not in doc
+        assert doc["subscriptions"] == subscriptions
+
+    def test_second_call_is_idempotent_no_error(self) -> None:
+        assert control.unenroll_identity()["deleted"] == []
+        assert control.unenroll_identity()["deleted"] == []
+
+    def test_works_with_fleet_disabled(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+        monkeypatch.setattr(settings, "FLEET_ENABLED", False)
+
+        result = control.unenroll_identity()  # must not raise
+
+        assert result["deleted"]
+        assert control.fleet_status()["enrolled"] is False
+
+
+class TestPersistStreamsManifestHandling:
+    """`_persist_streams`/`_read_manifest_doc`: the shared manifest read/write path."""
+
+    def test_unset_manifest_file_returns_false_without_error(self) -> None:
+        assert control._persist_streams({"channels": [], "events": []}) is False
+
+    def test_unparsable_existing_manifest_raises_without_clobbering(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manifest_path = tmp_path / "manifest.yaml"
+        original_text = "not: valid: yaml: ["
+        manifest_path.write_text(original_text)
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+
+        with pytest.raises(StreamConfigError, match="manifest"):
+            control._persist_streams({"channels": [], "events": []})
+
+        assert manifest_path.read_text() == original_text
+
+    def test_missing_manifest_file_persists_from_empty(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manifest_path = tmp_path / "manifest.yaml"
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+
+        result = control._persist_streams({"channels": [], "events": []})
+
+        assert result is True
+        doc = yaml.safe_load(manifest_path.read_text())
+        assert doc == {"streams": {"channels": [], "events": []}}
+
+
+class TestStreamTopics:
+    """`stream_topics` validates, merges onto the current config, restarts, persists."""
+
+    @pytest.fixture(autouse=True)
+    def _enrolled(self) -> None:
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+
+    def _running_multi_topic_service(self, tmp_path: pathlib.Path) -> FleetService:
+        writer_imu = FakeWriter(_imu_struct())
+        writer_odom = FakeWriter(pa.struct([pa.field("y", pa.float64())]))
+        sink = FakeSink({"/imu": writer_imu, "/odom": writer_odom})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        startup.set_fleet_service(service)
+        return service
+
+    def test_running_service_with_new_channel_restarts_and_merges(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        old_service = self._running_multi_topic_service(tmp_path)
+
+        result = control.stream_topics(
+            channels=[{"topic": "/odom", "fields": ["y"], "rate_hz": 2}], events=None
+        )
+
+        new_service = startup.fleet_service()
+        assert new_service is not None
+        assert new_service is not old_service
+        names = {c["c"] for c in new_service.channels}
+        assert {"imu.x", "odom.y"} <= names
+        assert result["service"] == "running"
+        assert result["events"] == []
+
+    def test_same_topic_rule_is_replaced_not_duplicated(self, tmp_path: pathlib.Path) -> None:
+        self._running_multi_topic_service(tmp_path)
+
+        control.stream_topics(
+            channels=[{"topic": "/imu", "fields": ["x"], "rate_hz": 10}], events=None
+        )
+
+        new_service = startup.fleet_service()
+        assert len(new_service.streams.channels) == 1
+        assert new_service.streams.channels[0].rate_hz == 10.0
+
+    def test_manifest_persisted_and_reloadable(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manifest_path = tmp_path / "manifest.yaml"
+        manifest_path.write_text(yaml.safe_dump({"subscriptions": []}))
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+        self._running_multi_topic_service(tmp_path)
+
+        result = control.stream_topics(
+            channels=[{"topic": "/odom", "fields": ["y"], "rate_hz": 2}], events=None
+        )
+
+        assert result["persisted"] is True
+        doc = yaml.safe_load(manifest_path.read_text())
+        reloaded = config.load_streams(doc)
+        assert reloaded is not None
+        topics = {rule.topic for rule in reloaded.channels}
+        assert {"/imu", "/odom"} <= topics
+
+    def test_no_service_but_a_covering_live_sink_starts_one(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        monkeypatch.setattr(sink_base, "live_sinks", lambda: [sink])
+        startup.set_fleet_service(None)
+
+        result = control.stream_topics(
+            channels=[{"topic": "/imu", "fields": ["x"], "rate_hz": 5}], events=None
+        )
+
+        assert result["service"] == "running"
+        assert startup.fleet_service() is not None
+
+    def test_no_covering_sink_raises_and_leaves_holder_and_manifest_untouched(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sink_base, "live_sinks", lambda: [])
+        manifest_path = tmp_path / "manifest.yaml"
+        original = {"subscriptions": [{"sink": "mqtt"}]}
+        manifest_path.write_text(yaml.safe_dump(original))
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+        startup.set_fleet_service(None)
+
+        with pytest.raises(StreamConfigError):
+            control.stream_topics(
+                channels=[{"topic": "/imu", "fields": ["x"], "rate_hz": 5}], events=None
+            )
+
+        assert startup.fleet_service() is None
+        assert yaml.safe_load(manifest_path.read_text()) == original
+
+    def test_invalid_rule_dict_raises_before_any_restart(self, tmp_path: pathlib.Path) -> None:
+        service = self._running_multi_topic_service(tmp_path)
+
+        with pytest.raises(StreamConfigError):
+            control.stream_topics(channels=[{"topic": "/imu", "rate_hz": 5}], events=None)
+
+        assert startup.fleet_service() is service
+
+    def test_no_manifest_file_configured_persisted_false_but_rules_live(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", None)
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        monkeypatch.setattr(sink_base, "live_sinks", lambda: [sink])
+
+        result = control.stream_topics(
+            channels=[{"topic": "/imu", "fields": ["x"], "rate_hz": 5}], events=None
+        )
+
+        assert result["persisted"] is False
+        assert startup.fleet_service() is not None
+
+
+class TestStopStreams:
+    """`stop_streams` removes rules by resolved name; unknown names are idempotent no-ops."""
+
+    @pytest.fixture(autouse=True)
+    def _enrolled(self) -> None:
+        _write_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+
+    def _service_with_streams(
+        self, tmp_path: pathlib.Path, streams: object, topic: str = "/imu"
+    ) -> FleetService:
+        struct = pa.struct([pa.field("x", pa.float64()), pa.field("y", pa.float64())])
+        sink = FakeSink({topic: FakeWriter(struct)})
+        service = FleetService(
+            sink=sink, streams=streams, publisher=FakePublisher(), spool=Spool(tmp_path / "spool")
+        )
+        service.start()
+        startup.set_fleet_service(service)
+        return service
+
+    def test_removes_renamed_channel_by_its_renamed_name(self, tmp_path: pathlib.Path) -> None:
+        streams = config.StreamsConfig.build(
+            {
+                "channels": [
+                    {"topic": "/imu", "fields": ["x"], "rate_hz": 50, "as": {"x": "accel.x"}}
+                ]
+            }
+        )
+        self._service_with_streams(tmp_path, streams)
+
+        result = control.stop_streams(channels=["accel.x"], events=None)
+
+        new_service = startup.fleet_service()
+        assert new_service.streams.channels == []
+        assert result["changed"] is True
+
+    def test_partial_field_removal_keeps_rule_with_remaining_field(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        streams = config.StreamsConfig.build(
+            {"channels": [{"topic": "/imu", "fields": ["x", "y"], "rate_hz": 50}]}
+        )
+        self._service_with_streams(tmp_path, streams)
+
+        result = control.stop_streams(channels=["imu.x"], events=None)
+
+        new_service = startup.fleet_service()
+        assert len(new_service.streams.channels) == 1
+        assert new_service.streams.channels[0].fields == ["y"]
+        assert result["changed"] is True
+
+    def test_rule_dropped_when_all_its_fields_go(self, tmp_path: pathlib.Path) -> None:
+        streams = config.StreamsConfig.build(
+            {"channels": [{"topic": "/imu", "fields": ["x", "y"], "rate_hz": 50}]}
+        )
+        self._service_with_streams(tmp_path, streams)
+
+        control.stop_streams(channels=["imu.x", "imu.y"], events=None)
+
+        assert startup.fleet_service().streams.channels == []
+
+    def test_geo_rule_removed_by_its_name(self, tmp_path: pathlib.Path) -> None:
+        streams = config.StreamsConfig.build(
+            {"channels": [{"topic": "/nav/odom", "geo": {"lat": "x", "lon": "y"}, "rate_hz": 1}]}
+        )
+        self._service_with_streams(tmp_path, streams, topic="/nav/odom")
+
+        result = control.stop_streams(channels=["odom.geo"], events=None)
+
+        assert startup.fleet_service().streams.channels == []
+        assert result["changed"] is True
+
+    def test_event_removed_by_name(self, tmp_path: pathlib.Path) -> None:
+        streams = config.StreamsConfig.build(
+            {
+                "channels": [],
+                "events": [{"name": "hard_decel", "topic": "/imu", "predicate": "true"}],
+            }
+        )
+        self._service_with_streams(tmp_path, streams)
+
+        result = control.stop_streams(channels=None, events=["hard_decel"])
+
+        assert startup.fleet_service().streams.events == []
+        assert result["changed"] is True
+
+    def test_unknown_name_is_a_no_op_and_does_not_restart(self, tmp_path: pathlib.Path) -> None:
+        service, _pub = _running_service(tmp_path)
+        startup.set_fleet_service(service)
+
+        result = control.stop_streams(channels=["nope.x"], events=["nope"])
+
+        assert result["changed"] is False
+        assert startup.fleet_service() is service
+
+    def test_emptying_config_keeps_service_running_with_alive_heartbeat(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manifest_path = tmp_path / "manifest.yaml"
+        manifest_path.write_text(yaml.safe_dump({"subscriptions": []}))
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+        service, _pub = _running_service(tmp_path)
+        startup.set_fleet_service(service)
+
+        result = control.stop_streams(channels=["imu.x"], events=None)
+
+        new_service = startup.fleet_service()
+        assert new_service is not None
+        assert new_service.status()["heartbeat_alive"] is True
+        assert result["service"] == "running"
+        doc = yaml.safe_load(manifest_path.read_text())
+        assert doc["streams"]["channels"] == []
+        assert doc["streams"]["events"] == []
+        assert config.load_streams(doc) is not None

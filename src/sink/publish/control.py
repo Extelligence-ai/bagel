@@ -10,25 +10,44 @@ sanely whether the `fleet` dependency group is installed, whether
 ruling, it calls NO gate at all, because it IS the tool that reports on
 those first two states rather than assuming them -- a caller diagnosing "why
 won't fleet streaming start" needs an answer even when it's not installed or
-disabled, not an exception. `pause_streaming`/`resume_streaming` call
+disabled, not an exception. `unenroll_identity()` is the other exception
+(ruling): unenrolling only makes the fleet subsystem MORE inert, so it must
+work even with `FLEET_ENABLED=0`. Every other operation here calls
 `require_fleet()` first, so `FLEET_ENABLED=0` raises `FleetDisabledError`
 before the live-service holder (`src.sink.startup.fleet_service()`) is ever
-touched -- there is no code path where a disabled fleet subsystem still
-reaches into the holder.
+touched.
 
-Only `startup` (the live-service holder) and `identity` (enrollment status)
-are needed for the operations this module carries today (status/pause/
-resume); later tasks in this step add `enroll_identity`/`unenroll_identity`/
-`stream_topics`/`stop_streams`, which pull in `connect`, `config`, `spool`,
-and `mqtt` too -- all of those stay just as lazy about paho/cryptography as
-this module is (neither is imported here at module scope).
+`connect`, `config`, `spool`, and `mqtt` are all imported at module scope
+here (alongside `startup` and `identity`) -- none of them import
+paho/cryptography eagerly either (see each module's own docstring), so
+doing so does not trip the package's no-eager-import invariant; a lazy
+regression test for THIS module lives in `test_control.py` alongside the
+existing gate/service ones.
 """
 
 import importlib.util
+import logging
+import os
+import pathlib
+import tempfile
+from collections.abc import Callable
+
+import yaml
 
 from settings import settings
-from src.sink import startup
-from src.sink.publish import identity, require_fleet
+from src.sink import base, startup
+from src.sink.publish import (
+    EnrollmentError,
+    FleetNotEnrolledError,
+    StreamConfigError,
+    config,
+    identity,
+    require_fleet,
+)
+from src.sink.publish.connect import resolve_publisher_kwargs
+from src.sink.publish.mqtt import MqttPublisher
+from src.sink.publish.service import FleetService
+from src.sink.publish.spool import Spool
 
 
 def fleet_status() -> dict:
@@ -61,10 +80,18 @@ def fleet_status() -> dict:
     else:
         service_state = "running"
 
-    enrolled = identity.is_enrolled(settings.FLEET_IDENTITY_DIRECTORY)
-    identity_summary = None
-    if enrolled:
+    # Single load, not `is_enrolled()` followed by a separate `load_identity()`
+    # call -- that two-call shape has a TOCTOU: a corrupt/deleted identity
+    # between the two calls would raise `FleetNotEnrolledError` through this
+    # function's never-raises contract. One `load_identity()` call, caught
+    # here, closes that window structurally.
+    try:
         loaded = identity.load_identity(settings.FLEET_IDENTITY_DIRECTORY)
+    except FleetNotEnrolledError:
+        loaded = None
+
+    identity_summary = None
+    if loaded is not None:
         identity_summary = {
             "tenant": loaded.tenant,
             "robot_id": loaded.robot_id,
@@ -76,7 +103,7 @@ def fleet_status() -> dict:
     return {
         "enabled": bool(settings.FLEET_ENABLED),
         "installed": importlib.util.find_spec("paho.mqtt") is not None,
-        "enrolled": enrolled,
+        "enrolled": loaded is not None,
         "identity": identity_summary,
         "service": service_state,
         "channels": service.channels if service is not None else [],
@@ -140,3 +167,350 @@ def resume_streaming() -> dict:
     changed = service.paused
     service.resume()
     return {"service": "running", "changed": changed}
+
+
+def enroll_identity(token: str, enroll_url: str) -> dict:
+    """Enroll this robot with the fleet cloud: keygen, CSR, store identity (spec §6).
+
+    `require_fleet()` first. Already enrolled -> `EnrollmentError(0, ...)`
+    (ruling: status 0 means "no server was ever contacted", consistent with
+    that code's existing transport-failure meaning) rather than silently
+    re-enrolling over an existing identity.
+
+    Returns:
+        `{"tenant", "robot_id", "broker_url", "expires_at"}` -- NEVER the
+        token, and never key material or paths.
+
+    Raises:
+        FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
+        EnrollmentError: already enrolled, or any of `identity.enroll()`'s
+            own failure modes (see its docstring).
+
+    """
+    require_fleet()
+    directory = pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY)
+    if identity.is_enrolled(directory):
+        raise EnrollmentError(0, "already enrolled; run unenroll_fleet_identity first")
+    enrolled = identity.enroll(token, enroll_url, directory)
+    return {
+        "tenant": enrolled.tenant,
+        "robot_id": enrolled.robot_id,
+        "broker_url": enrolled.broker_url,
+        "expires_at": enrolled.expires_at,
+    }
+
+
+def unenroll_identity() -> dict:
+    """Unenroll this robot: stop any live service, delete identity, clear manifest streams.
+
+    NO gate (ruling): unenrolling only makes the fleet subsystem MORE
+    inert, so it must work even with `FLEET_ENABLED=0` or paho not
+    installed.
+
+    Best-effort stops the live `FleetService`, if any, and clears the
+    holder regardless of whether the stop itself succeeded.
+    `identity.delete_identity()` is the ONLY deletion path (ruling a) --
+    nothing here unlinks a file directly. The manifest's `streams:` section,
+    if persisted, is removed too (`subscriptions:` and everything else in
+    the manifest is left untouched). Idempotent: a second call finds
+    nothing enrolled and returns `deleted: []` without error.
+
+    Returns:
+        `{"deleted": list[str], "streams_removed": bool, "service": "stopped"}`.
+
+    """
+    service = startup.fleet_service()
+    if service is not None:
+        try:
+            service.stop()
+        except Exception:
+            logging.warning("Best-effort stop of the live FleetService during unenroll failed")
+        finally:
+            startup.set_fleet_service(None)
+    deleted = identity.delete_identity(pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY))
+    streams_removed = _persist_streams(None)
+    return {"deleted": deleted, "streams_removed": streams_removed, "service": "stopped"}
+
+
+def stream_topics(channels: list[dict] | None, events: list[dict] | None) -> dict:
+    """Add/replace channel and event rules at runtime, restart, persist (spec §7).
+
+    `require_fleet()` first. Every entry is validated (`ChannelRule.build`/
+    `EventRule.build`, typed `StreamConfigError`) BEFORE any state changes.
+    The validated rules are merged onto the current config (the running
+    service's `.streams`, else the manifest's persisted streams, else an
+    empty `StreamsConfig`) per the binding merge ruling: a channel rule
+    REPLACES any existing rule for the same `topic`; an event rule replaces
+    by `name`. The merged config becomes the new live service (via
+    `_restart_service`) and is persisted back to the manifest, if one is
+    configured.
+
+    Returns:
+        `{"service": "running", "channels": list[dict], "events":
+        list[str], "persisted": bool}`.
+
+    Raises:
+        FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
+        StreamConfigError: an invalid rule dict, or `_restart_service`'s own
+            failure modes (no covering sink, no viable broker, etc).
+
+    """
+    require_fleet()
+    new_channels = [
+        config.ChannelRule.build(entry, label=f"channels[{i}]")
+        for i, entry in enumerate(channels or [])
+    ]
+    new_events = [
+        config.EventRule.build(entry, label=f"events[{i}]") for i, entry in enumerate(events or [])
+    ]
+
+    current = _current_streams()
+    merged = config.StreamsConfig(
+        broker=current.broker,
+        flush_interval_s=current.flush_interval_s,
+        channels=_merge_by_key(current.channels, new_channels, key=lambda rule: rule.topic),
+        events=_merge_by_key(current.events, new_events, key=lambda rule: rule.name),
+    )
+
+    _restart_service(merged)
+    persisted = _persist_streams(merged.to_manifest())
+    service = startup.fleet_service()
+    return {
+        "service": "running",
+        "channels": service.channels,
+        "events": [rule.name for rule in merged.events],
+        "persisted": persisted,
+    }
+
+
+def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
+    """Remove channel/event rules by name at runtime, restart, persist (spec §7).
+
+    `require_fleet()` first. `channels` names resolved (or renamed) channel
+    names -- see `config.channel_name` -- not field paths or topics; a
+    matched field is dropped from its rule, a rule left with no fields (or a
+    matched geo rule) is dropped entirely. `events` names event rule
+    `name`s. Unknown names are no-ops (idempotency ruling).
+
+    When nothing actually changed, a running service is left completely
+    alone (no restart -- the SAME service object stays in the holder); when
+    something did change, `_restart_service` rebuilds it -- even down to an
+    empty config (heartbeat = liveness; full offline is `pause_streaming`/
+    `unenroll_identity`). When no service is running at all, this never
+    starts one (that is `stream_topics`'s job) -- it only updates the
+    persisted manifest.
+
+    Returns:
+        `{"service": "running" | "stopped", "channels": list[dict],
+        "events": list[str], "changed": bool, "persisted": bool}`.
+
+    Raises:
+        FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
+        StreamConfigError: via `_restart_service` (no covering sink, etc) --
+            only reachable when something changed and a service is running.
+
+    """
+    require_fleet()
+    channel_names = set(channels or [])
+    event_names = set(events or [])
+    current = _current_streams()
+
+    remaining_channels, channels_changed = _drop_channel_names(current.channels, channel_names)
+    remaining_events = [rule for rule in current.events if rule.name not in event_names]
+    events_changed = len(remaining_events) != len(current.events)
+    changed = channels_changed or events_changed
+
+    remaining = config.StreamsConfig(
+        broker=current.broker,
+        flush_interval_s=current.flush_interval_s,
+        channels=remaining_channels,
+        events=remaining_events,
+    )
+
+    service = startup.fleet_service()
+    if changed and service is not None:
+        _restart_service(remaining)
+        service = startup.fleet_service()
+
+    persisted = _persist_streams(remaining.to_manifest())
+    return {
+        "service": "running" if service is not None else "stopped",
+        "channels": service.channels if service is not None else [],
+        "events": [rule.name for rule in remaining.events],
+        "changed": changed,
+        "persisted": persisted,
+    }
+
+
+def _merge_by_key(current: list, new: list, *, key: Callable[[object], object]) -> list:
+    """Merge `new` rules onto `current` by `key`: a matching key REPLACES, else appends."""
+    merged: dict = {key(rule): rule for rule in current}
+    for rule in new:
+        merged[key(rule)] = rule
+    return list(merged.values())
+
+
+def _drop_channel_names(
+    current: list[config.ChannelRule], names: set[str]
+) -> tuple[list[config.ChannelRule], bool]:
+    """Drop every field (or whole geo rule) whose resolved `config.channel_name` is in `names`.
+
+    A `fields:` rule loses just the matched fields (and their now-orphaned
+    `renames` entries -- an unpruned rename key would fail `_check_renames`
+    on the next `resolve()`); it is dropped entirely once no fields remain.
+    A `geo:` rule is all-or-nothing: matched -> dropped, else untouched.
+
+    Returns:
+        (remaining rules, whether anything actually changed).
+
+    """
+    remaining: list[config.ChannelRule] = []
+    changed = False
+    for rule in current:
+        if rule.fields is not None:
+            kept = [f for f in rule.fields if config.channel_name(rule, f) not in names]
+            if not kept:
+                changed = True
+                continue
+            if kept == rule.fields:
+                remaining.append(rule)
+            else:
+                changed = True
+                remaining.append(
+                    rule.model_copy(
+                        update={
+                            "fields": kept,
+                            "renames": {k: v for k, v in rule.renames.items() if k in kept},
+                        }
+                    )
+                )
+        else:
+            if config.channel_name(rule, "geo") in names:
+                changed = True
+                continue
+            remaining.append(rule)
+    return remaining, changed
+
+
+def _current_streams() -> config.StreamsConfig:
+    """Return the config to merge/drop rules against: running service, else manifest, else empty."""
+    service = startup.fleet_service()
+    if service is not None:
+        return service.streams
+    loaded = config.load_streams(_read_manifest_doc())
+    return loaded if loaded is not None else config.StreamsConfig()
+
+
+def _restart_service(streams: config.StreamsConfig) -> None:
+    """Rebuild path for `stream_topics`/`stop_streams` (mirrors `startup._start_fleet`).
+
+    1. Pick the sink: the CURRENT service's, if one is running (its
+       `FleetService.start()`/`StreamsConfig.resolve()` will itself raise a
+       typed `StreamConfigError` if `streams` now references a topic that
+       sink never subscribed); otherwise the first of `base.live_sinks()`
+       whose `subscribed_topics` cover every source topic (reusing
+       `startup._fleet_source_topics`/`_find_covering_sink`) -- none found
+       raises `StreamConfigError` BEFORE anything else is touched.
+    2. Best-effort stop the old service (if any) and clear the holder.
+    3. Build a fresh publisher/spool/`FleetService` from `streams` and the
+       current enrollment state, start it, and install it as the holder.
+
+    Any failure here propagates typed -- unlike `startup._start_fleet`
+    (a boot-time path that swallows everything into a report), these are
+    interactive tools: a caller needs to see exactly why a restart failed.
+    """
+    old = startup.fleet_service()
+    if old is not None:
+        sink = old.sink
+    else:
+        source_topics = startup._fleet_source_topics(streams)
+        candidates = [(s, s.subscribed_topics) for s in base.live_sinks()]
+        sink = startup._find_covering_sink(source_topics, candidates)
+        if sink is None:
+            raise StreamConfigError(
+                "streams",
+                "all streams: source topics "
+                f"{sorted(source_topics)} must be subscribed within a SINGLE "
+                "startup manifest 'subscriptions:' entry -- fleet streaming "
+                "(v1) cannot span multiple subscription entries' sinks; list "
+                "every one of these topics under one entry's 'topics:'",
+            )
+
+    if old is not None:
+        try:
+            old.stop()
+        except Exception:
+            logging.warning("Failed to stop the previous FleetService before replacing it")
+        finally:
+            startup.set_fleet_service(None)
+
+    directory = settings.FLEET_IDENTITY_DIRECTORY
+    identity_obj = identity.load_identity(directory) if identity.is_enrolled(directory) else None
+    publisher_kwargs = resolve_publisher_kwargs(streams, identity_obj)
+    publisher = MqttPublisher(**publisher_kwargs)
+    spool = Spool.for_robot(identity_obj.robot if identity_obj is not None else "dev/robot")
+    service = FleetService(
+        sink=sink, streams=streams, publisher=publisher, spool=spool, identity=identity_obj
+    )
+    service.start()
+    startup.set_fleet_service(service)
+
+
+def _manifest_path() -> pathlib.Path | None:
+    raw = settings.STARTUP_PIPELINES_FILE
+    return pathlib.Path(raw) if raw else None
+
+
+def _read_manifest_doc() -> dict:
+    """Read the startup manifest into a dict; `{}` when unset, unwritten, or empty.
+
+    Raises:
+        StreamConfigError: the file exists but fails to parse as YAML, or
+            parses to something other than a mapping -- so a corrupt
+            manifest is never silently treated as empty and then clobbered
+            by a subsequent `_persist_streams` write.
+
+    """
+    path = _manifest_path()
+    if path is None or not path.is_file():
+        return {}
+    try:
+        doc = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as exc:
+        raise StreamConfigError("manifest", f"unparsable manifest at {path}: {exc}") from exc
+    if doc is None:
+        return {}
+    if not isinstance(doc, dict):
+        raise StreamConfigError("manifest", f"manifest at {path} must be a mapping, got {doc!r}")
+    return doc
+
+
+def _persist_streams(streams_manifest: dict | None) -> bool:
+    """Set (or, when `None`, remove) the manifest's `streams:` section; return whether written.
+
+    `settings.STARTUP_PIPELINES_FILE` unset -> `False`, no error: the
+    in-memory control-plane change is still fully in effect, there's just
+    no manifest file to persist it to. Otherwise reads the current manifest
+    (`_read_manifest_doc` -- missing -> `{}`, unparsable -> raises rather
+    than clobbering a human-maintained file), updates just the `"streams"`
+    key, and writes the whole document back atomically (sibling tempfile +
+    `os.replace`) so a crash mid-write never corrupts it.
+    """
+    path = _manifest_path()
+    if path is None:
+        return False
+    doc = _read_manifest_doc()
+    if streams_manifest is None:
+        doc.pop("streams", None)
+    else:
+        doc["streams"] = streams_manifest
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    tmp = pathlib.Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            yaml.safe_dump(doc, handle, sort_keys=False)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return True

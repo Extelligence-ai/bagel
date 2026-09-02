@@ -104,6 +104,22 @@ class ChannelRule(BaseModel):
     rate_hz: float
     renames: dict[str, str] = {}
 
+    def to_manifest(self) -> dict:
+        """Serialize back to the exact dict shape `ChannelRule.build` accepts.
+
+        Emits `"fields"` or `"geo"` (whichever this rule carries -- exactly
+        one, per `build`'s own invariant), and `"as"` only when `renames` is
+        non-empty (an unrenamed rule round-trips without the key at all).
+        """
+        doc: dict = {"topic": self.topic, "rate_hz": self.rate_hz}
+        if self.fields is not None:
+            doc["fields"] = list(self.fields)
+        else:
+            doc["geo"] = dict(self.geo)  # type: ignore[arg-type]  -- fields is None => geo is set
+        if self.renames:
+            doc["as"] = dict(self.renames)
+        return doc
+
     @staticmethod
     def build(config: dict, label: str = "channels[]") -> "ChannelRule":
         """Build and validate a channel rule from config dict."""
@@ -167,6 +183,22 @@ class EventRule(BaseModel):
     post_seconds: float = 0.0
     debounce_seconds: float = 0.0
     artifact: str | None = None
+
+    def to_manifest(self) -> dict:
+        """Serialize back to the exact dict shape `EventRule.build` accepts.
+
+        The required trio always appears; each window key appears only when
+        non-zero, and `"artifact"` only when set -- an unwindowed,
+        artifact-less event round-trips as just the three required keys.
+        """
+        doc: dict = {"name": self.name, "topic": self.topic, "predicate": self.predicate}
+        for key in ("pre_seconds", "post_seconds", "debounce_seconds"):
+            value = getattr(self, key)
+            if value != 0.0:
+                doc[key] = value
+        if self.artifact is not None:
+            doc["artifact"] = self.artifact
+        return doc
 
     @staticmethod
     def build(config: dict, label: str = "events[]") -> "EventRule":
@@ -237,6 +269,18 @@ def _stem(topic: str) -> str:
     return topic.rsplit("/", 1)[-1]
 
 
+def channel_name(rule: ChannelRule, field: str) -> str:
+    """Return the resolved (or renamed) channel name for one field of a channel rule.
+
+    `field` is a dotted field path (for a `fields:` rule) or the literal
+    `"geo"` (for a `geo:` rule) -- the same key space `rule.renames` uses.
+    This is the ONE formula both `_resolve_channel_rule` (below) and
+    `control.stop_streams` (which identifies channels to drop by this same
+    derived name) use -- extracted so the two never drift apart.
+    """
+    return rule.renames.get(field, f"{_stem(rule.topic)}.{field}")
+
+
 def _check_renames(renames: dict[str, str], allowed: set[str], label: str) -> None:
     """Reject a rename key that matches none of the rule's field paths."""
     for key in renames:
@@ -256,7 +300,7 @@ def _resolve_channel_rule(
                 type_name = classify(ap.pa_type)
             except ValueError as exc:
                 raise StreamConfigError(f"{label}.fields", str(exc)) from exc
-            name = rule.renames.get(field_path, f"{_stem(rule.topic)}.{field_path}")
+            name = channel_name(rule, field_path)
             resolved.append(
                 ResolvedChannel(
                     name=name,
@@ -279,7 +323,7 @@ def _resolve_channel_rule(
             except ValueError as exc:
                 raise StreamConfigError(f"{label}.geo.{key}", str(exc)) from exc
             paths[key] = ap
-        name = rule.renames.get("geo", f"{_stem(rule.topic)}.geo")
+        name = channel_name(rule, "geo")
         resolved.append(
             ResolvedChannel(
                 name=name,
@@ -364,6 +408,25 @@ class StreamsConfig(BaseModel):
             channels=channels,
             events=events,
         )
+
+    def to_manifest(self) -> dict:
+        """Serialize back to the exact dict shape `StreamsConfig.build` accepts.
+
+        `"broker"`/`"flush_interval_s"` appear only when non-default (a
+        fresh `StreamsConfig()` round-trips without either); `"channels"`/
+        `"events"` always appear, even as an empty list -- `build` accepts
+        an explicit `[]` for either, and control.py's stop_streams relies on
+        this to persist an emptied config as `{"channels": [], "events":
+        []}` rather than omitting the section's shape entirely.
+        """
+        doc: dict = {}
+        if self.broker is not None:
+            doc["broker"] = self.broker
+        if self.flush_interval_s != 1.0:
+            doc["flush_interval_s"] = self.flush_interval_s
+        doc["channels"] = [rule.to_manifest() for rule in self.channels]
+        doc["events"] = [rule.to_manifest() for rule in self.events]
+        return doc
 
     def resolve(self, structs: dict[str, pa.StructType]) -> list[ResolvedChannel]:
         """Resolve channel rules against topic schemas."""
