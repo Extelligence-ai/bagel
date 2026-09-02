@@ -78,6 +78,55 @@ def test_every_mcp_publishing_service_passes_mcp_server_port_env() -> None:
     )
 
 
+def test_every_fleet_enabled_service_forwards_enrollment_settings() -> None:
+    """Every service that gets FLEET_ENABLED must also get the enrollment settings.
+
+    Codex review (round 2): compose.yaml forwarded FLEET_ENABLED but not
+    FLEET_ENROLL_TOKEN/FLEET_ENROLL_URL, so `maybe_enroll_on_first_boot()`
+    silently no-ops even when an operator exports both on the host --
+    production mqtts:// startup fails with no obvious cause. Also requires
+    FLEET_IDENTITY_DIRECTORY and FLEET_DEV_INSECURE passthrough, matching
+    FLEET_ENABLED's own ``${VAR:-default}`` style.
+    """
+    required = {
+        "FLEET_ENROLL_TOKEN": "${FLEET_ENROLL_TOKEN:-}",
+        "FLEET_ENROLL_URL": "${FLEET_ENROLL_URL:-}",
+        "FLEET_IDENTITY_DIRECTORY": "${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}",
+        "FLEET_DEV_INSECURE": "${FLEET_DEV_INSECURE:-false}",
+    }
+    offenders = []
+    for name, service in _services().items():
+        env = service.get("environment", {}) or {}
+        if "FLEET_ENABLED" not in env:
+            continue
+        for key, expected in required.items():
+            if str(env.get(key, "")) != expected:
+                offenders.append(f"{name}: {key}")
+    assert not offenders, f"FLEET_ENABLED services missing enrollment passthrough: {offenders}"
+
+
+def test_every_fleet_enabled_service_persists_identity_directory() -> None:
+    """The identity directory must be mounted from the host, not left in the container layer.
+
+    Codex review (round 2): with the documented `docker compose run`
+    workflow, an unmounted identity directory lives only in the one-off
+    container's writable layer and is lost on exit; because
+    FLEET_ENROLL_TOKEN is single-use, a later run can't re-enroll to replace
+    it. The host-side mount must match FLEET_IDENTITY_DIRECTORY's
+    container-side default (/home/ubuntu/.bagel/identity) set above.
+    """
+    expected = "${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity"
+    offenders = []
+    for name, service in _services().items():
+        env = service.get("environment", {}) or {}
+        if "FLEET_ENABLED" not in env:
+            continue
+        volumes = [str(v) for v in service.get("volumes", [])]
+        if expected not in volumes:
+            offenders.append(name)
+    assert not offenders, f"FLEET_ENABLED services missing a persistent identity mount: {offenders}"
+
+
 def test_no_dockerfile_copies_env_file() -> None:
     """Published images must never bake in the local .env (see SECURITY.md).
 
