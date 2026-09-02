@@ -80,20 +80,38 @@ class FakePublisher(Publisher):
     order -- Task 4's pause/stop reason plumbing (spec §3) is asserted
     against this rather than a single last-reason field, so a test can also
     check a call never happened.
+
+    `event_calls` records every `publish_event`/`publish("events", ...)`
+    call (Task 7's selftest is the first caller to exercise the events lane
+    end-to-end). `fail_at_channel_call`, when set, makes the Nth
+    `publish_channels` call (1-indexed) raise `PublishError` instead of
+    being recorded -- Task 7's selftest cleanup-on-failure test uses this to
+    force a mid-run failure without a real broker.
+
+    `calls` is a single ordered log of every method invocation (`"connect"`,
+    `"schema"`/`"channels"`/`"heartbeat"`/`"events"` from `publish()`, and
+    `"close"`) -- Task 7's selftest call-order test asserts against this
+    rather than trying to interleave the separate per-kind lists.
     """
 
-    def __init__(self, *, connect_should_fail: bool = False) -> None:
+    def __init__(
+        self, *, connect_should_fail: bool = False, fail_at_channel_call: int | None = None
+    ) -> None:
         self.connect_should_fail = connect_should_fail
+        self.fail_at_channel_call = fail_at_channel_call
         self.connect_calls = 0
         self.schema_calls: list[dict] = []
         self.channel_calls: list[dict] = []
         self.heartbeat_calls: list[dict] = []
+        self.event_calls: list[dict] = []
         self.close_calls = 0
         self.close_reasons: list[str] = []
         self.reconnects = 0
+        self.calls: list[str] = []
         self._connected = False
 
     def connect(self) -> None:
+        self.calls.append("connect")
         self.connect_calls += 1
         if self.connect_should_fail:
             raise PublishError("connect failed")
@@ -102,16 +120,23 @@ class FakePublisher(Publisher):
     def publish(
         self, kind: str, payload: dict, *, retain: bool = False, timeout_s: float = 10.0
     ) -> None:
+        self.calls.append(kind)
         if kind == "schema":
             self.schema_calls.append(payload)
         elif kind == "channels":
+            call_index = len(self.channel_calls) + 1
+            if self.fail_at_channel_call == call_index:
+                raise PublishError(f"forced failure at channel batch {call_index}")
             self.channel_calls.append(payload)
         elif kind == "heartbeat":
             self.heartbeat_calls.append(payload)
+        elif kind == "events":
+            self.event_calls.append(payload)
         else:
             raise AssertionError(f"FakePublisher: unexpected kind {kind!r}")
 
     def close(self, reason: str = "stopped") -> None:
+        self.calls.append("close")
         self.close_calls += 1
         self.close_reasons.append(reason)
         self._connected = False
