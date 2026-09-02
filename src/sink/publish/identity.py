@@ -675,6 +675,30 @@ def _commit_renewed_files(
     )
 
 
+def _cert_matches_key(cert_pem: str, key_pem: bytes) -> bool:
+    """Report whether ``cert_pem``'s public key matches the private key in ``key_pem``.
+
+    Guards a renewal commit against a response whose ``cert_pem`` was issued
+    for a different CSR (server bug, stale/replayed response, or a
+    mismatched-CSR mixup) -- committing such a pair would repoint
+    identity.yaml at a cert nothing on disk holds the matching private key
+    for. Malformed PEM on either side is treated as a mismatch (returns
+    False) rather than raising, so callers get one uniform reject path.
+    """
+    from cryptography import x509
+    from cryptography.exceptions import UnsupportedAlgorithm
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+    try:
+        cert = x509.load_pem_x509_certificate(cert_pem.encode())
+        private_key = load_pem_private_key(key_pem, password=None)
+        cert_public_numbers = cert.public_key().public_numbers()
+        key_public_numbers = private_key.public_key().public_numbers()
+    except (ValueError, TypeError, UnsupportedAlgorithm):
+        return False
+    return cert_public_numbers == key_public_numbers
+
+
 def _renew_inner(  # noqa: PLR0911 -- one early return per distinct failure branch, each logged/recorded differently
     identity: Identity, now: float, logger: logging.Logger
 ) -> Identity | None:
@@ -746,6 +770,19 @@ def _renew_inner(  # noqa: PLR0911 -- one early return per distinct failure bran
     missing = [field for field in ("cert_pem", "expires_at") if field not in payload]
     if missing:
         logger.warning("renewal response missing fields: %s", missing)
+        _record_renewal_attempt(identity, now)
+        return None
+
+    # The server is trusted to sign whatever CSR it was handed, but never
+    # trusted to hand back a cert for a DIFFERENT key -- a server bug, a
+    # stale/replayed response, or a mismatched-CSR mixup would otherwise get
+    # committed as-is: identity.yaml would repoint at a cert nothing on disk
+    # holds the matching private key for, breaking the next mTLS handshake
+    # with no automatic recovery (Codex review). Reject before committing --
+    # same typed-error path as the other malformed-response branches above:
+    # no commit, old identity untouched, next daily attempt retries.
+    if not _cert_matches_key(payload["cert_pem"], new_key_pem):
+        logger.warning("renewal response cert_pem does not match this renewal's private key")
         _record_renewal_attempt(identity, now)
         return None
 
