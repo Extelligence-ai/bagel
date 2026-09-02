@@ -483,6 +483,75 @@ class TestStats:
         assert st.bytes > 0
 
 
+class TestNeverCappedLanes:
+    def test_init_rejects_heartbeat_in_capped_lanes(self, root: pathlib.Path) -> None:
+        """Spool.__init__ must reject heartbeat in capped_lanes."""
+        with pytest.raises(ValueError, match="heartbeat") as exc_info:
+            Spool(root, capped_lanes={"heartbeat": 1024})
+        assert "never-drop" in str(exc_info.value)
+
+    def test_init_accepts_channels_in_capped_lanes(self, root: pathlib.Path) -> None:
+        """Spool.__init__ must accept channels in capped_lanes."""
+        s = Spool(root, capped_lanes={"channels": 1024})
+        assert s._capped == {"channels": 1024}
+
+    def test_init_rejects_mixed_heartbeat_and_channels_in_capped_lanes(
+        self,
+        root: pathlib.Path,
+    ) -> None:
+        """Spool.__init__ must reject when heartbeat is mixed with other capped lanes."""
+        with pytest.raises(ValueError, match="heartbeat") as exc_info:
+            Spool(root, capped_lanes={"channels": 1024, "heartbeat": 1})
+        assert "never-drop" in str(exc_info.value)
+
+    def test_oversized_heartbeat_record_is_written_not_dropped(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Oversized record on heartbeat lane must be written, not dropped."""
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 200)
+        s = Spool(root)
+        giant = {"pad": "x" * 1000}
+        s.append("heartbeat", 1, giant)
+        assert [seq for seq, _ in s.pending("heartbeat")] == [1]
+        assert s.stats()["heartbeat"].evicted == 0
+
+    def test_oversized_capped_lane_record_is_dropped(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Oversized record on capped lane must be dropped (existing behavior)."""
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 200)
+        s = Spool(root, capped_lanes={"channels": 1000})
+        giant = {"pad": "x" * 1000}
+        s.append("channels", 1, giant)
+        assert [seq for seq, _ in s.pending("channels")] == []
+        assert s.stats()["channels"].evicted == 1
+
+    def test_heartbeat_lane_not_evicted_when_other_lanes_capped(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Heartbeat records must never be evicted, even when other lanes are capped."""
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 120)
+        s = Spool(root, capped_lanes={"channels": 300})
+        # Write heartbeat records far exceeding the channels cap
+        for i in range(1, 30):
+            s.append("heartbeat", i, {"pad": "x" * 40, "n": i})
+        # Every heartbeat record should still be pending
+        assert len([seq for seq, _ in s.pending("heartbeat")]) == 29
+        # No eviction should have occurred
+        assert s.stats()["heartbeat"].evicted == 0
+
+    def test_for_robot_caps_only_channels(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """for_robot must cap only channels, never heartbeat or events."""
+        monkeypatch.setattr("settings.settings.CACHE_DIRECTORY", str(tmp_path))
+        monkeypatch.setattr("settings.settings.FLEET_SPOOL_MAX_BYTES", 500)
+        s = Spool.for_robot("r7")
+        assert s._capped == {"channels": 500}
+        assert "heartbeat" not in s._capped
+        assert "events" not in s._capped
+
+
 class TestForRobot:
     def test_for_robot_single_segment_nests_correctly(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch

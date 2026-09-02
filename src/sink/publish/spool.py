@@ -23,6 +23,7 @@ from collections.abc import Iterator
 import filelock
 
 SEGMENT_MAX_BYTES = 4 * 1024 * 1024
+NEVER_CAPPED_LANES = ("heartbeat",)
 
 
 class SpoolError(Exception):
@@ -131,6 +132,11 @@ class Spool:
         self._root = pathlib.Path(root)
         self._root.mkdir(parents=True, exist_ok=True)
         self._capped = dict(capped_lanes or {})
+        forbidden = set(self._capped) & set(NEVER_CAPPED_LANES)
+        if forbidden:
+            raise ValueError(
+                f"lanes {sorted(forbidden)} are never-drop (spec §4) and cannot be byte-capped"
+            )
         self._lock = filelock.FileLock(str(self._root / ".lock"))
         self._last_seq: dict[str, int] = {}
         self._evicted: dict[str, int] = {}
@@ -244,14 +250,13 @@ class Spool:
             # byte cap. Refuse to write it instead: consume the seq (so the
             # caller's sequencing stays monotonic and no retry re-attempts
             # the same doomed record) and count it as evicted. EXCEPTION:
-            # never drop on the never-drop "heartbeat" lane -- its payloads
-            # are tiny, so this is in practice unreachable, but the
-            # never-drop ruling still applies if it somehow were.
-            if lane != "heartbeat" and len(line.encode("utf-8")) > SEGMENT_MAX_BYTES:
+            # never drop on never-drop lanes (spec §4) -- their payloads are
+            # tiny, so this is in practice unreachable, but the never-drop
+            # ruling still applies if it somehow were.
+            if lane not in NEVER_CAPPED_LANES and len(line.encode("utf-8")) > SEGMENT_MAX_BYTES:
                 self._evicted[lane] = self._evicted.get(lane, 0) + 1
                 logging.getLogger(__name__).warning(
-                    "lane '%s': dropping oversized record seq=%d (%d bytes > "
-                    "SEGMENT_MAX_BYTES=%d)",
+                    "lane '%s': dropping oversized record seq=%d (%d bytes > SEGMENT_MAX_BYTES=%d)",
                     lane,
                     seq,
                     len(line.encode("utf-8")),
