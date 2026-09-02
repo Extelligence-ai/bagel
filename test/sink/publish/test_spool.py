@@ -464,8 +464,16 @@ class TestEvictionAndCaps:
         s = Spool(root)
         s.append("events", 1, {"n": 1})
 
-        def boom(*a: object, **k: object) -> object:
-            raise OSError(28, "No space left on device")
+        real_open = open
+
+        def boom(file: object, mode: str = "r", *a: object, **k: object) -> object:
+            # A real "disk full" only breaks writes -- reads (including the
+            # disk-authoritative tail peek append() now does on every call,
+            # Codex round 3 follow-up) keep working. Only fail append/write
+            # modes, so this stays a faithful simulation.
+            if "a" in mode or "w" in mode:
+                raise OSError(28, "No space left on device")
+            return real_open(file, mode, *a, **k)
 
         monkeypatch.setattr("builtins.open", boom)
         with pytest.raises(spool_mod.SpoolFullError, match="events"):
@@ -602,6 +610,93 @@ class TestForRobot:
     def test_for_robot_rejects_dot_segment(self) -> None:
         with pytest.raises(ValueError, match="must be non-empty and not"):
             Spool.for_robot(".")
+
+
+class TestDiskAuthoritativeMonotonicity:
+    """Codex round 3 follow-up (PR #214, P1): `append()`'s monotonicity check
+    must be disk-authoritative ACROSS `Spool` instances, not just within one.
+
+    `exclusive()` (P1b) only serializes concurrent DISK ACCESS -- it does
+    nothing to refresh a DIFFERENT already-open `Spool` instance's
+    in-process `_last_seq` cache. A long-lived instance (e.g. a
+    `FleetService`) whose cache predates an intervening writer on the same
+    real spool (e.g. a selftest run, or another process entirely) must not
+    accept/allocate a seq that collides with what's already on disk -- that
+    would silently duplicate a seq instead of raising the clean `ValueError`
+    the single-writer invariant promises.
+    """
+
+    def test_stale_cached_writer_raises_instead_of_duplicating(self, root: pathlib.Path) -> None:
+        a = Spool(root)
+        a.append("channels", 1, {"n": 1})
+        a.append("channels", 2, {"n": 2})
+        a.append("channels", 3, {"n": 3})
+
+        # B is a fresh instance on the same root: first touch, scans disk,
+        # continues the sequence correctly.
+        b = Spool(root)
+        b.append("channels", 4, {"n": 4})
+        before = list(b.pending("channels"))
+
+        # A's in-process cache still says last_seq=3 -- it never saw B's
+        # write. A disk-authoritative check must catch this collision.
+        with pytest.raises(ValueError, match="monotonic"):
+            a.append("channels", 4, {"n": "duplicate-attempt"})
+
+        # Nothing was written by the rejected call -- disk state intact.
+        after = list(b.pending("channels"))
+        assert after == before
+        assert [seq for seq, _ in after] == [1, 2, 3, 4]
+
+    def test_stale_cached_writer_can_still_append_the_true_next_seq(
+        self, root: pathlib.Path
+    ) -> None:
+        """After the collision above, the same stale instance must recover
+        cleanly once given the actually-correct next seq -- not get stuck."""
+        a = Spool(root)
+        a.append("channels", 1, {"n": 1})
+        b = Spool(root)
+        b.append("channels", 2, {"n": 2})
+
+        with pytest.raises(ValueError, match="monotonic"):
+            a.append("channels", 2, {"n": "stale"})
+
+        a.append("channels", 3, {"n": 3})  # the true next seq -- must succeed
+        assert [seq for seq, _ in a.pending("channels")] == [1, 2, 3]
+
+    def test_stale_next_seq_also_reflects_disk_not_the_cache(self, root: pathlib.Path) -> None:
+        """`next_seq()` must see a concurrent writer's advance too, not just
+        `append()`'s rejection path -- so next_seq() -> append() never
+        re-collides on the second try."""
+        a = Spool(root)
+        a.append("channels", 1, {"n": 1})
+        b = Spool(root)
+        b.append("channels", 2, {"n": 2})
+
+        assert a.next_seq("channels") == 3
+
+    def test_full_scan_last_seq_only_runs_on_first_touch_not_every_append(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Perf guard: the disk-authoritative check must not degrade every
+        `append()` into an O(whole active segment) full re-parse -- only the
+        lane's first touch in this instance's lifetime may call the
+        expensive `_scan_last_seq` (crash-tail recovery); every later call
+        must use the cheap tail-only read."""
+        s = Spool(root)
+        calls: list[str] = []
+        original = spool_mod.Spool._scan_last_seq
+
+        def spy(self: Spool, lane: str) -> int:
+            calls.append(lane)
+            return original(self, lane)
+
+        monkeypatch.setattr(spool_mod.Spool, "_scan_last_seq", spy)
+
+        for i in range(1, 6):
+            s.append("channels", i, {"n": i})
+
+        assert calls == ["channels"]  # only the very first append's first-touch scan
 
 
 class TestExclusiveLock:

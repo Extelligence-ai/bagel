@@ -266,6 +266,49 @@ class TestExclusiveLockDuringRun:
         assert list(run_spool.pending("channels")) == []
 
 
+class TestSelftestBetweenServiceAppendsDoesNotCauseADuplicate:
+    """P1 follow-up (Codex round 3, PR #214): `exclusive()` (P1b) only
+    serializes concurrent DISK ACCESS -- it does nothing to refresh a
+    DIFFERENT already-open `Spool` instance's in-process seq cache. A
+    `FleetService`'s long-lived `Spool` whose cache predates a selftest run
+    against the same real spool must get a clean `ValueError` on its next
+    append, never a silent duplicate seq."""
+
+    def test_service_next_append_raises_cleanly_instead_of_duplicating(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        from src.sink.publish.selftest import run_selftest
+
+        root = tmp_path / "spool"
+
+        # The "service": a long-lived Spool instance that has already
+        # written and acked one channels record (so nothing is pending when
+        # the selftest's precondition check runs against the same root).
+        service_spool = Spool(root)
+        service_spool.append("channels", 1, {"v": 1, "samples": []})
+        service_spool.ack("channels", 1)
+
+        # A selftest run happens on a SEPARATE Spool instance -- simulating
+        # a different process (the CLI) against the SAME real spool root.
+        selftest_spool = Spool(root)
+        pub = FakePublisher()
+        run_selftest(pub, selftest_spool, batches=2, interval_s=0.0)
+
+        # The service's cache still says last_seq=1 -- it never saw the
+        # selftest's writes. Its next append (seq=2) collides with what the
+        # selftest already wrote to disk; this must raise cleanly, not
+        # silently duplicate.
+        with pytest.raises(ValueError, match="monotonic"):
+            service_spool.append("channels", 2, {"v": 1, "samples": []})
+
+        # Disk state is untouched by the rejected call, and the service
+        # recovers cleanly via the disk-authoritative next_seq().
+        assert list(service_spool.pending("channels")) == []
+        correct_seq = service_spool.next_seq("channels")
+        assert correct_seq > 2
+        service_spool.append("channels", correct_seq, {"v": 1, "samples": []})
+
+
 class TestMain:
     def test_fleet_disabled_returns_1_no_publisher_constructed(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture

@@ -211,6 +211,88 @@ class Spool:
         floor = _first_seq_of(last_segment) - 1
         return max(last, floor, self._watermark(lane))
 
+    def _tail_last_seq(self, lane: str) -> int | None:
+        """Peek the highest seq already on disk in O(tail), not O(whole active segment).
+
+        Appends only ever land at the end of the active segment, so the
+        highest already-written seq for the lane is always in that
+        segment's LAST complete line -- there's no need to parse every
+        earlier line the way `_scan_last_seq` does (that full scan exists
+        for crash-tail recovery on a lane's first touch, not for a cheap
+        per-call disk check). Reads backward from the end in a small number
+        of bounded, growing chunks instead of the whole file.
+
+        Safe to call while holding `self._lock`: no other `Spool` instance
+        can be mid-write to this segment concurrently, so the only reason
+        the tail could be unparsable is a stale unclean-shutdown remnant --
+        already handled by `_scan_last_seq`'s truncate-on-first-touch path,
+        not something this cheap peek needs to repair itself.
+
+        Returns:
+            The last complete line's `seq`, or `None` if there is no active
+            segment, it's empty, or its tail doesn't parse (the caller falls
+            back to the watermark / full scan in that case).
+
+        """
+        segments = self._segments(lane, create=False)
+        if not segments:
+            return None
+        path = segments[-1]
+        size = path.stat().st_size
+        if size == 0:
+            return None
+        chunk = 8192
+        window = 0
+        data = b""
+        with open(path, "rb") as handle:
+            while True:
+                window = min(size, window + chunk)
+                handle.seek(size - window)
+                data = handle.read(window)
+                if data.rstrip(b"\n").count(b"\n") >= 1 or window >= size:
+                    break
+        last_line = data.rstrip(b"\n").rsplit(b"\n", 1)[-1]
+        if not last_line:
+            return None
+        try:
+            record = json.loads(last_line.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        seq = record.get("seq")
+        return seq if isinstance(seq, int) else None
+
+    def _current_last_seq(self, lane: str) -> int:
+        """Disk-authoritative last-written seq for `lane` -- cheap on the common path.
+
+        Codex round 3 follow-up (PR #214, P1): `next_seq()`/`append()`
+        previously trusted `self._last_seq[lane]` unconditionally once a
+        lane had been touched once in this process's lifetime, checking
+        monotonicity only against that in-process cache. `exclusive()`
+        (P1b) serializes concurrent DISK ACCESS, but does nothing to refresh
+        a DIFFERENT already-open `Spool` instance's stale cache -- a
+        long-lived instance (e.g. a `FleetService`) whose cache predates an
+        intervening writer on the same real spool (e.g. a selftest run)
+        would accept/allocate a seq that collides with what's already on
+        disk: a silent DUPLICATE write, not the clean `ValueError` the
+        single-writer invariant is supposed to guarantee.
+
+        First touch (lane not yet in `self._last_seq`) keeps the existing,
+        crash-tail-tolerant `_scan_last_seq` path unchanged -- unavoidable
+        and needed exactly once, to recover from (and truncate) a possible
+        unclean-shutdown remnant. Every later call instead re-derives the
+        floor from disk cheaply: the watermark plus `_tail_last_seq`'s
+        tail-only peek, maxed against the cache purely as a floor (never a
+        source of truth) so this can never regress below what THIS instance
+        itself already wrote.
+        """
+        if lane not in self._last_seq:
+            self._last_seq[lane] = self._scan_last_seq(lane)
+            return self._last_seq[lane]
+        tail = self._tail_last_seq(lane)
+        disk_floor = self._watermark(lane) if tail is None else tail
+        disk_floor = max(disk_floor, self._watermark(lane))
+        return max(disk_floor, self._last_seq[lane])
+
     def exclusive(self, timeout: float = 5.0) -> filelock.AcquireReturnProxy:
         """Hold this spool's lock across an extended, multi-call critical section.
 
@@ -260,6 +342,13 @@ class Spool:
     def next_seq(self, lane: str) -> int:
         """Get the next sequence number for a lane.
 
+        Disk-authoritative (Codex round 3 follow-up, PR #214 P1): re-derives
+        the floor from disk on every call after the lane's first touch --
+        see `_current_last_seq` -- so a concurrent writer (a different
+        `Spool` instance on the same root) that advanced the lane since this
+        instance last looked is reflected here too, not just in `append()`'s
+        rejection.
+
         Args:
             lane: Lane name.
 
@@ -272,9 +361,7 @@ class Spool:
 
         """
         with self._lock:
-            if lane not in self._last_seq:
-                self._last_seq[lane] = self._scan_last_seq(lane)
-            return self._last_seq[lane] + 1
+            return self._current_last_seq(lane) + 1
 
     # -- append ----------------------------------------------------------------
 
@@ -287,7 +374,12 @@ class Spool:
             payload: JSON-serializable record.
 
         Raises:
-            ValueError: If seq is not monotonic.
+            ValueError: If seq is not monotonic against the DISK-authoritative
+                last-written seq (Codex round 3 follow-up, PR #214 P1) --
+                checked fresh on every call after the lane's first touch, not
+                just against this instance's in-process cache, so a
+                concurrent writer's advance on the same real spool root is
+                always caught cleanly here rather than silently duplicated.
             SpoolFullError: If lane is never-capped and write fails.
             SpoolError: If lane is capped and write fails.
             SpoolCorruptError: The lane's active segment has mid-file corruption
@@ -295,12 +387,10 @@ class Spool:
 
         """
         with self._lock:
-            if lane not in self._last_seq:
-                self._last_seq[lane] = self._scan_last_seq(lane)
-            if seq <= self._last_seq[lane]:
-                raise ValueError(
-                    f"seq must be monotonic: got {seq}, last was {self._last_seq[lane]}"
-                )
+            current = self._current_last_seq(lane)
+            self._last_seq[lane] = current
+            if seq <= current:
+                raise ValueError(f"seq must be monotonic: got {seq}, last was {current}")
             line = json.dumps({"seq": seq, "payload": payload}) + "\n"
             # Drop-oldest semantics extend to drop-oversized (Codex review):
             # _evict() only ever unlinks while more than one segment exists,

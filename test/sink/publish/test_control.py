@@ -8,6 +8,7 @@ raises before the holder is ever touched.
 """
 
 import importlib
+import os
 import pathlib
 import stat
 import sys
@@ -738,6 +739,39 @@ class TestStreamTopics:
         assert "persist_error" in result
         assert "unparsable manifest" in result["persist_error"]
         assert manifest_path.read_text() == original_text
+
+    @pytest.mark.skipif(
+        hasattr(os, "geteuid") and os.geteuid() == 0,
+        reason="root bypasses directory permission checks",
+    )
+    def test_read_only_manifest_directory_does_not_undo_a_successful_restart(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """P2 follow-up (Codex round 3, PR #214): `_persist_or_report` widened
+        to also catch `OSError` -- a read-only manifest directory (disk full,
+        permission denied, etc) must not undo an already-successful restart
+        either, same as the unparsable-manifest StreamConfigError case."""
+        old_service = self._running_multi_topic_service(tmp_path)
+        manifest_dir = tmp_path / "readonly"
+        manifest_dir.mkdir(mode=0o555)
+        manifest_path = manifest_dir / "manifest.yaml"
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+
+        try:
+            result = control.stream_topics(
+                channels=[{"topic": "/odom", "fields": ["y"], "rate_hz": 2}], events=None
+            )
+
+            new_service = startup.fleet_service()
+            assert new_service is not None
+            assert new_service is not old_service
+            names = {c["c"] for c in new_service.channels}
+            assert {"imu.x", "odom.y"} <= names
+            assert result["persisted"] is False
+            assert "persist_error" in result
+            assert not manifest_path.exists()
+        finally:
+            manifest_dir.chmod(0o755)  # restore write access so tmp_path cleanup can proceed
 
     def test_same_topic_rule_is_replaced_not_duplicated(self, tmp_path: pathlib.Path) -> None:
         self._running_multi_topic_service(tmp_path)

@@ -340,14 +340,15 @@ def stream_topics(channels: list[dict] | None, events: list[dict] | None) -> dic
         in a later release). A WARNING is logged once whenever
         `events_configured` is non-empty.
 
-        Live-vs-persisted atomicity (Codex round 3, P2): the restart above
-        has ALREADY happened by the time persistence is attempted, so a
-        persist failure here (e.g. an unparsable manifest) does NOT raise --
-        raising would misreport a live change that genuinely succeeded as a
-        total failure. Instead `persisted` is `False` and `persist_error`
-        carries the manifest problem, so the caller sees the true state:
-        the robot IS running the new rules; the manifest just doesn't
-        reflect it yet.
+        Live-vs-persisted atomicity (Codex round 3, P2; widened P2 follow-up
+        on PR #214 to also cover `OSError`): the restart above has ALREADY
+        happened by the time persistence is attempted, so a persist failure
+        here (an unparsable manifest, or an `OSError` from a read-only
+        manifest directory, a full disk, etc) does NOT raise -- raising
+        would misreport a live change that genuinely succeeded as a total
+        failure. Instead `persisted` is `False` and `persist_error` carries
+        the problem, so the caller sees the true state: the robot IS running
+        the new rules; the manifest just doesn't reflect it yet.
 
     Raises:
         FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
@@ -439,12 +440,14 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
         in a later release). A WARNING is logged once whenever
         `events_configured` is non-empty.
 
-        Live-vs-persisted atomicity (Codex round 3, P2): same ruling as
-        `stream_topics`'s -- when `changed` is True, the restart has ALREADY
-        happened by the time persistence is attempted, so a persist failure
-        (e.g. an unparsable manifest) does NOT raise; `persisted` is `False`
-        and `persist_error` carries the manifest problem instead, so a
-        genuinely successful live change is never misreported as a failure.
+        Live-vs-persisted atomicity (Codex round 3, P2; widened P2 follow-up
+        on PR #214 to also cover `OSError`): same ruling as `stream_topics`'s
+        -- when `changed` is True, the restart has ALREADY happened by the
+        time persistence is attempted, so a persist failure (an unparsable
+        manifest, or an `OSError` from a read-only manifest directory, a
+        full disk, etc) does NOT raise; `persisted` is `False` and
+        `persist_error` carries the problem instead, so a genuinely
+        successful live change is never misreported as a failure.
 
     Raises:
         FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
@@ -747,14 +750,21 @@ def _persist_or_report(streams_manifest: dict | None) -> tuple[bool, str | None]
 
     By the time `stream_topics`/`stop_streams` call this, `_restart_service`
     has ALREADY succeeded -- the robot is really running the new rules. If
-    the on-disk manifest happens to be unparsable, `_persist_streams` raises
-    `StreamConfigError` (correctly refusing to clobber a human-maintained
-    file it can't safely read first); letting that propagate here would
-    surface as a raised exception from `stream_topics`/`stop_streams`, which
-    reads to a caller as "nothing happened" when actually the live change
-    DID happen and only the manifest write failed. So: catch it here, and
-    let the caller report `persisted=False` plus the error message alongside
-    its otherwise-successful result, instead of raising post-restart.
+    persisting that to disk fails, letting the exception propagate here
+    would surface as a raised exception from `stream_topics`/`stop_streams`,
+    which reads to a caller as "nothing happened" when actually the live
+    change DID happen and only the manifest write failed. So: catch it here,
+    and let the caller report `persisted=False` plus the error message
+    alongside its otherwise-successful result, instead of raising
+    post-restart.
+
+    Two failure modes are caught (Codex round 3, PR #214 P2 follow-up):
+    `StreamConfigError` (`_read_manifest_doc` refusing to clobber an
+    unparsable manifest it can't safely read first) and `OSError` (a
+    read-only manifest directory, a full disk, or any other failure from
+    `_persist_streams`'s `mkdir`/`mkstemp`/`fchmod`/write/`os.replace`
+    calls) -- both are equally "the live change succeeded, only the disk
+    write failed", so both get the same non-raising treatment.
 
     Returns:
         `(persisted, persist_error)`: `persist_error` is `None` on success
@@ -764,5 +774,5 @@ def _persist_or_report(streams_manifest: dict | None) -> tuple[bool, str | None]
     """
     try:
         return _persist_streams(streams_manifest), None
-    except StreamConfigError as exc:
+    except (StreamConfigError, OSError) as exc:
         return False, str(exc)

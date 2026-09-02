@@ -1235,11 +1235,12 @@ def stream_live_topics(
             (always ``False``: event rules are stored and forwarded but not
             evaluated until the event runtime ships -- configuring one now
             is forward-compatible, not a no-op). If the streaming change
-            itself succeeded but writing it back to the manifest failed
-            (e.g. an unparsable manifest file), this does not raise:
-            ``persisted`` is ``False`` and a ``persist_error`` message is
-            included, so the truthful state is reported -- the robot IS
-            running the new rules; only the on-disk manifest didn't get them.
+            itself succeeded but writing it back to the manifest failed (an
+            unparsable manifest file, a read-only manifest directory, a full
+            disk, etc), this does not raise: ``persisted`` is ``False`` and a
+            ``persist_error`` message is included, so the truthful state is
+            reported -- the robot IS running the new rules; only the on-disk
+            manifest didn't get them.
 
     Raises:
         StreamConfigError: An invalid rule, or no viable broker/covering
