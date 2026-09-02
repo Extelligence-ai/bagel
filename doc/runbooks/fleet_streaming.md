@@ -120,9 +120,13 @@ heartbeat and an event (exact expected values are in the contract doc's
 Conformance section), prints a one-line JSON summary, and exits 0.
 
 Run it with fleet streaming **paused or stopped**: it shares the robot's real
-spool lanes, and a concurrently running streaming service makes one side fail
-a sequence check. That failure is clean and harmless -- a typed error, exit
-code 1, nothing corrupted -- but the run doesn't count; pause and rerun.
+spool lanes and holds the spool lock for its entire run, so a concurrently
+running service's ingestion blocks until the selftest finishes -- sequence
+integrity is preserved either way, but on a high-rate robot the paused
+ingestion can surface as counted queue drops (`queue.dropped` in the next
+heartbeat). Pausing first avoids both the wait and the drops. If another
+writer already holds the lock, the selftest refuses with a typed error
+rather than waiting indefinitely.
 
 The selftest also refuses outright if either spool lane already has pending
 unacked backlog (e.g. a paused service's queued-but-unsent data) -- exit 1,
