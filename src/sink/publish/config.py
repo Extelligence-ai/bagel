@@ -44,7 +44,13 @@ def resolve_path(struct: pa.StructType, dotted: str, *, field_label: str) -> Acc
 
 
 def field_unit(struct: pa.StructType, dotted: str) -> str | None:
-    """Return the Arrow field metadata unit (key "unit") for a dotted path, if present.
+    """Return the Arrow field metadata unit (key "units") for a dotted path, if present.
+
+    "units" (plural) is the canonical key -- see ``src/topic/base.py``'s
+    ``UNITS_KEY`` -- and the only key any registry (e.g. ArduPilot's schema
+    builder) actually writes; there is no ``b"unit"`` (singular) fallback
+    since nothing produces that key (Codex review: this used to read the
+    wrong key and silently lost every real schema's unit metadata).
 
     Assumes ``dotted`` already resolves against ``struct`` (call after
     ``resolve_path`` succeeds); an unresolvable path yields ``None`` rather
@@ -62,7 +68,7 @@ def field_unit(struct: pa.StructType, dotted: str) -> str | None:
         current = field.type
     if field is None or field.metadata is None:
         return None
-    value = field.metadata.get(b"unit")
+    value = field.metadata.get(b"units")
     if value is None:
         return None
     return value.decode() if isinstance(value, bytes) else value
@@ -300,9 +306,26 @@ class StreamsConfig(BaseModel):
         """Build and validate streams config from dict."""
         if not isinstance(config, dict):
             raise StreamConfigError("streams", f"must be a mapping: {config!r}")
+        # Codex review (3909410575): unlike channels[]/events[] entries, the
+        # top-level streams: mapping never rejected an unknown key -- a typo
+        # (e.g. "channnels") silently fell back to the default empty list
+        # instead of erroring. Mirror ChannelRule.build/EventRule.build's style.
+        unknown = set(config) - {"broker", "flush_interval_s", "channels", "events"}
+        if unknown:
+            raise StreamConfigError("streams", f"unknown keys {sorted(unknown)}")
         broker = config.get("broker")
         if broker is not None:
-            parsed = urlparse(str(broker))
+            # urlparse() itself can raise a raw ValueError on a malformed
+            # authority (e.g. an unbalanced "["), and .port raises ValueError
+            # on a non-numeric or out-of-range port -- both must surface as a
+            # typed StreamConfigError, not an untyped crash (Codex review).
+            try:
+                parsed = urlparse(str(broker))
+                _ = parsed.port  # accessed only to trigger its ValueError on a bad port
+            except ValueError as exc:
+                raise StreamConfigError(
+                    "streams.broker", f"malformed mqtt:// or mqtts:// URL: {broker!r} ({exc})"
+                ) from exc
             if parsed.scheme not in ("mqtt", "mqtts") or not parsed.hostname:
                 raise StreamConfigError(
                     "streams.broker",

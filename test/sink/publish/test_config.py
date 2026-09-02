@@ -68,7 +68,9 @@ class TestResolvePath:
 
 class TestFieldUnit:
     def test_metadata_unit_is_returned(self) -> None:
-        struct = pa.struct([pa.field("temp", pa.float64(), metadata={"unit": "celsius"})])
+        # Canonical key is "units" (plural) -- src/topic/base.py's UNITS_KEY,
+        # the only key any registry (ArduPilot) actually writes.
+        struct = pa.struct([pa.field("temp", pa.float64(), metadata={"units": "celsius"})])
         assert config.field_unit(struct, "temp") == "celsius"
 
     def test_nested_metadata_unit_is_returned(self) -> None:
@@ -76,7 +78,7 @@ class TestFieldUnit:
             [
                 pa.field(
                     "outer",
-                    pa.struct([pa.field("temp", pa.float64(), metadata={"unit": "celsius"})]),
+                    pa.struct([pa.field("temp", pa.float64(), metadata={"units": "celsius"})]),
                 )
             ]
         )
@@ -87,6 +89,15 @@ class TestFieldUnit:
 
     def test_unresolvable_path_is_none(self) -> None:
         assert config.field_unit(IMU, "nope") is None
+
+    def test_singular_unit_key_is_not_read(self) -> None:
+        # Codex review (3909410560): field_unit() used to read the wrong key
+        # (b"unit", singular) -- src/topic/base.py's UNITS_KEY is "units"
+        # (plural), and no registry writes the singular form, so it is not
+        # kept as a fallback. A field carrying only the singular key must not
+        # resolve a unit.
+        struct = pa.struct([pa.field("temp", pa.float64(), metadata={"unit": "celsius"})])
+        assert config.field_unit(struct, "temp") is None
 
 
 class TestClassify:
@@ -257,6 +268,23 @@ class TestStreamsConfigBuild:
         with pytest.raises(StreamConfigError, match="broker"):
             config.StreamsConfig.build({"broker": url, "channels": []})
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "mqtt://host:notaport",
+            "mqtt://host:70000",
+            "mqtt://[",
+        ],
+    )
+    def test_malformed_broker_authority_raises_typed(self, url: str) -> None:
+        # Codex review (3909410567): urlparse() itself raises a raw ValueError
+        # on a bad port/authority, and StreamsConfig.build never accessed
+        # .port at all -- so a malformed broker URL either crashed with an
+        # untyped ValueError or passed validation silently. Both must now
+        # raise a typed StreamConfigError naming streams.broker.
+        with pytest.raises(StreamConfigError, match="broker"):
+            config.StreamsConfig.build({"broker": url, "channels": []})
+
     def test_plain_mqtt_scheme_is_syntactically_ok(self) -> None:
         # Whether mqtt:// is *allowed* is enrollment's dev-mode rule (step 6);
         # here it only has to parse.
@@ -307,6 +335,26 @@ class TestStreamsConfigBuild:
         with pytest.raises(StreamConfigError, match="streams.events"):
             config.StreamsConfig.build({"channels": [], "events": {"a": 1}})
 
+    def test_unknown_top_level_key_raises(self) -> None:
+        # Codex review (3909410575): a typo'd top-level key (e.g. "channnels")
+        # used to silently fall back to the default empty list instead of
+        # erroring -- mirror ChannelRule.build/EventRule.build's unknown-key
+        # style so a typo'd streams: section is never a silent no-op.
+        with pytest.raises(StreamConfigError, match=r"unknown keys \['channnels'\]"):
+            config.StreamsConfig.build(
+                {"channnels": [{"topic": "/t", "fields": ["a"], "rate_hz": 1}]}
+            )
+
+    def test_all_known_top_level_keys_are_accepted(self) -> None:
+        config.StreamsConfig.build(
+            {
+                "broker": "mqtts://fleet.example.com",
+                "flush_interval_s": 2,
+                "channels": [],
+                "events": [],
+            }
+        )
+
 
 class TestResolve:
     def _cfg(self, channels: list) -> config.StreamsConfig:
@@ -350,7 +398,7 @@ class TestResolve:
         assert c.unit is None
 
     def test_scalar_channel_picks_up_arrow_unit_metadata(self) -> None:
-        struct = pa.struct([pa.field("temp", pa.float64(), metadata={"unit": "celsius"})])
+        struct = pa.struct([pa.field("temp", pa.float64(), metadata={"units": "celsius"})])
         cfg = self._cfg([{"topic": "/env", "fields": ["temp"], "rate_hz": 1}])
         (c,) = cfg.resolve({"/env": struct})
         assert c.unit == "celsius"
