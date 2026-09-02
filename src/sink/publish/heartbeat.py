@@ -5,19 +5,22 @@ distribution first (works for a `uv sync`/pip-installed image); when that
 distribution metadata is absent -- as in a source checkout run via `uv run`
 without `uv sync --package/-e` having registered it, which is the live path
 in this worktree -- it falls back to parsing `pyproject.toml`'s
-`[project].version` directly. Either miss returns `"unknown"` rather than
-raising: a heartbeat must go out even if its own version string is a mystery.
+`[project].version` directly with a small zero-dependency regex, NOT
+`tomllib` (Codex review: `tomllib` is stdlib only on Python 3.11+, and this
+module must import cleanly on the 3.10-based ros2-humble/iron images too --
+a module-level `import tomllib` broke CI's image import-probe on those).
+Either miss returns `"unknown"` rather than raising: a heartbeat must go out
+even if its own version string is a mystery.
 """
 
 import importlib.metadata
 import logging
 import pathlib
+import re
 import shutil
 import threading
 import time
 from collections.abc import Callable
-
-import tomllib
 
 from src.sink.publish.publisher import Publisher, PublishError
 from src.sink.publish.spool import Spool
@@ -26,12 +29,23 @@ HEARTBEAT_INTERVAL_S = 30.0
 
 _DISTRIBUTION_NAME = "bagel"
 
+_VERSION_LINE_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
 
-def _pyproject_version() -> str:
-    """Read `[project].version` from the repo's pyproject.toml (fallback path)."""
-    root = pathlib.Path(__file__).resolve().parents[3]
-    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    return str(data["project"]["version"])
+
+def _pyproject_version(root: pathlib.Path | None = None) -> str:
+    """Read `[project].version` from a pyproject.toml (fallback path).
+
+    Parsed with a plain regex rather than `tomllib` -- zero dependencies, and
+    it works on every Python this repo targets (not just 3.11+). `root`
+    defaults to the repo root inferred from this file's location; a caller
+    (tests) may pass a different directory containing its own pyproject.toml.
+    """
+    root = root if root is not None else pathlib.Path(__file__).resolve().parents[3]
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    match = _VERSION_LINE_RE.search(text)
+    if match is None:
+        raise ValueError(f"no version = \"...\" line found in {root / 'pyproject.toml'}")
+    return match.group(1)
 
 
 def bagel_version() -> str:

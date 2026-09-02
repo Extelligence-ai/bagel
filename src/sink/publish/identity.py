@@ -101,6 +101,18 @@ def _url_passes_scheme_gate(url: str) -> bool:
     return bool(parsed.hostname) and _connect._is_local_or_private(parsed.hostname)
 
 
+def _validate_enroll_url(enroll_url: str) -> None:
+    """Validate `enroll()`'s URL: http(s) scheme, then the scheme gate.
+
+    Split out of `enroll()` to keep that function's cyclomatic complexity in
+    check after the Codex-review scheme-gate check added a branch to it.
+    """
+    if not enroll_url.startswith(("https://", "http://")):
+        raise ValueError(f"enroll_url must be http(s): {enroll_url}")
+    if not _url_passes_scheme_gate(enroll_url):
+        raise EnrollmentError(0, "insecure enroll_url")
+
+
 @dataclasses.dataclass
 class Identity:
     """A robot's enrolled fleet identity: certs on disk plus broker metadata.
@@ -229,10 +241,7 @@ def enroll(token: str, enroll_url: str, directory: pathlib.Path) -> Identity:
             send the one-time token in cleartext).
 
     """
-    if not enroll_url.startswith(("https://", "http://")):
-        raise ValueError(f"enroll_url must be http(s): {enroll_url}")
-    if not _url_passes_scheme_gate(enroll_url):
-        raise EnrollmentError(0, "insecure enroll_url")
+    _validate_enroll_url(enroll_url)
 
     private_key_pem, csr_pem = generate_key_and_csr()
 

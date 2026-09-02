@@ -293,6 +293,31 @@ def _resolve_channel_rule(
     return resolved
 
 
+def _validate_broker(broker: object) -> None:
+    """Validate an optional `streams.broker` URL (mqtt(s):// scheme + host + port).
+
+    Split out of `StreamsConfig.build` to keep that method's cyclomatic
+    complexity in check after the Codex-review fixes below added branches to it.
+
+    urlparse() itself can raise a raw ValueError on a malformed authority
+    (e.g. an unbalanced "["), and .port raises ValueError on a non-numeric or
+    out-of-range port -- both must surface as a typed StreamConfigError, not
+    an untyped crash (Codex review).
+    """
+    try:
+        parsed = urlparse(str(broker))
+        _ = parsed.port  # accessed only to trigger its ValueError on a bad port
+    except ValueError as exc:
+        raise StreamConfigError(
+            "streams.broker", f"malformed mqtt:// or mqtts:// URL: {broker!r} ({exc})"
+        ) from exc
+    if parsed.scheme not in ("mqtt", "mqtts") or not parsed.hostname:
+        raise StreamConfigError(
+            "streams.broker",
+            f"must be an mqtt:// or mqtts:// URL with a host: {broker!r}",
+        )
+
+
 class StreamsConfig(BaseModel):
     """The whole `streams:` manifest section, shape-validated."""
 
@@ -315,22 +340,7 @@ class StreamsConfig(BaseModel):
             raise StreamConfigError("streams", f"unknown keys {sorted(unknown)}")
         broker = config.get("broker")
         if broker is not None:
-            # urlparse() itself can raise a raw ValueError on a malformed
-            # authority (e.g. an unbalanced "["), and .port raises ValueError
-            # on a non-numeric or out-of-range port -- both must surface as a
-            # typed StreamConfigError, not an untyped crash (Codex review).
-            try:
-                parsed = urlparse(str(broker))
-                _ = parsed.port  # accessed only to trigger its ValueError on a bad port
-            except ValueError as exc:
-                raise StreamConfigError(
-                    "streams.broker", f"malformed mqtt:// or mqtts:// URL: {broker!r} ({exc})"
-                ) from exc
-            if parsed.scheme not in ("mqtt", "mqtts") or not parsed.hostname:
-                raise StreamConfigError(
-                    "streams.broker",
-                    f"must be an mqtt:// or mqtts:// URL with a host: {broker!r}",
-                )
+            _validate_broker(broker)
         flush = config.get("flush_interval_s", 1.0)
         if not isinstance(flush, int | float) or isinstance(flush, bool) or flush <= 0:
             raise StreamConfigError("streams.flush_interval_s", f"must be > 0: {flush!r}")

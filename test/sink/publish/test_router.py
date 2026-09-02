@@ -602,7 +602,10 @@ class TestStreamRouterStopJoinTimeout:
         assert join_calls[0] is not None and join_calls[0] > 10.0
 
     def test_stop_logs_warning_when_thread_does_not_terminate(
-        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         import logging
 

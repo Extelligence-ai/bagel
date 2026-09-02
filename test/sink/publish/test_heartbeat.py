@@ -181,6 +181,87 @@ class TestBagelVersion:
         assert heartbeat_mod.bagel_version() == "unknown"
 
 
+class TestPyprojectVersionRegexFallback:
+    """CI P0 (Codex review): heartbeat.py's module-level `import tomllib` broke the
+    ros2-humble/iron Docker images (Python 3.10 -- tomllib is stdlib only on
+    3.11+), redding out CI's image import-probe on PR 210. `_pyproject_version()`
+    now parses `[project].version` with a zero-dependency regex instead.
+    """
+
+    def test_parses_version_via_regex_zero_deps(self, tmp_path: pathlib.Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "bagel"\nversion = "9.9.9"\ndescription = "x"\n'
+        )
+        assert heartbeat_mod._pyproject_version(root=tmp_path) == "9.9.9"
+
+    def test_finds_the_version_line_among_surrounding_content(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "bagel"\nversion = "2.3.0"\n\n[tool.other]\nfoo = "bar"\n'
+        )
+        assert heartbeat_mod._pyproject_version(root=tmp_path) == "2.3.0"
+
+    def test_raises_when_no_version_line_present(self, tmp_path: pathlib.Path) -> None:
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "bagel"\n')
+        with pytest.raises(Exception):  # noqa: B017 -- bagel_version() catches broadly
+            heartbeat_mod._pyproject_version(root=tmp_path)
+
+    def test_raises_when_pyproject_missing(self, tmp_path: pathlib.Path) -> None:
+        with pytest.raises(Exception):  # noqa: B017 -- bagel_version() catches broadly
+            heartbeat_mod._pyproject_version(root=tmp_path)
+
+    def test_bagel_version_falls_back_to_regex_parsed_pyproject_version(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import importlib.metadata
+
+        (tmp_path / "pyproject.toml").write_text('[project]\nversion = "7.7.7"\n')
+        real_pyproject_version = heartbeat_mod._pyproject_version
+
+        def raise_not_found(_name: str) -> str:
+            raise importlib.metadata.PackageNotFoundError("bagel")
+
+        monkeypatch.setattr(heartbeat_mod.importlib.metadata, "version", raise_not_found)
+        monkeypatch.setattr(
+            heartbeat_mod, "_pyproject_version", lambda: real_pyproject_version(tmp_path)
+        )
+
+        assert heartbeat_mod.bagel_version() == "7.7.7"
+
+    def test_bagel_version_returns_unknown_when_pyproject_has_no_version_line(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import importlib.metadata
+
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "bagel"\n')  # no version
+        real_pyproject_version = heartbeat_mod._pyproject_version
+
+        def raise_not_found(_name: str) -> str:
+            raise importlib.metadata.PackageNotFoundError("bagel")
+
+        monkeypatch.setattr(heartbeat_mod.importlib.metadata, "version", raise_not_found)
+        monkeypatch.setattr(
+            heartbeat_mod, "_pyproject_version", lambda: real_pyproject_version(tmp_path)
+        )
+
+        assert heartbeat_mod.bagel_version() == "unknown"
+
+    def test_tomllib_is_not_imported_by_this_module(self) -> None:
+        # The whole point: tomllib is 3.11+ stdlib only, and this module must
+        # import cleanly on the 3.10-based ros2-humble/iron images.
+        assert not hasattr(heartbeat_mod, "tomllib")
+
+    def test_heartbeat_module_does_not_import_tomllib_eagerly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for name in [m for m in sys.modules if m == "tomllib" or m.startswith("tomllib.")]:
+            monkeypatch.delitem(sys.modules, name)
+        monkeypatch.delitem(sys.modules, "src.sink.publish.heartbeat", raising=False)
+        importlib.import_module("src.sink.publish.heartbeat")
+        assert not any(m == "tomllib" or m.startswith("tomllib.") for m in sys.modules)
+
+
 class TestDiskFree:
     def test_matches_shutil_disk_usage(self, tmp_path: pathlib.Path) -> None:
         import shutil
