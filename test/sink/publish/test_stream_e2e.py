@@ -105,7 +105,7 @@ def _drain(inbox: Inbox, topic: str, timeout_s: float = 10.0) -> tuple[str, byte
 
 
 class FakeSink:
-    """Minimal TopicSink double: the `_buffers`/`subscribed_topics` seam FleetService uses."""
+    """Minimal TopicSink double: the `buffer_writer`/`subscribed_topics` seam FleetService uses."""
 
     def __init__(self, buffers: dict[str, "TopicBufferWriter"]) -> None:
         self._buffers = buffers
@@ -113,6 +113,9 @@ class FakeSink:
     @property
     def subscribed_topics(self) -> list[str]:
         return list(self._buffers)
+
+    def buffer_writer(self, topic: str) -> "TopicBufferWriter":
+        return self._buffers[topic]
 
 
 def _real_writer(tmp_path: pathlib.Path, topic: str = "/imu") -> "TopicBufferWriter":

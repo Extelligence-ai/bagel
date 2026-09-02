@@ -12,8 +12,8 @@ SKILL_FILES = sorted(pathlib.Path("plugin/skills").glob("*/SKILL.md"))
 POML_ROUTE_PATTERN = re.compile(r"src/agent/[\w/]+\.poml")
 
 
-def test_exactly_four_skills_exist() -> None:
-    assert len(SKILL_FILES) == 4
+def test_exactly_five_skills_exist() -> None:
+    assert len(SKILL_FILES) == 5
 
 
 def test_every_skill_has_frontmatter_name_and_description() -> None:
