@@ -29,6 +29,7 @@ import importlib.util
 import logging
 import os
 import pathlib
+import stat
 import tempfile
 from collections.abc import Callable
 
@@ -252,7 +253,18 @@ def stream_topics(channels: list[dict] | None, events: list[dict] | None) -> dic
     Raises:
         FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
         StreamConfigError: an invalid rule dict, or `_restart_service`'s own
-            failure modes (no covering sink, no viable broker, etc).
+            failure modes (no covering sink for the merged topics, no
+            viable broker, etc).
+        FleetNotEnrolledError: `_restart_service`'s `resolve_publisher_kwargs`
+            call -- no broker configured and this robot isn't enrolled.
+
+        Failure-outcome contract (see `_restart_service`'s docstring): every
+        one of the above is checked BEFORE the old service (if any) is
+        touched, so a raise here always leaves a previously-running service
+        running, completely untouched. The only way this call can leave the
+        holder `None` on a raise is a failure INSIDE the new
+        `FleetService.start()` itself, which necessarily runs after the old
+        service has already been stopped.
 
     """
     require_fleet()
@@ -300,14 +312,22 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
     starts one (that is `stream_topics`'s job) -- it only updates the
     persisted manifest.
 
+    A no-op (nothing matched) never touches the manifest either -- not just
+    "no restart": `_persist_streams` is skipped entirely, so a manifest that
+    had no `streams:` section stays exactly as it was (byte-identical), and
+    `persisted` reports `False`.
+
     Returns:
         `{"service": "running" | "stopped", "channels": list[dict],
         "events": list[str], "changed": bool, "persisted": bool}`.
 
     Raises:
         FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
-        StreamConfigError: via `_restart_service` (no covering sink, etc) --
-            only reachable when something changed and a service is running.
+        FleetNotEnrolledError | StreamConfigError: via `_restart_service`
+            (no covering sink, no viable broker, etc) -- only reachable when
+            something changed and a service is running; per its failure-
+            outcome contract, such a failure leaves the OLD service running
+            untouched (see `_restart_service`'s docstring).
 
     """
     require_fleet()
@@ -332,7 +352,10 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
         _restart_service(remaining)
         service = startup.fleet_service()
 
-    persisted = _persist_streams(remaining.to_manifest())
+    # A pure no-op must not touch the manifest at all (not even a rewrite
+    # with identical content) -- a manifest with no `streams:` section stays
+    # byte-identical, and `persisted` truthfully reports `False`.
+    persisted = _persist_streams(remaining.to_manifest()) if changed else False
     return {
         "service": "running" if service is not None else "stopped",
         "channels": service.channels if service is not None else [],
@@ -401,40 +424,88 @@ def _current_streams() -> config.StreamsConfig:
     return loaded if loaded is not None else config.StreamsConfig()
 
 
+def _no_covering_sink_error(source_topics: set[str]) -> StreamConfigError:
+    return StreamConfigError(
+        "streams",
+        "all streams: source topics "
+        f"{sorted(source_topics)} must be subscribed within a SINGLE "
+        "startup manifest 'subscriptions:' entry -- fleet streaming "
+        "(v1) cannot span multiple subscription entries' sinks; list "
+        "every one of these topics under one entry's 'topics:'",
+    )
+
+
+def _resolve_sink(streams: config.StreamsConfig, old: FleetService | None) -> object:
+    """Pick the sink `_restart_service` will (re)build against -- raises before anything else.
+
+    When a service is already running, its sink is reused ONLY if it still
+    covers every one of `streams`'s source topics -- checked HERE, not left
+    to `FleetService.start()`'s own `StreamsConfig.resolve()`, precisely so
+    an uncovered/typo'd topic raises before `old` is ever touched (Codex
+    review: the previous version deferred this check until after `old` had
+    already been stopped and the holder cleared, so a bad rule call
+    destroyed a working service instead of being rejected cleanly). With no
+    service running, the first of `base.live_sinks()` whose
+    `subscribed_topics` cover every source topic is used instead (reusing
+    `startup._fleet_source_topics`/`_find_covering_sink`).
+    """
+    source_topics = startup._fleet_source_topics(streams)
+    if old is not None:
+        if not source_topics <= set(old.sink.subscribed_topics):
+            raise _no_covering_sink_error(source_topics)
+        return old.sink
+    candidates = [(s, s.subscribed_topics) for s in base.live_sinks()]
+    sink = startup._find_covering_sink(source_topics, candidates)
+    if sink is None:
+        raise _no_covering_sink_error(source_topics)
+    return sink
+
+
+def _load_identity_or_none() -> identity.Identity | None:
+    """Single-load `identity.load_identity`, `None` on `FleetNotEnrolledError`.
+
+    NOT `is_enrolled()` followed by a separate `load_identity()` call --
+    that two-call shape has the same TOCTOU `fleet_status()` was fixed for
+    (Task 4's carried finding): a corrupt/deleted identity between the two
+    calls would raise here instead of degrading to "unenrolled".
+    """
+    try:
+        return identity.load_identity(settings.FLEET_IDENTITY_DIRECTORY)
+    except FleetNotEnrolledError:
+        return None
+
+
 def _restart_service(streams: config.StreamsConfig) -> None:
     """Rebuild path for `stream_topics`/`stop_streams` (mirrors `startup._start_fleet`).
 
-    1. Pick the sink: the CURRENT service's, if one is running (its
-       `FleetService.start()`/`StreamsConfig.resolve()` will itself raise a
-       typed `StreamConfigError` if `streams` now references a topic that
-       sink never subscribed); otherwise the first of `base.live_sinks()`
-       whose `subscribed_topics` cover every source topic (reusing
-       `startup._fleet_source_topics`/`_find_covering_sink`) -- none found
-       raises `StreamConfigError` BEFORE anything else is touched.
-    2. Best-effort stop the old service (if any) and clear the holder.
-    3. Build a fresh publisher/spool/`FleetService` from `streams` and the
-       current enrollment state, start it, and install it as the holder.
+    Failure-outcome contract: every check that can be done WITHOUT touching
+    the old service -- sink coverage (`_resolve_sink`), identity resolution
+    (`_load_identity_or_none`), broker/auth resolution
+    (`resolve_publisher_kwargs`), and constructing the new publisher/spool/
+    `FleetService` -- runs first, while the old service (if any) is still
+    fully intact and untouched. Only once ALL of that has succeeded is the
+    old service stopped and the holder cleared. So: a validation failure
+    (bad topic, no viable broker, etc) always leaves the OLD service running
+    exactly as it was; the only way this call can leave the holder `None` is
+    a failure INSIDE the new `FleetService.start()` itself, which runs after
+    the old service has already been torn down (there is no way to
+    interleave "start the new one" before "stop the old one" -- they would
+    otherwise both be tapping the same sink's buffers at once).
 
     Any failure here propagates typed -- unlike `startup._start_fleet`
     (a boot-time path that swallows everything into a report), these are
     interactive tools: a caller needs to see exactly why a restart failed.
     """
     old = startup.fleet_service()
-    if old is not None:
-        sink = old.sink
-    else:
-        source_topics = startup._fleet_source_topics(streams)
-        candidates = [(s, s.subscribed_topics) for s in base.live_sinks()]
-        sink = startup._find_covering_sink(source_topics, candidates)
-        if sink is None:
-            raise StreamConfigError(
-                "streams",
-                "all streams: source topics "
-                f"{sorted(source_topics)} must be subscribed within a SINGLE "
-                "startup manifest 'subscriptions:' entry -- fleet streaming "
-                "(v1) cannot span multiple subscription entries' sinks; list "
-                "every one of these topics under one entry's 'topics:'",
-            )
+    sink = _resolve_sink(streams, old)
+
+    identity_obj = _load_identity_or_none()
+    publisher_kwargs = resolve_publisher_kwargs(streams, identity_obj)
+    publisher = MqttPublisher(**publisher_kwargs)
+    spool = Spool.for_robot(identity_obj.robot if identity_obj is not None else "dev/robot")
+    service = FleetService(
+        sink=sink, streams=streams, publisher=publisher, spool=spool, identity=identity_obj
+    )
 
     if old is not None:
         try:
@@ -444,14 +515,6 @@ def _restart_service(streams: config.StreamsConfig) -> None:
         finally:
             startup.set_fleet_service(None)
 
-    directory = settings.FLEET_IDENTITY_DIRECTORY
-    identity_obj = identity.load_identity(directory) if identity.is_enrolled(directory) else None
-    publisher_kwargs = resolve_publisher_kwargs(streams, identity_obj)
-    publisher = MqttPublisher(**publisher_kwargs)
-    spool = Spool.for_robot(identity_obj.robot if identity_obj is not None else "dev/robot")
-    service = FleetService(
-        sink=sink, streams=streams, publisher=publisher, spool=spool, identity=identity_obj
-    )
     service.start()
     startup.set_fleet_service(service)
 
@@ -494,11 +557,20 @@ def _persist_streams(streams_manifest: dict | None) -> bool:
     (`_read_manifest_doc` -- missing -> `{}`, unparsable -> raises rather
     than clobbering a human-maintained file), updates just the `"streams"`
     key, and writes the whole document back atomically (sibling tempfile +
-    `os.replace`) so a crash mid-write never corrupts it.
+    `os.replace`) so a crash mid-write never corrupts it. When the manifest
+    file already exists, its permission mode is copied onto the tempfile
+    before the replace -- `tempfile.mkstemp` creates at 0600 by default, so
+    without this a manifest a human left group/other-readable (or made
+    read-only) would silently end up 0600 after its first control-plane
+    write. A freshly-created manifest (no prior file) keeps that 0600
+    default -- there is no prior mode to preserve, and this file can carry
+    fleet broker configuration.
     """
     path = _manifest_path()
     if path is None:
         return False
+    preexisting = path.is_file()
+    mode = stat.S_IMODE(path.stat().st_mode) if preexisting else None
     doc = _read_manifest_doc()
     if streams_manifest is None:
         doc.pop("streams", None)
@@ -508,6 +580,8 @@ def _persist_streams(streams_manifest: dict | None) -> bool:
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     tmp = pathlib.Path(tmp_name)
     try:
+        if mode is not None:
+            os.fchmod(fd, mode)
         with os.fdopen(fd, "w") as handle:
             yaml.safe_dump(doc, handle, sort_keys=False)
         os.replace(tmp, path)

@@ -9,6 +9,7 @@ raises before the holder is ever touched.
 
 import importlib
 import pathlib
+import stat
 import sys
 
 import pyarrow as pa
@@ -551,6 +552,22 @@ class TestPersistStreamsManifestHandling:
         doc = yaml.safe_load(manifest_path.read_text())
         assert doc == {"streams": {"channels": [], "events": []}}
 
+    def test_preserves_the_manifest_files_existing_permission_mode(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`tempfile.mkstemp` creates at 0600 by default -- without copying the
+        pre-existing file's mode onto the tempfile before `os.replace`, a
+        manifest a human left more permissive (or read-only) would silently
+        end up 0600 after its first control-plane write."""
+        manifest_path = tmp_path / "manifest.yaml"
+        manifest_path.write_text(yaml.safe_dump({"subscriptions": []}))
+        manifest_path.chmod(0o644)
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+
+        control._persist_streams({"channels": [], "events": []})
+
+        assert stat.S_IMODE(manifest_path.stat().st_mode) == 0o644
+
 
 class TestStreamTopics:
     """`stream_topics` validates, merges onto the current config, restarts, persists."""
@@ -676,6 +693,93 @@ class TestStreamTopics:
         assert result["persisted"] is False
         assert startup.fleet_service() is not None
 
+    def test_uncovered_topic_raises_and_leaves_the_original_service_running(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Codex review (F1): the coverage check must run BEFORE the old service
+        is stopped -- a typo'd/uncovered topic must not destroy a working
+        service. The OLD service object stays in the holder (identity check,
+        not just "a" service) and is still fully functional afterward."""
+        old_service = self._running_multi_topic_service(tmp_path)
+
+        with pytest.raises(StreamConfigError):
+            control.stream_topics(
+                channels=[{"topic": "/typo/topic", "fields": ["x"], "rate_hz": 5}], events=None
+            )
+
+        assert startup.fleet_service() is old_service
+        assert startup.fleet_service().status() is not None
+
+    def test_load_identity_or_none_is_a_single_load_not_check_then_load(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex review (F2): `_restart_service` must not reintroduce the
+        `is_enrolled()` + separate `load_identity()` TOCTOU that Task 4's
+        carried finding removed from `fleet_status()`. `is_enrolled` lying
+        `True` while `load_identity` always raises proves this helper never
+        consults `is_enrolled` at all -- a two-call implementation would
+        propagate the raise."""
+        monkeypatch.setattr(identity, "is_enrolled", lambda *_a, **_kw: True)
+
+        def _raise(*_a: object, **_kw: object) -> None:
+            raise FleetNotEnrolledError("deleted between checks")
+
+        monkeypatch.setattr(identity, "load_identity", _raise)
+
+        assert control._load_identity_or_none() is None
+
+    def test_identity_resolution_failure_never_stops_the_old_service_first(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex review (F2): identity resolution must happen BEFORE the old
+        service is stopped, combined with F1's pre-checks. Forcing
+        `load_identity` to degrade to `None` (a deleted/corrupt identity)
+        means `resolve_publisher_kwargs` itself then raises
+        `FleetNotEnrolledError` (no broker configured, no identity) -- and
+        that must still leave the OLD service running, untouched."""
+        old_service = self._running_multi_topic_service(tmp_path)
+
+        def _raise(*_a: object, **_kw: object) -> None:
+            raise FleetNotEnrolledError("deleted between checks")
+
+        monkeypatch.setattr(identity, "load_identity", _raise)
+
+        with pytest.raises(FleetNotEnrolledError):
+            control.stream_topics(
+                channels=[{"topic": "/odom", "fields": ["y"], "rate_hz": 2}], events=None
+            )
+
+        assert startup.fleet_service() is old_service
+        assert startup.fleet_service().status() is not None
+
+    def test_event_rule_merge_by_name_through_stream_topics(self, tmp_path: pathlib.Path) -> None:
+        """Integration-level (F5c): the merge-by-name ruling for events, exercised
+        through the public `stream_topics` entry point rather than the
+        `_merge_by_key` unit alone."""
+        self._running_multi_topic_service(tmp_path)
+
+        control.stream_topics(
+            channels=None,
+            events=[{"name": "hard_decel", "topic": "/imu", "predicate": "x < -10"}],
+        )
+        result = control.stream_topics(
+            channels=None,
+            events=[
+                {
+                    "name": "hard_decel",
+                    "topic": "/imu",
+                    "predicate": "x < -20",
+                    "pre_seconds": 5,
+                }
+            ],
+        )
+
+        new_service = startup.fleet_service()
+        assert len(new_service.streams.events) == 1
+        assert new_service.streams.events[0].predicate == "x < -20"
+        assert new_service.streams.events[0].pre_seconds == 5.0
+        assert result["events"] == ["hard_decel"]
+
 
 class TestStopStreams:
     """`stop_streams` removes rules by resolved name; unknown names are idempotent no-ops."""
@@ -770,6 +874,25 @@ class TestStopStreams:
 
         assert result["changed"] is False
         assert startup.fleet_service() is service
+
+    def test_unknown_name_no_op_does_not_touch_a_manifest_with_no_streams_section(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex review (F3): a pure no-op must skip `_persist_streams` entirely --
+        not just skip the restart -- so a manifest with no `streams:` section
+        stays byte-identical and `persisted` truthfully reports `False`."""
+        manifest_path = tmp_path / "manifest.yaml"
+        original_text = yaml.safe_dump({"subscriptions": []})
+        manifest_path.write_text(original_text)
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+        service, _pub = _running_service(tmp_path)
+        startup.set_fleet_service(service)
+
+        result = control.stop_streams(channels=["nope.x"], events=["nope"])
+
+        assert result["changed"] is False
+        assert result["persisted"] is False
+        assert manifest_path.read_text() == original_text
 
     def test_emptying_config_keeps_service_running_with_alive_heartbeat(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
