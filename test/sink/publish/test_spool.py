@@ -126,18 +126,23 @@ class TestCrashTolerance:
 class TestRollBoundaryCrashRecovery:
     """Final-review Critical 1: a crash exactly at a segment roll must not reset seq.
 
-    With SEGMENT_MAX_BYTES forced to 1, every append rolls into its own segment, so
-    each segment holds exactly one record and its name's first_seq equals that
-    record's seq. This makes "the last segment lost its only record" deterministic
-    to set up: whatever is left in segments[:-1] proves seqs up to
-    first_seq_of(segments[-1]) - 1 were durably written, even though the last
-    segment itself now looks empty (or wholly torn).
+    With SEGMENT_MAX_BYTES forced to 32 -- the exact byte length of one of
+    this test's `{"seq": i, "payload": {"n": i}}` JSONL lines, chosen so a
+    single record is never itself "oversized" (Codex review: append() now
+    drops a record whose own size alone exceeds SEGMENT_MAX_BYTES, which a
+    cap of 1 would trip on every record here) -- every append still rolls
+    into its own segment (one record's size plus the next exceeds the cap),
+    so each segment holds exactly one record and its name's first_seq equals
+    that record's seq. This makes "the last segment lost its only record"
+    deterministic to set up: whatever is left in segments[:-1] proves seqs up
+    to first_seq_of(segments[-1]) - 1 were durably written, even though the
+    last segment itself now looks empty (or wholly torn).
     """
 
     def test_empty_last_segment_floors_seq_at_segment_name_not_watermark(
         self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 1)
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 32)
         s = Spool(root)
         for i in range(1, 4):
             s.append("channels", i, {"n": i})
@@ -157,7 +162,7 @@ class TestRollBoundaryCrashRecovery:
     def test_torn_only_line_of_last_segment_floors_seq_at_segment_name_not_watermark(
         self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 1)
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 32)
         s = Spool(root)
         for i in range(1, 4):
             s.append("channels", i, {"n": i})
@@ -230,6 +235,58 @@ class TestTornTailSealedOnRestart:
             json.loads(line)
 
 
+class TestOversizedRecord:
+    def test_oversized_record_is_dropped_not_written(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex review (3905367602): _evict() only unlinks while
+        # len(segments) > 1, so a single record whose own serialized size
+        # exceeds SEGMENT_MAX_BYTES becomes its own sole/newest segment and
+        # can never be evicted -- unboundedly blowing past a capped lane's
+        # byte cap. Ruling: drop-oldest semantics extend to drop-oversized --
+        # append() must refuse to write a record that alone exceeds the cap.
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 200)
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})  # a normal record first
+
+        giant = {"pad": "x" * 1000}
+        s.append("channels", 2, giant)  # oversized: must be dropped, not written
+
+        assert [seq for seq, _ in s.pending("channels")] == [1]  # seq 2 never landed
+        assert s.stats()["channels"].evicted == 1
+
+        # The seq is still consumed (not reissued) and normal appends continue.
+        assert s.next_seq("channels") == 3
+        s.append("channels", 3, {"n": 3})
+        assert [seq for seq, _ in s.pending("channels")] == [1, 3]
+
+    def test_oversized_record_logs_one_warning(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 200)
+        s = Spool(root)
+        giant = {"pad": "x" * 1000}
+        with caplog.at_level(logging.WARNING):
+            s.append("channels", 1, giant)
+        warnings_ = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings_) == 1
+
+    def test_oversized_record_on_heartbeat_lane_is_still_written(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Ruling exception: heartbeat is the never-drop lane -- even an
+        # (in-practice-unreachable) oversized heartbeat payload must still
+        # be written, not dropped.
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 200)
+        s = Spool(root)
+        giant = {"pad": "x" * 1000}
+        s.append("heartbeat", 1, giant)
+        assert [seq for seq, _ in s.pending("heartbeat")] == [1]
+        assert s.stats()["heartbeat"].evicted == 0
+
+
 class TestReadPathPurity:
     def test_pending_and_stats_do_not_create_dirs_for_unknown_lane(
         self, root: pathlib.Path
@@ -269,6 +326,37 @@ class TestAckAndWatermark:
         s.ack("channels", 2)
         s.ack("channels", 1)  # stale: no-op
         assert [seq for seq, _ in s.pending("channels")] == [3]
+
+    def test_idempotent_reack_still_prunes_after_crash_between_watermark_and_prune(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex review (3905367589): ack()'s idempotent early-return
+        # (seq <= watermark) used to skip retrying _prune() entirely. If the
+        # process died after _write_watermarks() committed but before
+        # _prune() ran, the fully-acked segments were left un-pruned
+        # forever -- a repeated (idempotent) ack for the same seq never
+        # cleaned them up. Simulate that crash directly: write the
+        # watermark, but never call _prune, then re-ack the same seq.
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 120)
+        s = Spool(root)
+        for i in range(1, 10):
+            s.append("channels", i, {"pad": "x" * 40, "n": i})
+        segments_before = len(list((root / "channels").glob("segment-*.jsonl")))
+        assert segments_before >= 3
+
+        # Simulate "crashed after watermark write, before prune": write the
+        # watermark directly, bypassing ack()'s own _prune call.
+        s._write_watermarks({"channels": 8})
+        assert len(list((root / "channels").glob("segment-*.jsonl"))) == segments_before
+
+        # A re-ack for the SAME (already-watermarked) seq is the idempotent
+        # early-return path -- it must still prune against the persisted
+        # watermark.
+        s.ack("channels", 8)
+
+        remaining = sorted((root / "channels").glob("segment-*.jsonl"))
+        assert len(remaining) < segments_before
+        assert [seq for seq, _ in s.pending("channels")] == [9]
 
     def test_watermark_survives_restart_exactly(self, root: pathlib.Path) -> None:
         s = Spool(root)

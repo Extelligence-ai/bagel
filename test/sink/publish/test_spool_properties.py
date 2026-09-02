@@ -54,13 +54,34 @@ def test_capped_lane_bounded_and_ordered(
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(spool_mod, "SEGMENT_MAX_BYTES", 128)
         s = Spool(root, capped_lanes={"channels": cap})
+
+        def line_len(i: int) -> int:
+            return (
+                len(
+                    json.dumps({"seq": i, "payload": {"pad": "x" * record_pad, "n": i}}).encode(
+                        "utf-8"
+                    )
+                )
+                + 1
+            )
+
+        # A record's own line length grows with its seq's digit count, so
+        # "oversized" (Codex review: append() now drops -- rather than
+        # writes -- a record whose own serialized size alone exceeds
+        # SEGMENT_MAX_BYTES) is computed per-seq, not once for the whole run.
+        non_oversized_seqs = [
+            i for i in range(1, n_records + 1) if line_len(i) <= spool_mod.SEGMENT_MAX_BYTES
+        ]
         for i in range(1, n_records + 1):
             s.append("channels", i, {"pad": "x" * record_pad, "n": i})
         lane_bytes = sum(p.stat().st_size for p in (root / "channels").glob("*.jsonl"))
         assert lane_bytes <= cap + spool_mod.SEGMENT_MAX_BYTES
         pending = [seq for seq, _ in s.pending("channels")]
         assert pending == sorted(pending)
-        assert pending[-1] == n_records  # newest always survives
+        if non_oversized_seqs:
+            assert pending[-1] == non_oversized_seqs[-1]  # newest survivor
+        else:
+            assert pending == []  # every record was dropped, not written
         # No parse damage anywhere.
         for seg in (root / "channels").glob("*.jsonl"):
             for line in seg.read_text().splitlines():

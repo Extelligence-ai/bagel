@@ -14,6 +14,7 @@ lock (one lock per spool root, like the sink buffer's per-topic locks).
 
 import dataclasses
 import json
+import logging
 import os
 import pathlib
 import tempfile
@@ -235,6 +236,29 @@ class Spool:
                     f"seq must be monotonic: got {seq}, last was {self._last_seq[lane]}"
                 )
             line = json.dumps({"seq": seq, "payload": payload}) + "\n"
+            # Drop-oldest semantics extend to drop-oversized (Codex review):
+            # _evict() only ever unlinks while more than one segment exists,
+            # so a single record whose own serialized size alone exceeds
+            # SEGMENT_MAX_BYTES becomes its own sole/newest segment and can
+            # never be evicted -- unboundedly blowing past a capped lane's
+            # byte cap. Refuse to write it instead: consume the seq (so the
+            # caller's sequencing stays monotonic and no retry re-attempts
+            # the same doomed record) and count it as evicted. EXCEPTION:
+            # never drop on the never-drop "heartbeat" lane -- its payloads
+            # are tiny, so this is in practice unreachable, but the
+            # never-drop ruling still applies if it somehow were.
+            if lane != "heartbeat" and len(line.encode("utf-8")) > SEGMENT_MAX_BYTES:
+                self._evicted[lane] = self._evicted.get(lane, 0) + 1
+                logging.getLogger(__name__).warning(
+                    "lane '%s': dropping oversized record seq=%d (%d bytes > "
+                    "SEGMENT_MAX_BYTES=%d)",
+                    lane,
+                    seq,
+                    len(line.encode("utf-8")),
+                    SEGMENT_MAX_BYTES,
+                )
+                self._last_seq[lane] = seq
+                return
             segments = self._segments(lane)
             active = segments[-1] if segments else None
             rolled = False
@@ -259,11 +283,21 @@ class Spool:
 
         Advance-to semantics: any ``seq`` above the watermark becomes the new
         watermark (skipped seqs are treated as acked — the publisher sends and
-        acks in order); ``seq`` at or below it is an idempotent no-op.
+        acks in order); ``seq`` at or below it is an idempotent no-op on the
+        watermark itself, but still retries ``_prune`` (see below).
+
+        The idempotent (``seq`` at or below the watermark) path still calls
+        ``_prune`` against the persisted watermark before returning: if a
+        prior process died after ``_write_watermarks`` committed but before
+        ``_prune`` ran, the watermark is already at (or beyond) ``seq`` while
+        the segments it covers were never actually pruned — a repeated ack
+        for that same seq is exactly the retry that must finish the job, or
+        those segments are never pruned (Codex review).
         """
         with self._lock:
             marks = self._watermarks()
             if seq <= marks.get(lane, 0):
+                self._prune(lane, marks.get(lane, 0))
                 return
             marks[lane] = seq
             self._write_watermarks(marks)
@@ -323,9 +357,14 @@ class Spool:
         with self._lock:
             marks = self._watermarks()
             out: dict[str, LaneStats] = {}
-            lanes = {p.name for p in self._root.iterdir() if p.is_dir()}
+            # A lane whose every append so far was an oversized-and-dropped
+            # record (see `append()`) never gets a directory -- union in
+            # `self._evicted`'s lanes too, or that lane's evicted count would
+            # be invisible here even though it's real (Codex review: the
+            # counter must actually be observable, not just incremented).
+            lanes = {p.name for p in self._root.iterdir() if p.is_dir()} | set(self._evicted)
             for lane in sorted(lanes):
-                segments = self._segments(lane)
+                segments = self._segments(lane, create=False)
                 acked = marks.get(lane, 0)
                 last = self._last_seq.get(lane) or self._scan_last_seq(lane)
                 pending = sum(1 for _ in self.pending(lane))
