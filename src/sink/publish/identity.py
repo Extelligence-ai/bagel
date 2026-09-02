@@ -40,7 +40,14 @@ never stored, and never embedded in an ``EnrollmentError`` reason.
 of expiry: ``should_attempt_renewal`` decides when it is due, and ``renew``
 does the mTLS POST + atomic pointer swap. See ``renew()``'s docstring for
 the ordering guarantees and what it does NOT do (force a live publisher
-reconnect).
+reconnect). The renew response may itself carry a (new) ``renew_url``,
+rotating the base a future renewal targets -- e.g. a staging->prod cutover --
+without requiring a fresh enrollment.
+
+``delete_identity()`` is the ONLY deletion path ``unenroll`` uses: it removes
+the pointer set from a parsable identity.yaml plus anything on disk matching
+this module's own renewal-orphan naming patterns, all resolved-containment
+checked against the target directory first -- see its own docstring.
 """
 
 import dataclasses
@@ -76,6 +83,23 @@ _RENEWAL_MIN_INTERVAL_S = 86400
 # Statuses the cloud uses to mean "renewal isn't offered on this deployment
 # yet" (the flag is off) rather than "the request failed" -- expected, quiet.
 _RENEWAL_NOT_OFFERED_STATUSES = (404, 501)
+
+# delete_identity()'s pattern-glob sweep: the historical fixed names plus
+# every versioned basename _commit_renewed_files can ever produce
+# (``robot-<version>.key``/``.crt``, ``ca-<version>.crt``) -- this is how a
+# renewal orphan (a superseded pair identity.yaml no longer points at, left
+# behind by e.g. a crash during best-effort cleanup) still gets swept even
+# though identity.yaml's pointer set no longer names it. Non-recursive
+# (``Path.glob``, not ``rglob``) -- this module never nests files under
+# subdirectories of the identity directory.
+_DELETE_GLOB_PATTERNS = (
+    "robot.key",
+    "robot.crt",
+    "ca.crt",
+    "robot-*.key",
+    "robot-*.crt",
+    "ca-*.crt",
+)
 
 
 def _url_passes_scheme_gate(url: str) -> bool:
@@ -476,6 +500,116 @@ def is_enrolled(directory: pathlib.Path) -> bool:
     return True
 
 
+def delete_identity(directory: pathlib.Path) -> list[str]:
+    """Delete a stored identity under ``directory`` -- the ONLY deletion path ``unenroll`` uses.
+
+    ``directory`` is resolved first, and every path this function is about
+    to remove is resolved-containment checked against it (``Spool.for_robot``'s
+    belt-and-braces, applied here to reads-become-deletes) before anything is
+    unlinked:
+
+    1. If ``directory / "identity.yaml"`` doesn't exist, this is a no-op
+       returning ``[]`` -- nothing enrolled, nothing to do, so a repeat
+       ``unenroll`` call never raises.
+    2. ``load_identity(directory)`` is tried. If it parses, the deletion set
+       starts as ``{key_path, cert_path, ca_path}``: each must resolve
+       INSIDE ``directory`` or this raises ``ValueError`` immediately --
+       BEFORE any unlink -- so a hand-edited ``key_file: ../../victim``
+       pointer can never delete outside the directory. If it doesn't parse
+       (``FleetNotEnrolledError`` -- a corrupt identity.yaml), this step is
+       skipped entirely: a corrupt identity must still be removable via the
+       pattern sweep below, not permanently stuck.
+    3. This module's own naming patterns (see ``_DELETE_GLOB_PATTERNS``) are
+       globbed inside ``directory`` (non-recursive) to additionally sweep up
+       renewal orphans identity.yaml no longer points at. The same
+       containment check applies per-entry here too, but a failure here
+       SKIPS just that one entry rather than raising -- a symlink planted at
+       one of these names that resolves outside ``directory`` is left
+       completely alone (neither the link nor its target is touched); it
+       simply isn't included in what gets deleted. Unlike step 2's pointer
+       fields (which come from a trusted, single load), this is an
+       opportunistic best-effort sweep over whatever happens to match a
+       filename pattern, so one bad entry must not block cleanup of
+       everything else.
+    4. The union of steps 2+3, plus ``identity.yaml`` itself, is unlinked
+       (``missing_ok=True``); then ``directory.rmdir()`` is attempted,
+       best-effort (``OSError`` -- e.g. "not empty", because a skipped
+       symlink or an unrelated file is still in there -- is swallowed).
+
+    Never uses ``shutil.rmtree``: only paths derived from steps 2 and 3
+    above are ever touched.
+
+    Returns:
+        Sorted basenames of every file actually targeted for deletion (the
+        pointer set that passed containment, the pattern-set matches that
+        passed containment, and ``identity.yaml``) -- not necessarily the
+        basenames actually removed, since ``missing_ok=True`` tolerates a
+        concurrent removal, but in the ordinary case these coincide.
+
+    Raises:
+        ValueError: a pointer field in a parsable identity.yaml resolves
+            outside ``directory``. Nothing is deleted when this is raised.
+
+    """
+    directory = pathlib.Path(directory).resolve()
+    identity_path = directory / "identity.yaml"
+    if not identity_path.is_file():
+        return []
+
+    to_delete: dict[str, pathlib.Path] = {}
+    to_delete.update(_delete_identity_pointer_set(directory))
+    to_delete.update(_delete_identity_pattern_set(directory))
+    to_delete["identity.yaml"] = identity_path
+
+    for path in to_delete.values():
+        path.unlink(missing_ok=True)
+    try:
+        directory.rmdir()
+    except OSError:
+        pass  # not empty (a skipped entry or unrelated file remains) -- fine, best-effort
+
+    return sorted(to_delete)
+
+
+def _delete_identity_pointer_set(directory: pathlib.Path) -> dict[str, pathlib.Path]:
+    """``delete_identity`` step 2: the parsable identity.yaml's key/cert/ca pointers.
+
+    ``directory`` is already resolved by the caller. Raises ``ValueError``
+    (deleting nothing -- this is called before any unlink) if a pointer
+    resolves outside ``directory``; returns ``{}`` if identity.yaml doesn't
+    parse (``FleetNotEnrolledError``) -- a corrupt identity still falls
+    through to the pattern-set sweep.
+    """
+    try:
+        identity = load_identity(directory)
+    except FleetNotEnrolledError:
+        return {}
+    found: dict[str, pathlib.Path] = {}
+    for path in (identity.key_path, identity.cert_path, identity.ca_path):
+        if not path.resolve().is_relative_to(directory):
+            raise ValueError(f"identity file escapes {directory}: {path}")
+        found[path.name] = path
+    return found
+
+
+def _delete_identity_pattern_set(directory: pathlib.Path) -> dict[str, pathlib.Path]:
+    """``delete_identity`` step 3: sweep this module's own naming patterns.
+
+    ``directory`` is already resolved by the caller. Unlike the pointer set,
+    an entry that fails the containment check (e.g. a symlink resolving
+    outside ``directory``) is simply SKIPPED, not raised -- this is an
+    opportunistic best-effort sweep over whatever matches a filename
+    pattern, so one bad entry must not block cleanup of everything else.
+    """
+    found: dict[str, pathlib.Path] = {}
+    for pattern in _DELETE_GLOB_PATTERNS:
+        for candidate in directory.glob(pattern):
+            if not candidate.resolve().is_relative_to(directory):
+                continue  # e.g. a symlink pointing outside -- skip, don't follow it
+            found[candidate.name] = candidate
+    return found
+
+
 def should_attempt_renewal(now: float, expires_at: str, last_attempt_at: float | None) -> bool:
     """Whether a renewal attempt is due: within 30 days of expiry, rate-limited to once/day.
 
@@ -535,6 +669,7 @@ def _write_identity_yaml(  # noqa: PLR0913 -- one field per identity.yaml key; s
     key_file: str,
     cert_file: str,
     ca_file: str,
+    renew_url: str | None,
 ) -> None:
     """Atomically (re)write ``identity.yaml`` -- THE commit point for a renewal.
 
@@ -547,13 +682,17 @@ def _write_identity_yaml(  # noqa: PLR0913 -- one field per identity.yaml key; s
     ``renew()``'s docstring for the full crash-safety argument.
 
     Used by both the success and failure paths of ``renew()``: on failure,
-    ``key_file``/``cert_file``/``ca_file``/``expires_at`` are ``identity``'s
-    CURRENT (unchanged) pointer/expiry -- only ``last_renewal_attempt_at``
-    moves; on success they are the new pointer and the new expiry. Like
-    ``enroll()``, this rewrites the whole document from known fields rather
-    than reading-modifying-writing the file on disk, so any unknown key a
-    future version added to it is not preserved across a renewal -- same
-    tradeoff ``enroll()`` already makes.
+    ``key_file``/``cert_file``/``ca_file``/``expires_at``/``renew_url`` are
+    ``identity``'s CURRENT (unchanged) pointer/expiry/renew base -- only
+    ``last_renewal_attempt_at`` moves; on success ``key_file``/``cert_file``/
+    ``ca_file``/``expires_at`` are the new pointer and expiry, and
+    ``renew_url`` is the caller-computed value (see ``_commit_renewed_files``:
+    the renew response may itself rotate ``renew_url`` -- absent means no
+    change, present means the new base). Like ``enroll()``, this rewrites
+    the whole document from known fields rather than reading-modifying-
+    writing the file on disk, so any unknown key a future version added to
+    it is not preserved across a renewal -- same tradeoff ``enroll()``
+    already makes.
     """
     directory = identity.key_path.parent
     doc = {
@@ -567,8 +706,8 @@ def _write_identity_yaml(  # noqa: PLR0913 -- one field per identity.yaml key; s
         "cert_file": cert_file,
         "ca_file": ca_file,
     }
-    if identity.renew_url is not None:
-        doc["renew_url"] = identity.renew_url
+    if renew_url is not None:
+        doc["renew_url"] = renew_url
     _atomic_write(directory / "identity.yaml", yaml.safe_dump(doc).encode())
 
 
@@ -587,6 +726,7 @@ def _record_renewal_attempt(identity: Identity, attempt_at: float) -> None:
         key_file=identity.key_path.name,
         cert_file=identity.cert_path.name,
         ca_file=identity.ca_path.name,
+        renew_url=identity.renew_url,
     )
 
 
@@ -645,6 +785,12 @@ def _commit_renewed_files(
     if write_new_ca:
         _atomic_write(directory / new_ca_file, payload["ca_pem"].encode())
 
+    # renew_url is OPTIONAL in the renew response too, same as enroll's (see
+    # the module docstring): absent means "no change" (`.get`'s default
+    # keeps identity's current value, whatever that already was), present
+    # means the server is rotating the renew base -- e.g. a staging->prod
+    # cutover -- without requiring a fresh enrollment.
+    new_renew_url = payload.get("renew_url", identity.renew_url)
     _write_identity_yaml(
         identity,
         expires_at=payload["expires_at"],
@@ -652,6 +798,7 @@ def _commit_renewed_files(
         key_file=new_key_file,
         cert_file=new_cert_file,
         ca_file=new_ca_file,
+        renew_url=new_renew_url,
     )
 
     for old_path in (identity.key_path, identity.cert_path):
@@ -671,6 +818,7 @@ def _commit_renewed_files(
         key_path=directory / new_key_file,
         cert_path=directory / new_cert_file,
         ca_path=directory / new_ca_file,
+        renew_url=new_renew_url,
         last_renewal_attempt_at=now,
     )
 
