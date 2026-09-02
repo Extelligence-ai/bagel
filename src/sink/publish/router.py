@@ -151,7 +151,19 @@ class RouterCore:
                 self._pending[key] = (t, value)
 
     def flush(self, t_batch: float) -> dict | None:
-        """Pop all pending slot-winners, ordered by t, into a batch (or None)."""
+        """Pop up to `max_samples` pending slot-winners, ordered by t, into a batch.
+
+        Returns `None` if nothing is pending. `max_samples` caps this call's
+        OWN output, not just a trigger threshold on `should_flush` (Codex
+        review: it used to empty the ENTIRE `_pending` dict into one batch
+        regardless of size, so a wide manifest with many channels
+        distinct-slot-winning in the same interval could produce an
+        arbitrarily large batch). If more than `max_samples` slot-winners are
+        pending, the remainder stays in `_pending`, in the same t-order, for
+        a subsequent `flush()` call to pick up -- the caller (`_tick`) loops
+        calling this until it returns `None`, giving each chunk its own seq
+        and spool append.
+        """
         self._last_flush = t_batch
         if not self._pending:
             return None
@@ -159,12 +171,13 @@ class RouterCore:
             ((chan_name, slot, t, v) for (chan_name, slot), (t, v) in self._pending.items()),
             key=lambda item: item[2],
         )
-        for chan_name, slot, _t, _v in items:
+        chunk = items[: self.max_samples]
+        for chan_name, slot, _t, _v in chunk:
             prev = self._last_emitted_slot.get(chan_name)
             if prev is None or slot > prev:
                 self._last_emitted_slot[chan_name] = slot
-        self._pending.clear()
-        samples = [{"c": chan_name, "t": t, "v": v} for chan_name, _slot, t, v in items]
+            del self._pending[(chan_name, slot)]
+        samples = [{"c": chan_name, "t": t, "v": v} for chan_name, _slot, t, v in chunk]
         return {"v": 1, "t_batch": t_batch, "samples": samples}
 
     def should_flush(self, now: float, pending_count: int) -> bool:
@@ -264,8 +277,8 @@ class StreamRouter(threading.Thread):
                 break
             for topic, t, msg in samples:
                 self._core.offer(topic, t, msg)
-        batch = self._core.flush(time.time())
-        if batch is not None:
+        now = time.time()
+        while (batch := self._core.flush(now)) is not None:
             seq = self._spool.next_seq("channels")
             batch["seq"] = seq
             self._spool.append("channels", seq, batch)
@@ -276,14 +289,20 @@ class StreamRouter(threading.Thread):
         Unit tests drive this directly with controlled `now` values instead
         of sleeping; `queue.drain`'s bounded timeout is what paces the real
         thread loop in `run()`.
+
+        `core.flush(now)` caps its own output at `max_samples` (Codex
+        review), so a should_flush-triggered flush loops here until it
+        returns `None` -- every chunk gets its own seq and its own spool
+        append, so a wide manifest's oversized batch is fully drained and
+        durably spooled within this one tick rather than trickling out over
+        several.
         """
         timeout_s = min(0.2, self._core.flush_interval_s)
         samples = self._queue.drain(max_items=500, timeout_s=timeout_s)
         for topic, t, msg in samples:
             self._core.offer(topic, t, msg)
         if self._core.should_flush(now, self._core.pending_count):
-            batch = self._core.flush(now)
-            if batch is not None:
+            while (batch := self._core.flush(now)) is not None:
                 seq = self._spool.next_seq("channels")
                 batch["seq"] = seq
                 self._spool.append("channels", seq, batch)

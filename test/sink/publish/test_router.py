@@ -144,6 +144,44 @@ class TestRateCapAndBatch:
         assert core.should_flush(now=0.5, pending_count=2)
         assert core.should_flush(now=1.6, pending_count=0)
 
+    def test_flush_caps_batch_at_max_samples_leaving_remainder_pending(self) -> None:
+        # Codex review (3909414784): flush() used to empty the entire
+        # `_pending` dict into ONE batch regardless of size -- should_flush()
+        # only used max_samples as a *trigger* threshold, not a cap on
+        # flush()'s output. A wide manifest (many channels distinct-slot-win
+        # in the same interval) could produce an arbitrarily large batch.
+        # flush() now caps its OWN output at max_samples, leaving the
+        # remainder in `_pending` for a subsequent flush() call.
+        core = RouterCore(
+            [_chan(f"c{i}.x", f"/c{i}", ["x"], rate_hz=50.0) for i in range(5)],
+            flush_interval_s=1.0,
+            max_samples=2,
+        )
+        for i in range(5):
+            core.offer(f"/c{i}", float(i) * 0.01, {"x": float(i)})
+        assert core.pending_count == 5
+
+        batch1 = core.flush(t_batch=1.0)
+        assert batch1 is not None and len(batch1["samples"]) == 2
+        assert core.pending_count == 3
+
+        batch2 = core.flush(t_batch=1.0)
+        assert batch2 is not None and len(batch2["samples"]) == 2
+        assert core.pending_count == 1
+
+        batch3 = core.flush(t_batch=1.0)
+        assert batch3 is not None and len(batch3["samples"]) == 1
+        assert core.pending_count == 0
+
+        assert core.flush(t_batch=1.0) is None  # fully drained
+
+        # Global t-order is preserved across chunk boundaries.
+        all_ts = [s["t"] for b in (batch1, batch2, batch3) for s in b["samples"]]
+        assert all_ts == sorted(all_ts)
+        # No sample lost or duplicated across the chunks.
+        all_values = {s["v"] for b in (batch1, batch2, batch3) for s in b["samples"]}
+        assert all_values == {0.0, 1.0, 2.0, 3.0, 4.0}
+
     def test_late_sample_for_already_emitted_slot_is_dropped(self) -> None:
         # Slot-survival: once a (channel, slot) has been popped by flush(), a
         # later-arriving offer() for that same slot -- or an earlier one --
@@ -415,6 +453,36 @@ class TestStreamRouterThread:
         # The unacked tail is a contiguous run up to total_records -- no gaps,
         # no out-of-order acks.
         assert remaining == list(range(remaining[0], total_records + 1))
+
+
+class TestTickChunksOversizedFlush:
+    def test_tick_spools_each_chunk_with_its_own_seq_in_order(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        # Codex review (3909414784): every chunk of a capped flush must get
+        # its own seq and its own spool append within one tick, not just the
+        # first chunk. connect_should_fail keeps _pump from acking anything,
+        # so spool.pending stays the ground truth for what was written.
+        core = RouterCore(
+            [_chan(f"c{i}.x", f"/c{i}", ["x"], rate_hz=50.0) for i in range(5)],
+            flush_interval_s=0.0,
+            max_samples=2,
+        )
+        q = SampleQueue(maxsize=100)
+        spool = Spool(tmp_path / "spool")
+        pub = FakePublisher(connect_should_fail=True)
+        router = StreamRouter(core, q, spool, pub, schema_payload={"v": 1, "channels": []})
+        for i in range(5):
+            q.put((f"/c{i}", float(i) * 0.01, {"x": float(i)}))
+
+        router._tick(now=10.0)
+
+        batches = list(spool.pending("channels"))
+        seqs = [seq for seq, _ in batches]
+        assert seqs == [1, 2, 3]  # ceil(5/2) chunks, in seq order
+        sizes = [len(payload["samples"]) for _, payload in batches]
+        assert sizes == [2, 2, 1] and all(n <= 2 for n in sizes)
+        assert sum(sizes) == 5
 
 
 class TestStreamRouterStopFlushesAcceptedSamples:
