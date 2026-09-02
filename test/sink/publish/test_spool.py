@@ -699,6 +699,68 @@ class TestDiskAuthoritativeMonotonicity:
         assert calls == ["channels"]  # only the very first append's first-touch scan
 
 
+class TestTailLastSeqWindowGrowth:
+    """Codex round 3 follow-up (PR #214, P1): `_tail_last_seq`'s backward-read
+    loop must grow its window GEOMETRICALLY (double each retry), not by a
+    fixed 8KiB step re-reading the whole (growing) window every iteration --
+    the fixed step is quadratic total bytes read for a final record bigger
+    than one chunk (worst case a segment-max ~4MB single-line record)."""
+
+    def test_correct_for_a_final_record_well_over_one_chunk(self, root: pathlib.Path) -> None:
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})
+        # ~100KiB payload -- comfortably more than one 8KiB read chunk, so
+        # the loop must retry (grow the window) to reach the newline that
+        # separates it from record 1.
+        s.append("channels", 2, {"pad": "x" * 100_000})
+
+        assert s._tail_last_seq("channels") == 2
+
+    def test_read_call_count_is_geometric_not_linear(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})
+        s.append("channels", 2, {"pad": "x" * 100_000})
+
+        real_open = open
+        read_calls: list[int] = []
+
+        class _CountingHandle:
+            """Wraps a real binary file handle, counting `.read()` calls."""
+
+            def __init__(self, real: object) -> None:
+                self._real = real
+
+            def seek(self, *a: object, **k: object) -> object:
+                return self._real.seek(*a, **k)
+
+            def read(self, *a: object, **k: object) -> bytes:
+                read_calls.append(1)
+                return self._real.read(*a, **k)
+
+            def __enter__(self) -> "_CountingHandle":
+                return self
+
+            def __exit__(self, *exc: object) -> object:
+                return self._real.__exit__(*exc)
+
+        def fake_open(file: object, mode: str = "r", *a: object, **k: object) -> object:
+            handle = real_open(file, mode, *a, **k)
+            return _CountingHandle(handle) if mode == "rb" else handle
+
+        monkeypatch.setattr("builtins.open", fake_open)
+
+        result = s._tail_last_seq("channels")
+
+        assert result == 2
+        # Geometric doubling from 8KiB needs ~5 reads to cover ~100KiB
+        # (8, 16, 32, 64, then the size-capped final read); a fixed 8KiB
+        # linear step would need ~13+. 8 is a robust dividing line between
+        # the two.
+        assert len(read_calls) <= 8, f"expected geometric (<=8) reads, got {len(read_calls)}"
+
+
 class TestExclusiveLock:
     """`Spool.exclusive()` (Codex round 3, P1b): hold the spool's real lock
     across a multi-call critical section, cross-process-safe, bounded wait.

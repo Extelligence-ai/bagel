@@ -228,6 +228,15 @@ class Spool:
         already handled by `_scan_last_seq`'s truncate-on-first-touch path,
         not something this cheap peek needs to repair itself.
 
+        The window grows GEOMETRICALLY (doubling each retry: 8KiB, 16KiB,
+        32KiB, ...), not by a fixed 8KiB step (Codex round 3 follow-up, PR
+        #214 P1): a fixed step re-reads the whole (growing) window every
+        iteration, so a final record bigger than one chunk -- worst case a
+        segment-max single-line record, ~4MB -- would cost ~512 iterations
+        each re-reading up to 4MB: quadratic total bytes read. Doubling
+        bounds total bytes read to O(the eventual window size), i.e. O(tail
+        size), since a geometric series sums to about 2x its last term.
+
         Returns:
             The last complete line's `seq`, or `None` if there is no active
             segment, it's empty, or its tail doesn't parse (the caller falls
@@ -241,16 +250,15 @@ class Spool:
         size = path.stat().st_size
         if size == 0:
             return None
-        chunk = 8192
-        window = 0
+        window = min(size, 8192)
         data = b""
         with open(path, "rb") as handle:
             while True:
-                window = min(size, window + chunk)
                 handle.seek(size - window)
                 data = handle.read(window)
                 if data.rstrip(b"\n").count(b"\n") >= 1 or window >= size:
                     break
+                window = min(size, window * 2)
         last_line = data.rstrip(b"\n").rsplit(b"\n", 1)[-1]
         if not last_line:
             return None
