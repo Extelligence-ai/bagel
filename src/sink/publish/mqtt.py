@@ -96,6 +96,36 @@ class MqttPublisher(Publisher):
         self.reconnects = 0
         self._finalizer = weakref.finalize(self, _finalize, None)
 
+    def set_tls(
+        self,
+        *,
+        tls_ca_certs: str | None,
+        tls_certfile: str | None,
+        tls_keyfile: str | None,
+    ) -> None:
+        """Atomically replace the TLS material used by the NEXT `connect()`.
+
+        Assigns a brand-new dict to `self._tls` rather than mutating the
+        existing one in place -- a single reference assignment is safe
+        against a background thread (e.g. `StreamRouter`'s reconnect loop)
+        reading `self._tls` mid-`connect()`; it always sees either the
+        fully-old or the fully-new dict, never a half-updated mix. This
+        exists for the certificate-renewal path (see `identity.renew()`'s
+        docstring): once a renewal has rotated the cert/key files on disk,
+        this is the seam that tells the LIVE publisher about the new paths
+        before its next reconnect, so it doesn't keep trying (and failing)
+        to load the now-deleted old files.
+
+        Does not itself force a reconnect or touch an already-open
+        connection -- the currently connected client, if any, keeps running
+        on the old material until its own next `connect()` call.
+        """
+        self._tls = {
+            "ca_certs": tls_ca_certs,
+            "certfile": tls_certfile,
+            "keyfile": tls_keyfile,
+        }
+
     def connect(self) -> None:
         """Build the paho client, arm the last-will, and connect.
 
@@ -120,7 +150,15 @@ class MqttPublisher(Publisher):
         paho = _paho()
         client = paho.Client(
             callback_api_version=paho.CallbackAPIVersion.VERSION2,
-            client_id=f"bagel-{self._tenant}-{self._robot}",
+            # "/" is outside both id charsets (robot ids match
+            # ^[a-z0-9][a-z0-9_-]{0,62}$; tenant ids are Cognito-derived
+            # without "/"), so this delimiter is provably collision-free --
+            # unlike the old "bagel-{tenant}-{robot}" hyphen join, where
+            # ("acme-west", "r7") and ("acme", "west-r7") both produced
+            # "bagel-acme-west-r7" (Codex review). Mirrors the cert CN's
+            # delimiter. Must stay deterministic per (tenant, robot):
+            # reconnect displacement semantics depend on it.
+            client_id=f"bagel/{self._tenant}/{self._robot}",
             protocol=paho.MQTTv5,
         )
         client.will_set(

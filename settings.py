@@ -96,6 +96,27 @@ class Settings(BaseSettings):
     # room for the newest; the queue never blocks the tap.
     FLEET_QUEUE_MAX_SAMPLES: int = 10_000
 
+    # Directory holding this robot's fleet enrollment identity: robot.key
+    # (mode 0600), robot.crt, ca.crt, identity.yaml (tenant, robot_id,
+    # broker_url, enroll_url, expires_at). See src/sink/publish/identity.py.
+    FLEET_IDENTITY_DIRECTORY: str = str(pathlib.Path.home() / ".bagel" / "identity")
+
+    # Dev-only escape hatch: allows an unencrypted mqtt:// fleet broker when
+    # the host resolves to loopback or a private (RFC1918/RFC4193) address.
+    # False in production -- mqtts:// with an enrolled identity is the only
+    # transport allowed. See src/sink/publish/connect.py.
+    FLEET_DEV_INSECURE: bool = False
+
+    # One-time enrollment token for first-boot fleet enrollment. Consumed at
+    # first boot (POSTed to FLEET_ENROLL_URL to obtain identity; once
+    # identity.yaml exists this and FLEET_ENROLL_URL are no longer needed)
+    # and never persisted -- it never reaches disk or a log line.
+    FLEET_ENROLL_TOKEN: str | None = None
+
+    # Enrollment server base URL used for first-boot enrollment (paired with
+    # FLEET_ENROLL_TOKEN) and identity renewal. See src/sink/publish/identity.py.
+    FLEET_ENROLL_URL: str | None = None
+
     # Default quantization resolution in meters for cloudini lossy compression
     CLOUDINI_DEFAULT_RESOLUTION: float = 0.001
     ###############################################

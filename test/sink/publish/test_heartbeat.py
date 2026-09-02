@@ -98,6 +98,35 @@ class TestBuildHeartbeat:
         )
         assert payload["spool"] == {"bytes": 0, "pending": 0, "evicted": 0}
 
+    def test_cert_expires_at_defaults_to_none(self) -> None:
+        payload = build_heartbeat(
+            started_at=0.0,
+            subscriptions=[],
+            channels_active=0,
+            queue_depth=0,
+            queue_dropped=0,
+            spool_stats={},
+            disk_free_bytes=0,
+            reconnects=0,
+            now=1.0,
+        )
+        assert payload["cert_expires_at"] is None
+
+    def test_cert_expires_at_passed_through_when_given(self) -> None:
+        payload = build_heartbeat(
+            started_at=0.0,
+            subscriptions=[],
+            channels_active=0,
+            queue_depth=0,
+            queue_dropped=0,
+            spool_stats={},
+            disk_free_bytes=0,
+            reconnects=0,
+            now=1.0,
+            cert_expires_at="2027-01-01T00:00:00Z",
+        )
+        assert payload["cert_expires_at"] == "2027-01-01T00:00:00Z"
+
     def test_accepts_lanestats_like_objects_with_attributes(self) -> None:
         class FakeLaneStats:
             def __init__(self, bytes_: int, pending: int, evicted: int) -> None:
@@ -150,6 +179,87 @@ class TestBagelVersion:
         monkeypatch.setattr(heartbeat_mod.importlib.metadata, "version", raise_not_found)
         monkeypatch.setattr(heartbeat_mod, "_pyproject_version", raise_os_error)
         assert heartbeat_mod.bagel_version() == "unknown"
+
+
+class TestPyprojectVersionRegexFallback:
+    """CI P0 (Codex review): heartbeat.py's module-level `import tomllib` broke the
+    ros2-humble/iron Docker images (Python 3.10 -- tomllib is stdlib only on
+    3.11+), redding out CI's image import-probe on PR 210. `_pyproject_version()`
+    now parses `[project].version` with a zero-dependency regex instead.
+    """
+
+    def test_parses_version_via_regex_zero_deps(self, tmp_path: pathlib.Path) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "bagel"\nversion = "9.9.9"\ndescription = "x"\n'
+        )
+        assert heartbeat_mod._pyproject_version(root=tmp_path) == "9.9.9"
+
+    def test_finds_the_version_line_among_surrounding_content(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "bagel"\nversion = "2.3.0"\n\n[tool.other]\nfoo = "bar"\n'
+        )
+        assert heartbeat_mod._pyproject_version(root=tmp_path) == "2.3.0"
+
+    def test_raises_when_no_version_line_present(self, tmp_path: pathlib.Path) -> None:
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "bagel"\n')
+        with pytest.raises(Exception):  # noqa: B017 -- bagel_version() catches broadly
+            heartbeat_mod._pyproject_version(root=tmp_path)
+
+    def test_raises_when_pyproject_missing(self, tmp_path: pathlib.Path) -> None:
+        with pytest.raises(Exception):  # noqa: B017 -- bagel_version() catches broadly
+            heartbeat_mod._pyproject_version(root=tmp_path)
+
+    def test_bagel_version_falls_back_to_regex_parsed_pyproject_version(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import importlib.metadata
+
+        (tmp_path / "pyproject.toml").write_text('[project]\nversion = "7.7.7"\n')
+        real_pyproject_version = heartbeat_mod._pyproject_version
+
+        def raise_not_found(_name: str) -> str:
+            raise importlib.metadata.PackageNotFoundError("bagel")
+
+        monkeypatch.setattr(heartbeat_mod.importlib.metadata, "version", raise_not_found)
+        monkeypatch.setattr(
+            heartbeat_mod, "_pyproject_version", lambda: real_pyproject_version(tmp_path)
+        )
+
+        assert heartbeat_mod.bagel_version() == "7.7.7"
+
+    def test_bagel_version_returns_unknown_when_pyproject_has_no_version_line(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import importlib.metadata
+
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "bagel"\n')  # no version
+        real_pyproject_version = heartbeat_mod._pyproject_version
+
+        def raise_not_found(_name: str) -> str:
+            raise importlib.metadata.PackageNotFoundError("bagel")
+
+        monkeypatch.setattr(heartbeat_mod.importlib.metadata, "version", raise_not_found)
+        monkeypatch.setattr(
+            heartbeat_mod, "_pyproject_version", lambda: real_pyproject_version(tmp_path)
+        )
+
+        assert heartbeat_mod.bagel_version() == "unknown"
+
+    def test_tomllib_is_not_imported_by_this_module(self) -> None:
+        # The whole point: tomllib is 3.11+ stdlib only, and this module must
+        # import cleanly on the 3.10-based ros2-humble/iron images.
+        assert not hasattr(heartbeat_mod, "tomllib")
+
+    def test_heartbeat_module_does_not_import_tomllib_eagerly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for name in [m for m in sys.modules if m == "tomllib" or m.startswith("tomllib.")]:
+            monkeypatch.delitem(sys.modules, name)
+        monkeypatch.delitem(sys.modules, "src.sink.publish.heartbeat", raising=False)
+        importlib.import_module("src.sink.publish.heartbeat")
+        assert not any(m == "tomllib" or m.startswith("tomllib.") for m in sys.modules)
 
 
 class TestDiskFree:
@@ -360,3 +470,79 @@ class TestHeartbeatThread:
 
     def test_module_constant_is_thirty_seconds(self) -> None:
         assert HEARTBEAT_INTERVAL_S == 30.0
+
+
+class TestRenewalCheckHook:
+    def test_synchronous_tick_invokes_renewal_check(self) -> None:
+        pub = FakePublisher()
+        calls = []
+        thread = HeartbeatThread(
+            pub, lambda: {"v": 1}, interval_s=10.0, renewal_check=lambda: calls.append(1)
+        )
+
+        thread._tick()
+
+        assert calls == [1]
+        assert pub.heartbeat_calls == [{"v": 1}]
+
+    def test_no_renewal_check_is_a_safe_default(self) -> None:
+        pub = FakePublisher()
+        thread = HeartbeatThread(pub, lambda: {"v": 1}, interval_s=10.0)
+
+        thread._tick()  # must not raise -- renewal_check defaults to None
+
+        assert pub.heartbeat_calls == [{"v": 1}]
+
+    def test_renewal_check_exception_is_swallowed_and_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        pub = FakePublisher()
+
+        def boom() -> None:
+            raise RuntimeError("renewal exploded")
+
+        thread = HeartbeatThread(pub, lambda: {"v": 1}, interval_s=10.0, renewal_check=boom)
+
+        with caplog.at_level(logging.WARNING):
+            thread._tick()  # must not raise
+
+        # The payload still gets built and published -- the hook's failure
+        # has no bearing on the rest of this tick.
+        assert pub.heartbeat_calls == [{"v": 1}]
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("renewal_check" in r.getMessage() for r in warnings)
+
+    def test_renewal_check_exception_never_kills_the_thread(self) -> None:
+        pub = FakePublisher()
+        ticks = {"n": 0}
+
+        def boom() -> None:
+            ticks["n"] += 1
+            raise RuntimeError("renewal exploded")
+
+        thread = HeartbeatThread(pub, lambda: {"v": 1}, interval_s=0.01, renewal_check=boom)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 2.0
+            while ticks["n"] < 3 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert thread.is_alive()
+            assert ticks["n"] >= 3
+        finally:
+            thread.stop()
+        assert not thread.is_alive()  # stop() still joins cleanly afterward
+
+    def test_renewal_check_runs_every_tick(self) -> None:
+        pub = FakePublisher()
+        calls = []
+        thread = HeartbeatThread(
+            pub, lambda: {"v": 1}, interval_s=0.01, renewal_check=lambda: calls.append(1)
+        )
+        thread.start()
+        try:
+            deadline = time.monotonic() + 2.0
+            while len(calls) < 3 and time.monotonic() < deadline:
+                time.sleep(0.01)
+        finally:
+            thread.stop()
+        assert len(calls) >= 3

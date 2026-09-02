@@ -174,6 +174,13 @@ class _Subscriber:
         self._client.on_message = lambda cl, ud, msg: self.inbox.put(
             (msg.topic, msg.payload, msg.retain)
         )
+        # paho's own auto-reconnect waits >= min_delay (default 1s, doubling)
+        # before retrying a dropped connection -- an eternity against
+        # StreamRouter's jittered post-restart reconnect (see
+        # `reconnect_now`'s docstring). Keep any paho-internal retry this
+        # client ever performs fast too (floats are fine at runtime; the
+        # int annotation is just paho's signature).
+        self._client.reconnect_delay_set(min_delay=0.1, max_delay=0.5)
 
     def _on_connect(
         self, client: object, userdata: object, flags: object, reason_code: object, *_a: object
@@ -204,7 +211,7 @@ class _Subscriber:
         self._subscribed.clear()
 
     def reconnect_now(self, timeout_s: float = 15.0) -> None:
-        """Hammer a raw reconnect the instant the broker is reachable again.
+        """Hammer a raw reconnect until this client is actually RESUBSCRIBED.
 
         Call `prepare_for_outage()` first (right after killing the broker).
         Polls tightly (10ms) rather than waiting on a separate "is the port
@@ -212,21 +219,38 @@ class _Subscriber:
         accepting connections and this client's own reconnect attempt only
         widens the race against StreamRouter's own reconnect (see class
         docstring).
+
+        Critically, a TCP-level `reconnect()` success is verified all the
+        way to SUBACK before it is trusted: a freshly-restarted container
+        can accept the TCP connection before mosquitto is actually serving
+        sessions, and a connection that dies between that accept and the
+        CONNACK/SUBACK would otherwise be retried only by paho's
+        auto-reconnect after its built-in delay. That delay is long enough
+        for StreamRouter's jittered reconnect to land and drain the entire
+        QoS-1 backlog while nobody is subscribed -- no persistent session
+        survives the container restart, so every batch published before
+        this client's SUBACK is gone for good (observed live as the chaos
+        test's "gap or missing seq: delivered [1, 38, 39]" CI failure: an
+        instrumented run showed the router reconnecting 0.95s after the
+        broker came back and finishing the whole drain before this
+        client's SUBACK at +1.85s). A session that hasn't reached SUBACK
+        within its attempt budget is torn down and re-attempted
+        immediately instead.
         """
         deadline = time.monotonic() + timeout_s
-        connected = False
         while time.monotonic() < deadline:
             try:
                 self._client.reconnect()
-                connected = True
-                break
             except OSError:
                 time.sleep(0.01)
-        assert connected, "subscriber could not reconnect to the restarted broker"
-        self._client.loop_start()
-        assert _wait_until(self._subscribed.is_set, timeout_s=timeout_s), (
-            "subscriber never resubscribed after the broker restart"
-        )
+                continue
+            self._client.loop_start()
+            if _wait_until(self._subscribed.is_set, timeout_s=2.0, interval_s=0.005):
+                return
+            # Stillborn session (TCP accepted, SUBACK never arrived): drop
+            # it and hammer again ourselves rather than waiting out paho.
+            self._client.loop_stop()
+        raise AssertionError("subscriber never resubscribed after the broker restart")
 
     def close(self) -> None:
         self._client.loop_stop()
@@ -322,6 +346,60 @@ def test_chaos_broker_start_cleans_up_on_unreachable_broker(
         )
     finally:
         broker.cleanup()  # belt-and-braces: start() should already have removed it
+
+
+class _StillbornThenLiveClient:
+    """Fake paho client: the first reconnect() is a TCP-level success whose
+    session dies before CONNACK/SUBACK ever arrives (a freshly-restarted
+    container accepting the connection before mosquitto actually serves it);
+    any later reconnect() lands on a live broker and the CONNACK ->
+    SUBSCRIBE -> SUBACK flow completes as soon as the loop runs.
+    """
+
+    def __init__(self, subscribed: threading.Event) -> None:
+        self._subscribed = subscribed
+        self.reconnect_calls = 0
+        self.loop_stops = 0
+
+    def reconnect(self) -> int:
+        self.reconnect_calls += 1
+        return 0
+
+    def loop_start(self) -> None:
+        if self.reconnect_calls >= 2:
+            self._subscribed.set()
+
+    def loop_stop(self) -> None:
+        self.loop_stops += 1
+
+
+def test_reconnect_now_retries_a_stillborn_tcp_connection() -> None:
+    """A TCP-level reconnect() success is not a recovered subscriber.
+
+    Pins the chaos test's own recovery helper against the failure mode
+    observed live (instrumented run: sub SUBACK 1.85s after the broker came
+    back, router reconnect + full backlog drain at +0.95s, delivered seqs
+    [1] / CI's [1, 38, 39]): when `reconnect_now`'s first successful
+    `reconnect()` latches a connection that dies before SUBACK, it must tear
+    that session down and hammer again itself -- never sit out paho's >=1s
+    auto-reconnect delay, which is long enough for StreamRouter's jittered
+    reconnect to drain the whole QoS-1 backlog with nobody subscribed. No
+    broker involved: a fake client simulates the stillborn-then-live broker.
+    """
+    sub = _Subscriber.__new__(_Subscriber)  # no real paho client, no broker
+    sub._subscribed = threading.Event()
+    client = _StillbornThenLiveClient(sub._subscribed)
+    sub._client = client
+    started = time.monotonic()
+    sub.reconnect_now(timeout_s=8.0)
+    elapsed = time.monotonic() - started
+    assert sub._subscribed.is_set()
+    assert client.reconnect_calls >= 2, (
+        "reconnect_now trusted a single TCP-level reconnect() that never "
+        "reached SUBACK instead of retrying it"
+    )
+    assert client.loop_stops >= 1, "the stillborn session was never torn down"
+    assert elapsed < 6.0, "recovery took long enough for the router to drain the backlog"
 
 
 def _build_service(  # noqa: PLR0913 -- test helper collecting one scenario's full config

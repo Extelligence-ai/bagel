@@ -22,6 +22,20 @@ class FleetDisabledError(Exception):
     """Raised when FLEET_ENABLED=0 has switched the publish subsystem off."""
 
 
+class FleetNotEnrolledError(Exception):
+    """Raised when fleet identity is required but the robot has not enrolled."""
+
+
+class EnrollmentError(Exception):
+    """Raised when the enrollment server rejects or fails an enroll/renew request."""
+
+    def __init__(self, status: int, reason: str) -> None:
+        """Initialize EnrollmentError with the HTTP status and a reason (never the token)."""
+        self.status = status
+        self.reason = reason
+        super().__init__(f"enrollment failed ({status}): {reason}")
+
+
 class StreamConfigError(Exception):
     """Raised when the manifest's `streams:` section fails load-time validation."""
 

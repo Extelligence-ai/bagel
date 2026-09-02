@@ -130,7 +130,36 @@ class TestConnect:
 
     def test_client_id_is_deterministic(self, fake: dict[str, FakeFleetPaho]) -> None:
         _publisher().connect()
-        assert fake["client"].kwargs["client_id"] == "bagel-acme-r7"
+        assert fake["client"].kwargs["client_id"] == "bagel/acme/r7"
+
+    def test_client_id_is_deterministic_across_reconnects(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        # Codex review: reconnect displacement semantics depend on the same
+        # (tenant, robot) pair always producing the same client id.
+        p = _publisher()
+        p.connect()
+        first_id = fake["client"].kwargs["client_id"]
+        p.connect()
+        second_id = fake["client"].kwargs["client_id"]
+        assert first_id == second_id == "bagel/acme/r7"
+
+    def test_client_id_does_not_collide_across_tenant_robot_boundary(
+        self, fake: dict[str, FakeFleetPaho], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex review (3909409399): the old "bagel-{tenant}-{robot}" format
+        # collided on the hyphen -- ("acme-west", "r7") and ("acme",
+        # "west-r7") both produced "bagel-acme-west-r7". "/" is outside both
+        # id charsets, so the new delimiter is provably collision-free.
+        _publisher(tenant="acme-west", robot="r7").connect()
+        id_a = fake["client"].kwargs["client_id"]
+
+        _publisher(tenant="acme", robot="west-r7").connect()
+        id_b = fake["client"].kwargs["client_id"]
+
+        assert id_a != id_b
+        assert id_a == "bagel/acme-west/r7"
+        assert id_b == "bagel/acme/west-r7"
 
     def test_connect_raises_when_fleet_disabled_before_touching_paho(
         self, fake: dict[str, FakeFleetPaho], monkeypatch: pytest.MonkeyPatch
@@ -221,6 +250,69 @@ class TestClose:
         p.connect()
         fake["client"].next_info = FakeMsgInfo(published=False)
         p.close()  # must not raise
+
+
+class TestSetTls:
+    """CRITICAL fix: a post-renewal reconnect must pick up the NEW cert/key paths.
+
+    `MqttPublisher` captures `tls_certfile`/`tls_keyfile` at construction and
+    re-reads them from `self._tls` on every `connect()`. Without a seam to
+    replace that dict after a renewal rotates the files on disk, every
+    reconnect after the old files are unlinked fails forever. `set_tls`
+    fixes this by atomically swapping in a NEW dict (never mutating the old
+    one in place, so a router thread reading `self._tls` mid-connect never
+    sees a half-updated mix of old and new paths).
+    """
+
+    def test_set_tls_replaces_the_tls_dict_with_a_new_object(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher(
+            tls_ca_certs="/old-ca.pem", tls_certfile="/old-c.pem", tls_keyfile="/old-k.pem"
+        )
+        old_tls = p._tls
+
+        p.set_tls(
+            tls_ca_certs="/new-ca.pem", tls_certfile="/new-c.pem", tls_keyfile="/new-k.pem"
+        )
+
+        assert p._tls is not old_tls  # a NEW dict, not an in-place mutation
+        assert p._tls == {
+            "ca_certs": "/new-ca.pem",
+            "certfile": "/new-c.pem",
+            "keyfile": "/new-k.pem",
+        }
+        # the old dict object itself is untouched -- a reader still holding
+        # it (e.g. mid-connect on another thread) never sees a partial update
+        assert old_tls == {
+            "ca_certs": "/old-ca.pem",
+            "certfile": "/old-c.pem",
+            "keyfile": "/old-k.pem",
+        }
+
+    def test_reconnect_after_set_tls_uses_the_new_paths(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher(
+            tls_ca_certs="/old-ca.pem", tls_certfile="/old-c.pem", tls_keyfile="/old-k.pem"
+        )
+        p.connect()
+        assert fake["client"].tls == {
+            "ca_certs": "/old-ca.pem",
+            "certfile": "/old-c.pem",
+            "keyfile": "/old-k.pem",
+        }
+
+        p.set_tls(
+            tls_ca_certs="/new-ca.pem", tls_certfile="/new-c.pem", tls_keyfile="/new-k.pem"
+        )
+        p.connect()  # forced reconnect, e.g. after a broker drop
+
+        assert fake["client"].tls == {
+            "ca_certs": "/new-ca.pem",
+            "certfile": "/new-c.pem",
+            "keyfile": "/new-k.pem",
+        }
 
 
 class TestReconnectCounter:

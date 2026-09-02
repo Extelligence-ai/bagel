@@ -144,6 +144,44 @@ class TestRateCapAndBatch:
         assert core.should_flush(now=0.5, pending_count=2)
         assert core.should_flush(now=1.6, pending_count=0)
 
+    def test_flush_caps_batch_at_max_samples_leaving_remainder_pending(self) -> None:
+        # Codex review (3909414784): flush() used to empty the entire
+        # `_pending` dict into ONE batch regardless of size -- should_flush()
+        # only used max_samples as a *trigger* threshold, not a cap on
+        # flush()'s output. A wide manifest (many channels distinct-slot-win
+        # in the same interval) could produce an arbitrarily large batch.
+        # flush() now caps its OWN output at max_samples, leaving the
+        # remainder in `_pending` for a subsequent flush() call.
+        core = RouterCore(
+            [_chan(f"c{i}.x", f"/c{i}", ["x"], rate_hz=50.0) for i in range(5)],
+            flush_interval_s=1.0,
+            max_samples=2,
+        )
+        for i in range(5):
+            core.offer(f"/c{i}", float(i) * 0.01, {"x": float(i)})
+        assert core.pending_count == 5
+
+        batch1 = core.flush(t_batch=1.0)
+        assert batch1 is not None and len(batch1["samples"]) == 2
+        assert core.pending_count == 3
+
+        batch2 = core.flush(t_batch=1.0)
+        assert batch2 is not None and len(batch2["samples"]) == 2
+        assert core.pending_count == 1
+
+        batch3 = core.flush(t_batch=1.0)
+        assert batch3 is not None and len(batch3["samples"]) == 1
+        assert core.pending_count == 0
+
+        assert core.flush(t_batch=1.0) is None  # fully drained
+
+        # Global t-order is preserved across chunk boundaries.
+        all_ts = [s["t"] for b in (batch1, batch2, batch3) for s in b["samples"]]
+        assert all_ts == sorted(all_ts)
+        # No sample lost or duplicated across the chunks.
+        all_values = {s["v"] for b in (batch1, batch2, batch3) for s in b["samples"]}
+        assert all_values == {0.0, 1.0, 2.0, 3.0, 4.0}
+
     def test_late_sample_for_already_emitted_slot_is_dropped(self) -> None:
         # Slot-survival: once a (channel, slot) has been popped by flush(), a
         # later-arriving offer() for that same slot -- or an earlier one --
@@ -415,6 +453,174 @@ class TestStreamRouterThread:
         # The unacked tail is a contiguous run up to total_records -- no gaps,
         # no out-of-order acks.
         assert remaining == list(range(remaining[0], total_records + 1))
+
+
+class TestTickChunksOversizedFlush:
+    def test_tick_spools_each_chunk_with_its_own_seq_in_order(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        # Codex review (3909414784): every chunk of a capped flush must get
+        # its own seq and its own spool append within one tick, not just the
+        # first chunk. connect_should_fail keeps _pump from acking anything,
+        # so spool.pending stays the ground truth for what was written.
+        core = RouterCore(
+            [_chan(f"c{i}.x", f"/c{i}", ["x"], rate_hz=50.0) for i in range(5)],
+            flush_interval_s=0.0,
+            max_samples=2,
+        )
+        q = SampleQueue(maxsize=100)
+        spool = Spool(tmp_path / "spool")
+        pub = FakePublisher(connect_should_fail=True)
+        router = StreamRouter(core, q, spool, pub, schema_payload={"v": 1, "channels": []})
+        for i in range(5):
+            q.put((f"/c{i}", float(i) * 0.01, {"x": float(i)}))
+
+        router._tick(now=10.0)
+
+        batches = list(spool.pending("channels"))
+        seqs = [seq for seq, _ in batches]
+        assert seqs == [1, 2, 3]  # ceil(5/2) chunks, in seq order
+        sizes = [len(payload["samples"]) for _, payload in batches]
+        assert sizes == [2, 2, 1] and all(n <= 2 for n in sizes)
+        assert sum(sizes) == 5
+
+
+class TestStreamRouterStopFlushesAcceptedSamples:
+    def _start_and_let_initial_tick_pass(self, router: StreamRouter) -> None:
+        """Start the router and wait past its first tick.
+
+        `RouterCore._last_flush` starts at 0.0, and `run()` drives `_tick`
+        with a real `time.time()` -- so the very first tick's
+        `should_flush()` is unconditionally True (any real epoch timestamp
+        minus 0.0 dwarfs `flush_interval_s`), flushing an (empty) batch and
+        setting `_last_flush` to a real recent timestamp. Only after that
+        can a *subsequent* sample reliably sit in `_pending` without
+        crossing a long `flush_interval_s`'s boundary.
+        """
+        router.start()
+        time.sleep(0.3)
+
+    def test_stop_spools_samples_offered_but_below_flush_threshold(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        # Codex review (3906982911): stop() used to only set the stop event
+        # and join -- it never forced the queue/core's already-accepted
+        # samples into the spool first, so a sample the tap had accepted
+        # (offer()'d into RouterCore._pending) but that hadn't yet crossed a
+        # flush boundary was silently dropped on stop(). A long
+        # flush_interval_s (10s) guarantees should_flush() would say "not
+        # yet" on any tick that happened to run before stop() lands.
+        router, q, spool, pub = _router(tmp_path, flush_interval_s=10.0)
+        self._start_and_let_initial_tick_pass(router)
+
+        q.put(("/imu", 1.0, {"x": 1.0}))
+        deadline = time.monotonic() + 2.0
+        while router._core.pending_count == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert router._core.pending_count == 1  # accepted by offer(), not yet flushed
+
+        router.stop()
+
+        assert list(spool.pending("channels"))  # the accepted sample was spooled, not lost
+        batch = next(payload for _seq, payload in spool.pending("channels"))
+        assert [s["v"] for s in batch["samples"]] == [1.0]
+
+    def test_stop_on_an_idle_router_with_nothing_pending_is_a_clean_noop(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        router, _q, spool, _pub = _router(tmp_path, flush_interval_s=10.0)
+        self._start_and_let_initial_tick_pass(router)
+
+        router.stop()  # must not raise even with nothing to flush
+
+        assert list(spool.pending("channels")) == []
+
+    def test_pause_discard_still_discards_after_stop_flushes_pending(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        # pause(discard=True) is FleetService's job (it acks past the
+        # channels lane's last written seq after stop()) -- this just
+        # documents that stop()'s new flush-on-stop doesn't fight that: the
+        # newly-spooled batch is still ack-able/discardable like any other.
+        router, q, spool, _pub = _router(tmp_path, flush_interval_s=10.0)
+        self._start_and_let_initial_tick_pass(router)
+        q.put(("/imu", 1.0, {"x": 1.0}))
+        deadline = time.monotonic() + 2.0
+        while router._core.pending_count == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        router.stop()
+        assert list(spool.pending("channels"))  # flushed on stop
+
+        last_seq = spool.next_seq("channels") - 1
+        spool.ack("channels", last_seq)
+        assert list(spool.pending("channels")) == []  # discard still works
+
+
+class TestStreamRouterStopResetsOnline:
+    def test_stop_resets_online_to_false(self, tmp_path: pathlib.Path) -> None:
+        # Codex review (3906982938): StreamRouter._online was never reset on
+        # stop(), so FleetService.status() kept reporting online: true for a
+        # router thread that had already cleanly stopped.
+        router, q, _spool, pub = _router(tmp_path, flush_interval_s=0.01)
+        router.start()
+        q.put(("/imu", 1.0, {"x": 1.0}))
+        deadline = time.monotonic() + 2.0
+        while not router.online and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert router.online  # sanity: actually connected before stop()
+
+        router.stop()
+
+        assert router.online is False
+
+
+class TestStreamRouterStopJoinTimeout:
+    def test_stop_joins_with_timeout_longer_than_publish_wait(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex review (3906982943): stop()'s join(timeout=5) can't outlast a
+        # 10s QoS-1 publish wait (wait_for_publish(timeout=10.0) inside
+        # MqttPublisher.publish), so termination wasn't actually guaranteed
+        # before a caller (e.g. pause()/resume()) proceeded. The join timeout
+        # must exceed that 10s bound.
+        router, _q, _spool, _pub = _router(tmp_path, flush_interval_s=1.0)
+
+        join_calls: list[float | None] = []
+        real_join = router.join
+
+        def spy_join(timeout: float | None = None) -> None:
+            join_calls.append(timeout)
+            real_join(timeout)
+
+        monkeypatch.setattr(router, "join", spy_join)
+
+        router.start()
+        router.stop()
+
+        assert join_calls
+        assert join_calls[0] is not None and join_calls[0] > 10.0
+
+    def test_stop_logs_warning_when_thread_does_not_terminate(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        router, _q, _spool, _pub = _router(tmp_path, flush_interval_s=1.0)
+        # Don't actually start the thread -- is_alive() is always False for a
+        # never-started Thread, which is the wrong shape for this test. Fake
+        # is_alive() to simulate a stuck thread that survives the join.
+        monkeypatch.setattr(router, "is_alive", lambda: True)
+        monkeypatch.setattr(router, "join", lambda timeout=None: None)
+
+        with caplog.at_level(logging.WARNING):
+            router.stop()
+
+        warnings_ = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("did not terminate" in r.getMessage() for r in warnings_)
 
 
 class TestStreamRouterDeathIsVisible:

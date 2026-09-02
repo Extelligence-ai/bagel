@@ -44,13 +44,31 @@ def test_gate_passes_when_installed_and_enabled(monkeypatch: pytest.MonkeyPatch)
     assert publish.require_fleet() is None
 
 
-def test_publish_package_does_not_import_paho_eagerly(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Importing src.sink.publish must not pull paho in; only require_fleet() does."""
-    for name in [m for m in sys.modules if m == "paho" or m.startswith("paho.")]:
+def test_publish_package_does_not_import_paho_or_cryptography_eagerly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Importing src.sink.publish must not pull paho or cryptography in.
+
+    Only require_fleet() imports paho; only identity.py's functions import
+    cryptography (see identity.py's module docstring) -- so importing the
+    package itself must stay light regardless of which submodule a caller
+    reaches for next.
+    """
+    for name in [
+        m
+        for m in sys.modules
+        if m == "paho"
+        or m.startswith("paho.")
+        or m == "cryptography"
+        or m.startswith("cryptography.")
+    ]:
         monkeypatch.delitem(sys.modules, name)
     monkeypatch.delitem(sys.modules, "src.sink.publish", raising=False)
     importlib.import_module("src.sink.publish")
-    assert not any(m == "paho" or m.startswith("paho.") for m in sys.modules)
+    assert not any(
+        m == "paho" or m.startswith("paho.") or m == "cryptography" or m.startswith("cryptography.")
+        for m in sys.modules
+    )
 
 
 def test_setting_default_is_enabled() -> None:

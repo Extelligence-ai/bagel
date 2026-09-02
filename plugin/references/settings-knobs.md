@@ -22,4 +22,8 @@ Defined in `settings.py`; set via the container environment or `.env`.
 | `FLEET_ENABLED` | true | Kill switch for fleet streaming (beta). `0` makes the publish subsystem inert: nothing connects, nothing leaves the box |
 | `FLEET_SPOOL_MAX_BYTES` | 256 MB | Disk cap for the fleet spool's channels lane; oldest segments evicted first. Events/heartbeats are never dropped and are exempt |
 | `FLEET_QUEUE_MAX_SAMPLES` | 10000 | Max samples in the router's bounded queue between the buffer tap and the router thread; oldest sample dropped on overflow, queue never blocks the tap |
+| `FLEET_IDENTITY_DIRECTORY` | `~/.bagel/identity` | Directory holding this robot's fleet enrollment identity: `robot.key` (0600), `robot.crt`, `ca.crt`, `identity.yaml` |
+| `FLEET_DEV_INSECURE` | false | Dev-only escape hatch: allows an unencrypted `mqtt://` fleet broker when the host resolves to loopback/private. Production stays `mqtts://` with an enrolled identity |
+| `FLEET_ENROLL_TOKEN` | unset | One-time enrollment token for first-boot fleet enrollment. Consumed at first boot, never persisted |
+| `FLEET_ENROLL_URL` | unset | Enrollment server base URL, paired with `FLEET_ENROLL_TOKEN`, used for first-boot enrollment and identity renewal |
 | `BAGEL_FLEET` (build arg) | true | Compose build arg; `false` omits the MQTT client from the iot/ros2 images entirely |

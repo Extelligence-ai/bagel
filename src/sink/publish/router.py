@@ -151,7 +151,19 @@ class RouterCore:
                 self._pending[key] = (t, value)
 
     def flush(self, t_batch: float) -> dict | None:
-        """Pop all pending slot-winners, ordered by t, into a batch (or None)."""
+        """Pop up to `max_samples` pending slot-winners, ordered by t, into a batch.
+
+        Returns `None` if nothing is pending. `max_samples` caps this call's
+        OWN output, not just a trigger threshold on `should_flush` (Codex
+        review: it used to empty the ENTIRE `_pending` dict into one batch
+        regardless of size, so a wide manifest with many channels
+        distinct-slot-winning in the same interval could produce an
+        arbitrarily large batch). If more than `max_samples` slot-winners are
+        pending, the remainder stays in `_pending`, in the same t-order, for
+        a subsequent `flush()` call to pick up -- the caller (`_tick`) loops
+        calling this until it returns `None`, giving each chunk its own seq
+        and spool append.
+        """
         self._last_flush = t_batch
         if not self._pending:
             return None
@@ -159,12 +171,13 @@ class RouterCore:
             ((chan_name, slot, t, v) for (chan_name, slot), (t, v) in self._pending.items()),
             key=lambda item: item[2],
         )
-        for chan_name, slot, _t, _v in items:
+        chunk = items[: self.max_samples]
+        for chan_name, slot, _t, _v in chunk:
             prev = self._last_emitted_slot.get(chan_name)
             if prev is None or slot > prev:
                 self._last_emitted_slot[chan_name] = slot
-        self._pending.clear()
-        samples = [{"c": chan_name, "t": t, "v": v} for chan_name, _slot, t, v in items]
+            del self._pending[(chan_name, slot)]
+        samples = [{"c": chan_name, "t": t, "v": v} for chan_name, _slot, t, v in chunk]
         return {"v": 1, "t_batch": t_batch, "samples": samples}
 
     def should_flush(self, now: float, pending_count: int) -> bool:
@@ -224,6 +237,12 @@ class StreamRouter(threading.Thread):
         that is merely still offline -- log it, record it as `_fatal_error`,
         and exit the loop so `alive`/`last_error` surface it to
         `FleetService.status()`.
+
+        On a clean exit (the stop signal, not a fatal `_tick` error), this
+        calls `_final_flush()` as the very last thing before returning --
+        see its docstring for why samples the tap already accepted (via
+        `offer()`) but that hadn't yet crossed a flush boundary would
+        otherwise be silently dropped on `stop()` (Codex review).
         """
         while not self._stop_event.is_set():
             try:
@@ -232,6 +251,37 @@ class StreamRouter(threading.Thread):
                 logging.getLogger(__name__).exception("StreamRouter thread died")
                 self._fatal_error = repr(exc)
                 return
+        self._final_flush()
+
+    def _final_flush(self) -> None:
+        """Drain the queue into the core and spool whatever it hands back, once.
+
+        Runs as the last act of `run()`, after the stop signal has been
+        observed and the tick loop has exited -- entirely on this thread, so
+        it never races a concurrent `_tick()` touching the same
+        `_core`/`_queue`/`_spool` (Codex review: `stop()` doing this
+        directly on the CALLER's thread instead would race the router
+        thread's own in-flight `_tick`). Mirrors `_tick`'s own
+        drain-then-offer-then-flush-then-spool path, minus `_pump` --
+        publishing the result is not this method's job, only making sure it
+        is durably spooled for the router's normal replay-on-restart path
+        (or the next `_pump` after a `resume()`) to pick up.
+
+        `pause(discard=True)` is unaffected: it flushes here same as any
+        other stop, then FleetService acks past the newly-spooled batch's
+        seq, same as it always could for anything already in the spool.
+        """
+        while True:
+            samples = self._queue.drain(max_items=500, timeout_s=0.0)
+            if not samples:
+                break
+            for topic, t, msg in samples:
+                self._core.offer(topic, t, msg)
+        now = time.time()
+        while (batch := self._core.flush(now)) is not None:
+            seq = self._spool.next_seq("channels")
+            batch["seq"] = seq
+            self._spool.append("channels", seq, batch)
 
     def _tick(self, now: float) -> None:
         """One iteration: drain+offer+maybe-flush-to-spool, then publish.
@@ -239,14 +289,20 @@ class StreamRouter(threading.Thread):
         Unit tests drive this directly with controlled `now` values instead
         of sleeping; `queue.drain`'s bounded timeout is what paces the real
         thread loop in `run()`.
+
+        `core.flush(now)` caps its own output at `max_samples` (Codex
+        review), so a should_flush-triggered flush loops here until it
+        returns `None` -- every chunk gets its own seq and its own spool
+        append, so a wide manifest's oversized batch is fully drained and
+        durably spooled within this one tick rather than trickling out over
+        several.
         """
         timeout_s = min(0.2, self._core.flush_interval_s)
         samples = self._queue.drain(max_items=500, timeout_s=timeout_s)
         for topic, t, msg in samples:
             self._core.offer(topic, t, msg)
         if self._core.should_flush(now, self._core.pending_count):
-            batch = self._core.flush(now)
-            if batch is not None:
+            while (batch := self._core.flush(now)) is not None:
                 seq = self._spool.next_seq("channels")
                 batch["seq"] = seq
                 self._spool.append("channels", seq, batch)
@@ -308,9 +364,25 @@ class StreamRouter(threading.Thread):
         self._next_attempt = now + random.uniform(0, self._backoff)  # noqa: S311 -- jitter, not crypto
 
     def stop(self) -> None:
-        """Signal the loop to stop and join with a bounded timeout."""
+        """Signal the loop to stop and join with a bounded timeout.
+
+        The join timeout (12s) is deliberately longer than the 10s
+        `wait_for_publish` bound inside `MqttPublisher.publish` (Codex
+        review): a 5s join could return while `_pump` was still blocked
+        inside a QoS-1 publish call, so termination wasn't actually
+        guaranteed before a caller (e.g. `pause()`/`resume()`) proceeded. If
+        the thread is somehow still alive after this longer join, that is
+        logged rather than silently ignored.
+
+        `_online` is reset to False here too (Codex review): it used to
+        survive a clean stop unchanged, so `FleetService.status()` kept
+        reporting `online: true` for a router that had already stopped.
+        """
         self._stop_event.set()
-        self.join(timeout=5)
+        self.join(timeout=12.0)
+        if self.is_alive():
+            logging.getLogger(__name__).warning("router thread did not terminate")
+        self._online = False
 
     @property
     def online(self) -> bool:

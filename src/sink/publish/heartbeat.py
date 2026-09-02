@@ -5,19 +5,22 @@ distribution first (works for a `uv sync`/pip-installed image); when that
 distribution metadata is absent -- as in a source checkout run via `uv run`
 without `uv sync --package/-e` having registered it, which is the live path
 in this worktree -- it falls back to parsing `pyproject.toml`'s
-`[project].version` directly. Either miss returns `"unknown"` rather than
-raising: a heartbeat must go out even if its own version string is a mystery.
+`[project].version` directly with a small zero-dependency regex, NOT
+`tomllib` (Codex review: `tomllib` is stdlib only on Python 3.11+, and this
+module must import cleanly on the 3.10-based ros2-humble/iron images too --
+a module-level `import tomllib` broke CI's image import-probe on those).
+Either miss returns `"unknown"` rather than raising: a heartbeat must go out
+even if its own version string is a mystery.
 """
 
 import importlib.metadata
 import logging
 import pathlib
+import re
 import shutil
 import threading
 import time
 from collections.abc import Callable
-
-import tomllib
 
 from src.sink.publish.publisher import Publisher, PublishError
 from src.sink.publish.spool import Spool
@@ -26,12 +29,23 @@ HEARTBEAT_INTERVAL_S = 30.0
 
 _DISTRIBUTION_NAME = "bagel"
 
+_VERSION_LINE_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
 
-def _pyproject_version() -> str:
-    """Read `[project].version` from the repo's pyproject.toml (fallback path)."""
-    root = pathlib.Path(__file__).resolve().parents[3]
-    data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    return str(data["project"]["version"])
+
+def _pyproject_version(root: pathlib.Path | None = None) -> str:
+    """Read `[project].version` from a pyproject.toml (fallback path).
+
+    Parsed with a plain regex rather than `tomllib` -- zero dependencies, and
+    it works on every Python this repo targets (not just 3.11+). `root`
+    defaults to the repo root inferred from this file's location; a caller
+    (tests) may pass a different directory containing its own pyproject.toml.
+    """
+    root = root if root is not None else pathlib.Path(__file__).resolve().parents[3]
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    match = _VERSION_LINE_RE.search(text)
+    if match is None:
+        raise ValueError(f"no version = \"...\" line found in {root / 'pyproject.toml'}")
+    return match.group(1)
 
 
 def bagel_version() -> str:
@@ -69,14 +83,17 @@ def build_heartbeat(  # noqa: PLR0913
     disk_free_bytes: int,
     reconnects: int,
     now: float | None = None,
+    cert_expires_at: str | None = None,
 ) -> dict:
     """Build the §3 heartbeat payload.
 
     `spool_stats` maps lane name -> a value exposing `bytes`/`pending`/
     `evicted` (either as dict keys or attributes, e.g. `Spool.stats()`'s
     `LaneStats`); this aggregates the channels/events/heartbeat lanes into
-    one `spool` object by summing each field. `cert_expires_at` is always
-    `None` here -- identity/enrollment lands in step 6.
+    one `spool` object by summing each field. `cert_expires_at` defaults to
+    `None` (an unenrolled robot, or a caller with no identity wired) and is
+    otherwise passed straight through from the caller's `Identity.expires_at`
+    -- `FleetService` supplies it once constructed with an `identity`.
     """
     t = now if now is not None else time.time()
     return {
@@ -94,7 +111,7 @@ def build_heartbeat(  # noqa: PLR0913
             "evicted": sum(_lane_field(s, "evicted") for s in spool_stats.values()),
         },
         "disk_free_bytes": disk_free_bytes,
-        "cert_expires_at": None,
+        "cert_expires_at": cert_expires_at,
         "reconnects": reconnects,
     }
 
@@ -112,6 +129,15 @@ class HeartbeatThread(threading.Thread):
     spool's "heartbeat" lane instead (best-effort -- a spool failure here is
     swallowed too, since a heartbeat thread that dies is worse than one that
     occasionally fails to record a missed beat).
+
+    An optional `renewal_check` callable is invoked once per tick, before
+    the payload is built -- it exists purely as a convenient, already-running
+    clock for certificate renewal (`FleetService` wires its own
+    `identity.should_attempt_renewal`/`identity.renew` closure in here when
+    constructed with an `identity`). It runs inside its own try/except,
+    entirely separate from the payload-factory/publish/spool handling below:
+    an exception from it is logged at WARNING and otherwise ignored -- it
+    must never be able to skip a beat or kill this thread.
     """
 
     def __init__(
@@ -120,13 +146,18 @@ class HeartbeatThread(threading.Thread):
         payload_factory: Callable[[], dict],
         interval_s: float = HEARTBEAT_INTERVAL_S,
         spool: Spool | None = None,
+        renewal_check: Callable[[], None] | None = None,
     ) -> None:
-        """Wire the publisher, payload builder, and optional spool; does not start the thread."""
+        """Wire the publisher, payload builder, optional spool, and optional renewal hook.
+
+        Does not start the thread.
+        """
         super().__init__(daemon=True)
         self._publisher = publisher
         self._payload_factory = payload_factory
         self._interval_s = interval_s
         self._spool = spool
+        self._renewal_check = renewal_check
         self._stop_event = threading.Event()
         self._spool_failures = 0
         self._last_error: str | None = None
@@ -160,7 +191,18 @@ class HeartbeatThread(threading.Thread):
         `spool_failures` so it is visible to an operator via
         `FleetService.status()`, instead of vanishing at DEBUG. Either way
         the thread never dies and no exception escapes this method.
+
+        `renewal_check()` (if wired) runs first, in its own try/except --
+        see the class docstring. Its outcome (and any exception from it) has
+        no bearing on whether this beat's payload is built or published.
         """
+        if self._renewal_check is not None:
+            try:
+                self._renewal_check()
+            except Exception as exc:
+                logging.getLogger(__name__).warning(
+                    "renewal_check hook failed: %s", exc, exc_info=True
+                )
         try:
             payload = self._payload_factory()
         except Exception as exc:
