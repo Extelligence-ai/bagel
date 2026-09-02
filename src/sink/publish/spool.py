@@ -10,6 +10,8 @@ segment appends are plain writes (no fsync), so a crash may lose the
 active segment's tail — QoS-1 at-least-once plus cloud-side seq dedupe
 absorbs the replay. Concurrency: every mutator holds the spool's file
 lock (one lock per spool root, like the sink buffer's per-topic locks).
+`exclusive()` lets a caller hold that same lock across several mutating
+calls as one atomic unit (e.g. the selftest CLI, Codex round 3 P1b).
 """
 
 import dataclasses
@@ -36,6 +38,18 @@ class SpoolFullError(SpoolError):
 
 class SpoolCorruptError(SpoolError):
     """Raised when a segment has mid-file JSON corruption (not a crash-torn final line)."""
+
+
+class SpoolLockedError(SpoolError):
+    """Raised when `Spool.exclusive()` cannot acquire the spool's lock within its timeout.
+
+    Means a DIFFERENT `Spool` instance (almost always a different process --
+    e.g. a live `FleetService`) is currently mid-operation on this same
+    spool root. Never raised by the ordinary per-call mutators
+    (`next_seq`/`append`/`ack`/`stats`) themselves -- those block
+    indefinitely on the lock, matching the single-writer invariant's
+    existing behavior. Only `exclusive()`'s bounded wait can time out.
+    """
 
 
 @dataclasses.dataclass
@@ -196,6 +210,52 @@ class Spool:
         last = records[-1]["seq"] if records else 0
         floor = _first_seq_of(last_segment) - 1
         return max(last, floor, self._watermark(lane))
+
+    def exclusive(self, timeout: float = 5.0) -> filelock.AcquireReturnProxy:
+        """Hold this spool's lock across an extended, multi-call critical section.
+
+        For callers that need more than one mutating call (`next_seq`/
+        `append`/`ack`/`stats`) to run as a single atomic unit against this
+        spool root -- e.g. the selftest CLI, which must not interleave with a
+        concurrently running `FleetService` writing the same real spool
+        (Codex round 3, P1b). Use it as a context manager:
+
+            with spool.exclusive(timeout=5.0):
+                spool.next_seq(...)
+                spool.append(...)
+                spool.ack(...)
+
+        Reentrant with those calls: `filelock.FileLock` (used here and by
+        every mutator below) is thread-local reentrant, and this method
+        acquires the SAME `FileLock` instance every mutator already uses --
+        so calls made inside the `with` block just increment/decrement its
+        counter instead of blocking on a lock this thread already holds.
+        Only safe from the thread that entered the context; a lock held by a
+        DIFFERENT `Spool` instance (in practice, almost always a different
+        process) is a real OS-level file lock and is waited on normally.
+
+        Args:
+            timeout: Seconds to wait for a lock held elsewhere before giving
+                up. Short and bounded on purpose: this is a refusal, not an
+                indefinite wait -- unlike the per-call mutators, which block
+                without a timeout.
+
+        Returns:
+            A context manager that releases the lock (or decrements its
+            reentrant counter) on exit.
+
+        Raises:
+            SpoolLockedError: the lock is held elsewhere and was not
+                released within `timeout` seconds.
+
+        """
+        try:
+            return self._lock.acquire(timeout=timeout)
+        except filelock.Timeout as exc:
+            raise SpoolLockedError(
+                f"spool at {self._root} is locked by another writer "
+                f"(timed out after {timeout}s)"
+            ) from exc
 
     def next_seq(self, lane: str) -> int:
         """Get the next sequence number for a lane.

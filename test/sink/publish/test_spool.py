@@ -2,11 +2,13 @@
 
 import json
 import pathlib
+import threading
+import time
 
 import pytest
 
 from src.sink.publish import spool as spool_mod
-from src.sink.publish.spool import Spool, SpoolCorruptError
+from src.sink.publish.spool import Spool, SpoolCorruptError, SpoolLockedError
 
 
 @pytest.fixture()
@@ -600,6 +602,98 @@ class TestForRobot:
     def test_for_robot_rejects_dot_segment(self) -> None:
         with pytest.raises(ValueError, match="must be non-empty and not"):
             Spool.for_robot(".")
+
+
+class TestExclusiveLock:
+    """`Spool.exclusive()` (Codex round 3, P1b): hold the spool's real lock
+    across a multi-call critical section, cross-process-safe, bounded wait.
+    """
+
+    def test_reentrant_with_mutators_on_the_same_instance(self, root: pathlib.Path) -> None:
+        """Calls made inside the `with` block must not deadlock on their own lock."""
+        s = Spool(root)
+        with s.exclusive(timeout=1.0):
+            seq = s.next_seq("channels")
+            s.append("channels", seq, {"n": 1})
+            s.ack("channels", seq)
+            s.stats()
+        assert list(s.pending("channels")) == []
+
+    def test_second_instance_blocks_until_released_then_proceeds(
+        self, root: pathlib.Path
+    ) -> None:
+        """A second `Spool` on the same root waits for the first to release,
+        then succeeds -- this is a real OS-level lock, not merely advisory
+        within one instance."""
+        s1 = Spool(root)
+        s2 = Spool(root)
+        released = threading.Event()
+        acquired_order: list[str] = []
+
+        def hold_then_release() -> None:
+            with s1.exclusive(timeout=1.0):
+                acquired_order.append("s1")
+                time.sleep(0.2)
+            released.set()
+
+        t = threading.Thread(target=hold_then_release)
+        t.start()
+        time.sleep(0.05)  # let s1 grab the lock first
+
+        with s2.exclusive(timeout=2.0):
+            acquired_order.append("s2")
+            assert released.is_set()  # s2 only got in after s1 let go
+
+        t.join()
+        assert acquired_order == ["s1", "s2"]
+
+    def test_second_instance_times_out_with_typed_error_while_first_holds(
+        self, root: pathlib.Path
+    ) -> None:
+        """The bounded-wait refusal: a lock held elsewhere for longer than the
+        timeout raises `SpoolLockedError`, not an indefinite hang."""
+        s1 = Spool(root)
+        s2 = Spool(root)
+        holding = threading.Event()
+        release = threading.Event()
+
+        def hold_until_told() -> None:
+            with s1.exclusive(timeout=1.0):
+                holding.set()
+                release.wait(timeout=2.0)
+
+        t = threading.Thread(target=hold_until_told)
+        t.start()
+        holding.wait(timeout=2.0)
+
+        with pytest.raises(SpoolLockedError, match="locked by another writer"):
+            s2.exclusive(timeout=0.1)
+
+        release.set()
+        t.join()
+
+    def test_a_plain_mutator_still_waits_indefinitely_not_a_typed_refusal(
+        self, root: pathlib.Path
+    ) -> None:
+        """Only `exclusive()`'s bounded wait times out -- the ordinary per-call
+        mutators keep their existing block-forever behavior (unchanged)."""
+        s1 = Spool(root)
+        s2 = Spool(root)
+        holding = threading.Event()
+
+        def hold_briefly() -> None:
+            with s1.exclusive(timeout=1.0):
+                holding.set()
+                time.sleep(0.15)
+
+        t = threading.Thread(target=hold_briefly)
+        t.start()
+        holding.wait(timeout=2.0)
+
+        # s2.next_seq blocks on the same lock but has no timeout -- it must
+        # simply wait for s1 to finish, not raise.
+        assert s2.next_seq("channels") == 1
+        t.join()
 
 
 def test_spool_module_does_not_import_paho_eagerly(monkeypatch: pytest.MonkeyPatch) -> None:

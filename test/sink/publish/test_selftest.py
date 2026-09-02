@@ -6,6 +6,7 @@ import os
 import pathlib
 import queue
 import sys
+import threading
 import time
 import uuid
 from urllib.parse import urlparse
@@ -199,6 +200,70 @@ class TestRunSelftest:
         result = run_selftest(pub, spool, batches=1, interval_s=0.0)
 
         assert result["batches"] == 1
+
+
+class TestExclusiveLockDuringRun:
+    """P1b (Codex round 3): the whole run holds `spool.exclusive()`, so a
+    concurrent writer on the same spool root either waits for it or the run
+    refuses cleanly up front -- never an interleaved seq race mid-run."""
+
+    def test_refuses_before_any_side_effect_when_another_writer_holds_the_lock(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        from src.sink.publish.selftest import SelftestPreconditionError, run_selftest
+
+        root = tmp_path / "spool"
+        holder_spool = Spool(root)
+        run_spool = Spool(root)
+        holding = threading.Event()
+        release = threading.Event()
+
+        def hold_the_lock() -> None:
+            with holder_spool.exclusive(timeout=1.0):
+                holding.set()
+                release.wait(timeout=2.0)
+
+        t = threading.Thread(target=hold_the_lock)
+        t.start()
+        holding.wait(timeout=2.0)
+
+        pub = FakePublisher()
+        try:
+            with pytest.raises(SelftestPreconditionError, match="another writer holds the spool"):
+                run_selftest(pub, run_spool, batches=1, interval_s=0.0, lock_timeout_s=0.1)
+        finally:
+            release.set()
+            t.join()
+
+        # Refused before connecting or touching the spool at all.
+        assert pub.calls == []
+        assert list(run_spool.pending("channels")) == []
+
+    def test_waits_out_a_briefly_held_lock_then_runs_normally(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        from src.sink.publish.selftest import run_selftest
+
+        root = tmp_path / "spool"
+        holder_spool = Spool(root)
+        run_spool = Spool(root)
+        holding = threading.Event()
+
+        def hold_briefly() -> None:
+            with holder_spool.exclusive(timeout=1.0):
+                holding.set()
+                time.sleep(0.15)
+
+        t = threading.Thread(target=hold_briefly)
+        t.start()
+        holding.wait(timeout=2.0)
+
+        pub = FakePublisher()
+        result = run_selftest(pub, run_spool, batches=1, interval_s=0.0, lock_timeout_s=2.0)
+        t.join()
+
+        assert result["batches"] == 1
+        assert list(run_spool.pending("channels")) == []
 
 
 class TestMain:

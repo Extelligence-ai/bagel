@@ -43,10 +43,11 @@ from src.sink.publish.heartbeat import build_heartbeat, disk_free
 from src.sink.publish.identity import Identity, load_identity
 from src.sink.publish.mqtt import MqttPublisher
 from src.sink.publish.publisher import Publisher, PublishError
-from src.sink.publish.spool import Spool
+from src.sink.publish.spool import Spool, SpoolLockedError
 
 DEFAULT_BATCHES = 10
 DEFAULT_INTERVAL_S = 0.5
+DEFAULT_LOCK_TIMEOUT_S = 5.0
 
 
 class SelftestPreconditionError(ValueError):
@@ -135,13 +136,14 @@ def _check_no_pending_backlog(spool: Spool) -> None:
             )
 
 
-def run_selftest(
+def run_selftest(  # noqa: PLR0913
     publisher: Publisher,
     spool: Spool,
     *,
     batches: int = DEFAULT_BATCHES,
     interval_s: float = 0.0,
     now: Callable[[], float] = time.time,
+    lock_timeout_s: float = DEFAULT_LOCK_TIMEOUT_S,
 ) -> dict:
     """Publish the conformance fixture end to end: schema, batches, heartbeat, event.
 
@@ -158,6 +160,19 @@ def run_selftest(
     otherwise this run's own first ack would advance the watermark past
     that pre-existing backlog and silently drop it.
 
+    The entire run -- the backlog check and every `next_seq`/`append`/`ack`
+    call that follows -- holds `spool.exclusive()` (Codex round 3, P1b): a
+    concurrently running `FleetService`/`StreamRouter` writing this same real
+    spool waits for the selftest to finish instead of racing it for seqs
+    (previously, `next_seq` then `append` released the lock in between,
+    letting a concurrent writer interleave and see the seq monotonicity
+    check fail with `ValueError` -- clean, but nondeterministic). If a
+    different writer already holds the lock for longer than `lock_timeout_s`,
+    this refuses to start at all rather than hanging. Pausing the real
+    service before running the selftest (see the runbook) remains good
+    practice -- it avoids the brief wait -- but is no longer required for
+    correctness.
+
     Args:
         publisher: A connected-or-connectable `Publisher` (typically
             `MqttPublisher`).
@@ -166,91 +181,102 @@ def run_selftest(
         interval_s: Delay between batches (0 in tests; the CLI defaults this
             to 0.5s so a subscriber can observe batches arriving over time).
         now: Clock, injectable for deterministic tests.
+        lock_timeout_s: Seconds to wait for `spool.exclusive()` before
+            refusing to start (typed `SelftestPreconditionError`).
 
     Returns:
         `{"channels": 4, "batches", "samples", "heartbeat": 1, "events": 1,
         "channels_seq": [first, last], "events_seq": <seq>}`.
 
     Raises:
-        SelftestPreconditionError: a spool lane has pending unacked backlog
-            -- checked first, before any connect/append side effect.
+        SelftestPreconditionError: a spool lane has pending unacked backlog,
+            or another writer already holds the spool's lock -- both checked
+            before any connect/append side effect.
         Whatever `publisher`/`spool` raise thereafter (typically
         `PublishError` or a spool `ValueError`/`SpoolError`) -- always
-        re-raised after the cleanup above.
+        re-raised after the cleanup below.
 
     """
-    _check_no_pending_backlog(spool)
-
-    last_channels_seq: int | None = None
-    last_events_seq: int | None = None
-    channels_seqs: list[int] = []
-    total_samples = 0
-    t0 = now()
-
     try:
-        publisher.connect()
-        publisher.publish_schema({"v": 1, "channels": SELFTEST_CHANNELS})
+        lock = spool.exclusive(timeout=lock_timeout_s)
+    except SpoolLockedError as exc:
+        raise SelftestPreconditionError(
+            f"selftest refused: another writer holds the spool ({exc})"
+        ) from exc
 
-        for i in range(batches):
-            t = now()
-            batch = _build_batch(i, t)
-            seq = spool.next_seq("channels")
-            batch["seq"] = seq
-            spool.append("channels", seq, batch)
-            last_channels_seq = seq
-            publisher.publish_channels(batch)
-            spool.ack("channels", seq)
-            channels_seqs.append(seq)
-            total_samples += len(batch["samples"])
-            if interval_s:
-                time.sleep(interval_s)
+    with lock:
+        _check_no_pending_backlog(spool)
 
-        heartbeat_payload = build_heartbeat(
-            started_at=t0,
-            subscriptions=["selftest"],
-            channels_active=len(SELFTEST_CHANNELS),
-            queue_depth=0,
-            queue_dropped=0,
-            spool_stats=spool.stats(),
-            disk_free_bytes=disk_free(settings.CACHE_DIRECTORY),
-            reconnects=0,
-            now=now(),
-        )
-        publisher.publish_heartbeat(heartbeat_payload)
+        last_channels_seq: int | None = None
+        last_events_seq: int | None = None
+        channels_seqs: list[int] = []
+        total_samples = 0
+        t0 = now()
 
-        events_seq = spool.next_seq("events")
-        event_payload = {
-            "v": 1,
-            "seq": events_seq,
-            "event_id": f"selftest-{uuid.uuid4()}",
-            "name": "selftest",
-            "t_start": t0,
-            "t_end": now(),
-            "source_topic": "selftest",
-            "summary": {"kind": "selftest", "batches": batches},
+        try:
+            publisher.connect()
+            publisher.publish_schema({"v": 1, "channels": SELFTEST_CHANNELS})
+
+            for i in range(batches):
+                t = now()
+                batch = _build_batch(i, t)
+                seq = spool.next_seq("channels")
+                batch["seq"] = seq
+                spool.append("channels", seq, batch)
+                last_channels_seq = seq
+                publisher.publish_channels(batch)
+                spool.ack("channels", seq)
+                channels_seqs.append(seq)
+                total_samples += len(batch["samples"])
+                if interval_s:
+                    time.sleep(interval_s)
+
+            heartbeat_payload = build_heartbeat(
+                started_at=t0,
+                subscriptions=["selftest"],
+                channels_active=len(SELFTEST_CHANNELS),
+                queue_depth=0,
+                queue_dropped=0,
+                spool_stats=spool.stats(),
+                disk_free_bytes=disk_free(settings.CACHE_DIRECTORY),
+                reconnects=0,
+                now=now(),
+            )
+            publisher.publish_heartbeat(heartbeat_payload)
+
+            events_seq = spool.next_seq("events")
+            event_payload = {
+                "v": 1,
+                "seq": events_seq,
+                "event_id": f"selftest-{uuid.uuid4()}",
+                "name": "selftest",
+                "t_start": t0,
+                "t_end": now(),
+                "source_topic": "selftest",
+                "summary": {"kind": "selftest", "batches": batches},
+            }
+            spool.append("events", events_seq, event_payload)
+            last_events_seq = events_seq
+            publisher.publish_event(event_payload)
+            spool.ack("events", events_seq)
+
+            publisher.close()
+        except Exception:
+            if last_channels_seq is not None:
+                spool.ack("channels", last_channels_seq)
+            if last_events_seq is not None:
+                spool.ack("events", last_events_seq)
+            raise
+
+        return {
+            "channels": len(SELFTEST_CHANNELS),
+            "batches": batches,
+            "samples": total_samples,
+            "heartbeat": 1,
+            "events": 1,
+            "channels_seq": [channels_seqs[0], channels_seqs[-1]] if channels_seqs else [],
+            "events_seq": events_seq,
         }
-        spool.append("events", events_seq, event_payload)
-        last_events_seq = events_seq
-        publisher.publish_event(event_payload)
-        spool.ack("events", events_seq)
-
-        publisher.close()
-    except Exception:
-        if last_channels_seq is not None:
-            spool.ack("channels", last_channels_seq)
-        if last_events_seq is not None:
-            spool.ack("events", last_events_seq)
-        raise
-
-    return {
-        "channels": len(SELFTEST_CHANNELS),
-        "batches": batches,
-        "samples": total_samples,
-        "heartbeat": 1,
-        "events": 1,
-        "channels_seq": [channels_seqs[0], channels_seqs[-1]] if channels_seqs else [],
-        "events_seq": events_seq,
-    }
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -310,9 +336,9 @@ def main(argv: list[str] | None = None) -> int:
     Returns 0 and prints the `run_selftest` summary as one line of JSON on
     success. On any expected failure state (fleet disabled/not installed,
     unenrolled with no `--broker` override, bad broker config, a publish
-    failure, a spool lane with pending backlog, or a concurrently running
-    service's spool `ValueError`), prints the typed error's message to
-    stderr (no traceback) and returns 1.
+    failure, a spool lane with pending backlog, or another writer already
+    holding the spool's lock), prints the typed error's message to stderr
+    (no traceback) and returns 1.
     """
     args = _build_arg_parser().parse_args(argv)
     try:
