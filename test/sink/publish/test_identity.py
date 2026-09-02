@@ -200,6 +200,26 @@ class _FakeRenewHandler(http.server.BaseHTTPRequestHandler):
         if scenario == "renew-not-json":
             self._respond(200, b"not json at all")
             return
+        if scenario == "renew-key-mismatch":
+            # Cert issued for a DIFFERENT, freshly-generated key -- not the
+            # CSR's public key -- simulating a server bug (or a response for
+            # a stale/replayed CSR) that hands back a cert/key pair that
+            # doesn't match. renew() must reject this before committing.
+            from cryptography.hazmat.primitives.asymmetric import ec
+
+            other_key = ec.generate_private_key(ec.SECP256R1())
+            robot_cert_pem, ca_cert_pem = _build_ca_and_robot_cert(
+                "renewed-cn", other_key.public_key()
+            )
+            body = json.dumps(
+                {
+                    "cert_pem": robot_cert_pem.decode(),
+                    "ca_pem": ca_cert_pem.decode(),
+                    "expires_at": "2028-01-01T00:00:00Z",
+                }
+            ).encode()
+            self._respond(200, body)
+            return
 
         robot_cert_pem, ca_cert_pem = _build_ca_and_robot_cert("renewed-cn", csr.public_key())
         body = json.dumps(
@@ -1480,6 +1500,61 @@ class TestRenewOtherFailures:
         assert "last_renewal_attempt_at" in doc
 
 
+class TestRenewCertKeyMismatch:
+    """Codex review: a renewal response's cert_pem must match the key generated
+
+    for THIS renewal before it is committed -- otherwise identity.yaml would
+    repoint at a cert nothing on disk holds the matching private key for,
+    breaking the next mTLS handshake with no automatic recovery.
+    """
+
+    def test_mismatched_cert_returns_none_no_commit_and_records_attempt(
+        self,
+        fake_server: str,
+        fake_renew_server: str,
+        tmp_path: object,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        identity = _identity_for_renew(
+            fake_server, fake_renew_server, tmp_path, "renew-key-mismatch"
+        )
+        old_key_bytes = identity.key_path.read_bytes()
+        old_cert_bytes = identity.cert_path.read_bytes()
+        old_key_path, old_cert_path = identity.key_path, identity.cert_path
+
+        with caplog.at_level(logging.WARNING):
+            result = identity_mod.renew(identity)
+
+        assert result is None
+        # Old identity is completely untouched -- no pointer swap, nothing
+        # unlinked, nothing extra written under the directory.
+        assert old_key_path.exists()
+        assert old_cert_path.exists()
+        assert old_key_path.read_bytes() == old_key_bytes
+        assert old_cert_path.read_bytes() == old_cert_bytes
+
+        doc = yaml.safe_load((old_key_path.parent / "identity.yaml").read_text())
+        assert doc["key_file"] == old_key_path.name
+        assert doc["cert_file"] == old_cert_path.name
+        assert "last_renewal_attempt_at" in doc  # the attempt is still recorded
+
+        warnings_ = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warnings_
+
+    def test_matching_cert_still_commits(
+        self, fake_server: str, fake_renew_server: str, tmp_path: object
+    ) -> None:
+        """Regression guard: the new validation must not reject a legitimate renewal."""
+        identity = _identity_for_renew(fake_server, fake_renew_server, tmp_path, "renew-ok")
+        old_key_path = identity.key_path
+
+        result = identity_mod.renew(identity)
+
+        assert result is not None
+        assert result.key_path != old_key_path
+        assert not old_key_path.exists()  # old pointer's file cleaned up -- the commit happened
+
+
 class TestRenewNeverRaises:
     def test_unexpected_exception_is_caught_logged_and_returns_none(
         self,
@@ -1510,7 +1585,15 @@ class TestFailedRenewalLeavesIdentityIntact:
     """Self-review requirement: a failed renewal deletes nothing and changes no old bytes."""
 
     @pytest.mark.parametrize(
-        "scenario", ["renew-501", "renew-404", "renew-500", "renew-malformed", "renew-not-json"]
+        "scenario",
+        [
+            "renew-501",
+            "renew-404",
+            "renew-500",
+            "renew-malformed",
+            "renew-not-json",
+            "renew-key-mismatch",
+        ],
     )
     def test_all_files_present_and_byte_identical_except_the_attempt_timestamp(
         self, fake_server: str, fake_renew_server: str, tmp_path: object, scenario: str
