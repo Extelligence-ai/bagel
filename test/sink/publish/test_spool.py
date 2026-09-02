@@ -391,6 +391,29 @@ class TestAckAndWatermark:
         assert len(remaining) < segments_before
         assert [seq for seq, _ in s.pending("channels")] == [9]
 
+    def test_outage_backlog_survives_early_ack_and_idempotent_reack(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Chaos-e2e regression suspect, pinned as an invariant (2026-09-01
+        # CI failure "delivered [1, 38, 39]"): one batch acked pre-outage,
+        # then a backlog spooled while the broker is down. pending() must
+        # return the ENTIRE backlog in order, and an idempotent re-ack of
+        # the pre-outage seq (which now retries _prune) must never unlink a
+        # segment still holding unacked records. Multi-segment on purpose:
+        # _prune's only delete path is non-final segments, so the
+        # single-segment case can't even exercise the suspected bug.
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 120)
+        s = Spool(root)
+        s.append("channels", 1, {"pad": "x" * 40, "n": 1})
+        s.ack("channels", 1)
+        for i in range(2, 40):
+            s.append("channels", i, {"pad": "x" * 40, "n": i})
+        assert len(list((root / "channels").glob("segment-*.jsonl"))) >= 3
+        backlog = list(range(2, 40))
+        assert [seq for seq, _ in s.pending("channels")] == backlog
+        s.ack("channels", 1)  # idempotent re-ack: prune retry must spare live segments
+        assert [seq for seq, _ in s.pending("channels")] == backlog
+
     def test_watermark_survives_restart_exactly(self, root: pathlib.Path) -> None:
         s = Spool(root)
         for i in range(1, 6):
