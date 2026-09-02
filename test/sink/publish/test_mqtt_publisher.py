@@ -251,6 +251,16 @@ class TestClose:
         fake["client"].next_info = FakeMsgInfo(published=False)
         p.close()  # must not raise
 
+    @pytest.mark.parametrize("reason", ["stopped", "paused"])
+    def test_close_reason_flows_into_clean_stop_payload(
+        self, fake: dict[str, FakeFleetPaho], reason: str
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        p.close(reason=reason)
+        stop = [c for c in fake["client"].calls if c[0] == "publish"][-1]
+        assert json.loads(stop[2])["reason"] == reason
+
 
 class TestSetTls:
     """CRITICAL fix: a post-renewal reconnect must pick up the NEW cert/key paths.
@@ -272,9 +282,7 @@ class TestSetTls:
         )
         old_tls = p._tls
 
-        p.set_tls(
-            tls_ca_certs="/new-ca.pem", tls_certfile="/new-c.pem", tls_keyfile="/new-k.pem"
-        )
+        p.set_tls(tls_ca_certs="/new-ca.pem", tls_certfile="/new-c.pem", tls_keyfile="/new-k.pem")
 
         assert p._tls is not old_tls  # a NEW dict, not an in-place mutation
         assert p._tls == {
@@ -303,9 +311,7 @@ class TestSetTls:
             "keyfile": "/old-k.pem",
         }
 
-        p.set_tls(
-            tls_ca_certs="/new-ca.pem", tls_certfile="/new-c.pem", tls_keyfile="/new-k.pem"
-        )
+        p.set_tls(tls_ca_certs="/new-ca.pem", tls_certfile="/new-c.pem", tls_keyfile="/new-k.pem")
         p.connect()  # forced reconnect, e.g. after a broker drop
 
         assert fake["client"].tls == {

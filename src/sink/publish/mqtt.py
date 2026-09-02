@@ -232,10 +232,18 @@ class MqttPublisher(Publisher):
         if info.rc != 0 or not info.is_published():
             raise PublishError(f"{topic}: publish failed (rc={info.rc})")
 
-    def close(self) -> None:
+    def close(self, reason: str = "stopped") -> None:
         """Publish a clean-stop heartbeat (best-effort) then stop and disconnect.
 
         Idempotent: safe to call more than once, and safe when never connected.
+
+        Args:
+            reason: Carried verbatim in the clean-stop heartbeat's `reason`
+                field (spec §3). `FleetService.stop()` uses the default
+                `"stopped"`; `FleetService.pause()` passes `"paused"` so a
+                paused robot's last retained heartbeat reads distinctly from
+                a genuinely stopped one.
+
         """
         client, self._client = self._client, None
         if client is None:
@@ -243,7 +251,7 @@ class MqttPublisher(Publisher):
         self._closing = True
         try:
             if client.is_connected():
-                stopped = {"v": 1, "t": time.time(), "online": False, "reason": "stopped"}
+                stopped = {"v": 1, "t": time.time(), "online": False, "reason": reason}
                 try:
                     info = client.publish(
                         wire_topic(self._tenant, self._robot, "heartbeat"),

@@ -116,6 +116,19 @@ class FleetService:
         """
         return list(self._schema_payload["channels"])
 
+    @property
+    def paused(self) -> bool:
+        """Whether this service is started AND currently paused.
+
+        `self._started and self._paused` rather than `self._paused` alone: a
+        fresh, never-started service also has `_paused = False`, so that bit
+        alone can't distinguish "never started" from "resumed" -- both would
+        read `False` either way here, but requiring `_started` too keeps this
+        property's contract explicit for `control.fleet_status()`, which
+        derives its `"running"` vs `"paused"` service state from this.
+        """
+        return self._started and self._paused
+
     # -- lifecycle -------------------------------------------------------------
 
     def start(self) -> None:
@@ -195,7 +208,9 @@ class FleetService:
         Idempotent: a no-op if not started or already paused. `discard=True`
         additionally acks the channels lane up to its last written seq,
         dropping any still-unacked backlog (events/heartbeat are never-drop
-        lanes and are left untouched).
+        lanes and are left untouched). Closes the publisher with
+        `reason="paused"` (spec §3), so the retained clean-stop heartbeat a
+        broker-side subscriber sees reads distinctly from a genuine `stop()`.
         """
         if not self._started or self._paused:
             return
@@ -204,7 +219,7 @@ class FleetService:
             self._heartbeat.stop()
         if self._router is not None:
             self._router.stop()
-        self._publisher.close()
+        self._publisher.close(reason="paused")
         if discard:
             last_seq = self._spool.next_seq("channels") - 1
             self._spool.ack("channels", last_seq)
