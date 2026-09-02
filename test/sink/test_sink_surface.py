@@ -107,8 +107,14 @@ class TestCloseHooks:
         base.register_close_hook(boom)
         with caplog.at_level(logging.WARNING):
             sink.close()  # must not raise
-        assert any("hook exploded" in record.getMessage() for record in caplog.records) or any(
-            record.exc_info for record in caplog.records
+        # Pin the actual log message base.py emits ("Close hook %r raised
+        # while closing sink %r", exc_info=True) -- not a looser "either the
+        # message or exc_info" check, which would also pass a message that
+        # says nothing useful as long as SOME record carried a traceback.
+        assert any(
+            "Close hook" in record.getMessage()
+            and "raised while closing sink" in record.getMessage()
+            for record in caplog.records
         )
 
     def test_unregister_stops_delivery(self, sink: _FakeSink) -> None:

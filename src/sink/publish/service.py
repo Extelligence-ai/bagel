@@ -12,11 +12,10 @@ thread-lifecycle precedent: every long-running fleet thread is
 `daemon=True`, stops via a `threading.Event` (so `stop()`/`join()` never
 requires a sleep-based poll and returns as soon as the event is observed),
 and its `stop()` joins with a bounded timeout (5s) so a slow or stuck thread
-can never hang the caller -- mirrored from `TopicSink.close()`
-(`src/sink/base.py:323`)'s try/finally shape: `stop()`/`pause()` do their
-teardown in a `try` and always release the publisher session in a `finally`,
-so a failure partway through still leaves the service in a consistent,
-re-enterable state.
+can never hang the caller -- mirrored from `TopicSink.close()`'s try/finally
+shape: `stop()`/`pause()` do their teardown in a `try` and always release
+the publisher session in a `finally`, so a failure partway through still
+leaves the service in a consistent, re-enterable state.
 
 Startup/manifest wiring (deciding *when* to call `start()`) is explicitly
 out of scope here -- step 6 ruling, since it's conditioned on identity
