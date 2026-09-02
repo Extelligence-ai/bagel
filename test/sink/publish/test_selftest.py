@@ -142,11 +142,63 @@ class TestRunSelftest:
         spool = Spool(tmp_path / "spool")
         spool.append("channels", 1, {"pre": 1})
         spool.append("channels", 2, {"pre": 2})
+        spool.ack("channels", 2)
 
         pub = FakePublisher()
         run_selftest(pub, spool, batches=2, interval_s=0.0)
 
         assert [b["seq"] for b in pub.channel_calls] == [3, 4]
+
+    def test_pending_channels_backlog_refuses_before_any_side_effect(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """C1 (critical): a paused service's queued-but-unsent channels backlog
+        must never be silently advanced-past by the selftest's own acks."""
+        from src.sink.publish.selftest import SelftestPreconditionError, run_selftest
+
+        spool = Spool(tmp_path / "spool")
+        spool.append("channels", 1, {"pre": 1})  # pending: never acked
+
+        pub = FakePublisher()
+
+        with pytest.raises(SelftestPreconditionError, match="channels"):
+            run_selftest(pub, spool, batches=2, interval_s=0.0)
+
+        # Nothing appended/acked/connected -- the precondition check runs
+        # before any side effect.
+        assert pub.calls == []
+        assert list(spool.pending("channels")) == [(1, {"pre": 1})]
+        assert list(spool.pending("events")) == []
+
+    def test_pending_events_backlog_refuses_before_any_side_effect(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """C1 (critical): same ruling for the events lane."""
+        from src.sink.publish.selftest import SelftestPreconditionError, run_selftest
+
+        spool = Spool(tmp_path / "spool")
+        spool.append("events", 1, {"pre": 1})  # pending: never acked
+
+        pub = FakePublisher()
+
+        with pytest.raises(SelftestPreconditionError, match="events"):
+            run_selftest(pub, spool, batches=2, interval_s=0.0)
+
+        assert pub.calls == []
+        assert list(spool.pending("channels")) == []
+        assert list(spool.pending("events")) == [(1, {"pre": 1})]
+
+    def test_empty_lanes_runs_without_a_precondition_error(self, tmp_path: pathlib.Path) -> None:
+        """C1: the precondition check must not false-positive on a fresh/fully-
+        acked spool -- the common case."""
+        from src.sink.publish.selftest import run_selftest
+
+        spool = Spool(tmp_path / "spool")
+        pub = FakePublisher()
+
+        result = run_selftest(pub, spool, batches=1, interval_s=0.0)
+
+        assert result["batches"] == 1
 
 
 class TestMain:
@@ -216,6 +268,24 @@ class TestMain:
         assert captured["publisher"] is sentinel
         assert captured["kwargs"]["batches"] == 3
         assert captured["kwargs"]["interval_s"] == 0.0
+
+    def test_load_identity_or_none_is_a_single_load_not_check_then_load(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """M4 (mirrors control._load_identity_or_none's identical regression
+        test): a corrupt/deleted identity must degrade to `None` via a single
+        `load_identity()` call caught here, not a separate `is_enrolled()`
+        check followed by a `load_identity()` call that could TOCTOU-race it.
+        """
+        import src.sink.publish.selftest as selftest_mod
+        from src.sink.publish import FleetNotEnrolledError
+
+        def _raise(*_a: object, **_kw: object) -> None:
+            raise FleetNotEnrolledError("deleted between checks")
+
+        monkeypatch.setattr(selftest_mod, "load_identity", _raise)
+
+        assert selftest_mod._load_identity_or_none(pathlib.Path("/nonexistent")) is None
 
 
 # -- e2e: gated on a real broker, same idiom as test_mqtt_integration.py. --------

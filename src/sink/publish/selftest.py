@@ -40,14 +40,24 @@ from src.sink.publish import (
 from src.sink.publish.config import StreamsConfig
 from src.sink.publish.connect import resolve_publisher_kwargs
 from src.sink.publish.heartbeat import build_heartbeat, disk_free
-from src.sink.publish.identity import is_enrolled as _is_enrolled
-from src.sink.publish.identity import load_identity
+from src.sink.publish.identity import Identity, load_identity
 from src.sink.publish.mqtt import MqttPublisher
 from src.sink.publish.publisher import Publisher, PublishError
 from src.sink.publish.spool import Spool
 
 DEFAULT_BATCHES = 10
 DEFAULT_INTERVAL_S = 0.5
+
+
+class SelftestPreconditionError(ValueError):
+    """Raised when `run_selftest` refuses to start (spec §8 conformance ruling).
+
+    A `ValueError` subclass so it's caught by every existing spool-`ValueError`
+    handler (including this module's own `main()`) without needing a special
+    case. Currently the only precondition: a spool lane with pending unacked
+    backlog (see `_check_no_pending_backlog`).
+    """
+
 
 # A fixed, documented four-channel schema covering every §3 wire type
 # (number, bool, string, geo). Never resolved from a real topic/manifest --
@@ -103,6 +113,28 @@ def _build_batch(i: int, t: float) -> dict:
     }
 
 
+def _check_no_pending_backlog(spool: Spool) -> None:
+    """Refuse to run against a spool lane with pending unacked entries (C1 ruling).
+
+    `run_selftest` allocates real-lane seqs and acks them as it goes
+    (advance-to semantics -- see `Spool.ack`). If either lane already has
+    pending backlog -- e.g. a paused service's queued-but-unsent data --
+    the FIRST ack this run issues would advance that lane's watermark past
+    the pending backlog, silently dropping it, even though this run never
+    touched those specific records. Checked before any connect/append side
+    effect (see `run_selftest`'s call site), so a refusal here leaves the
+    spool completely untouched.
+    """
+    for lane in ("channels", "events"):
+        if next(spool.pending(lane), None) is not None:
+            raise SelftestPreconditionError(
+                f"selftest refused: spool lane '{lane}' has pending unacked entries. "
+                "Running the selftest now would advance this lane's watermark past "
+                "that backlog and silently drop it. Let the service drain it, or "
+                "discard it first via pause_fleet_streaming(discard=True)."
+            )
+
+
 def run_selftest(
     publisher: Publisher,
     spool: Spool,
@@ -121,6 +153,11 @@ def run_selftest(
     `Spool.ack`) before the exception is re-raised, so nothing this run
     spooled lingers for the real fleet service to replay later.
 
+    Before any of that: refuses to start at all if either lane already has
+    pending unacked backlog (`_check_no_pending_backlog`, C1 ruling) --
+    otherwise this run's own first ack would advance the watermark past
+    that pre-existing backlog and silently drop it.
+
     Args:
         publisher: A connected-or-connectable `Publisher` (typically
             `MqttPublisher`).
@@ -135,11 +172,15 @@ def run_selftest(
         "channels_seq": [first, last], "events_seq": <seq>}`.
 
     Raises:
-        Whatever `publisher`/`spool` raise (typically `PublishError` or a
-        spool `ValueError`/`SpoolError`) -- always re-raised after the
-        cleanup above.
+        SelftestPreconditionError: a spool lane has pending unacked backlog
+            -- checked first, before any connect/append side effect.
+        Whatever `publisher`/`spool` raise thereafter (typically
+        `PublishError` or a spool `ValueError`/`SpoolError`) -- always
+        re-raised after the cleanup above.
 
     """
+    _check_no_pending_backlog(spool)
+
     last_channels_seq: int | None = None
     last_events_seq: int | None = None
     channels_seqs: list[int] = []
@@ -248,20 +289,36 @@ _EXPECTED_ERRORS = (
 )
 
 
+def _load_identity_or_none(directory: pathlib.Path) -> Identity | None:
+    """Single-load `load_identity`, `None` on `FleetNotEnrolledError` (M4).
+
+    Mirrors `control._load_identity_or_none` -- NOT an `is_enrolled()` check
+    followed by a separate `load_identity()` call, which has a TOCTOU window:
+    a corrupt/deleted identity between the two calls would raise
+    `FleetNotEnrolledError` uncaught instead of degrading to "unenrolled".
+    One `load_identity()` call, caught here, closes that window structurally.
+    """
+    try:
+        return load_identity(directory)
+    except FleetNotEnrolledError:
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point: run the selftest against a resolved fleet publisher.
 
     Returns 0 and prints the `run_selftest` summary as one line of JSON on
     success. On any expected failure state (fleet disabled/not installed,
     unenrolled with no `--broker` override, bad broker config, a publish
-    failure, or a concurrently running service's spool `ValueError`), prints
-    the typed error's message to stderr (no traceback) and returns 1.
+    failure, a spool lane with pending backlog, or a concurrently running
+    service's spool `ValueError`), prints the typed error's message to
+    stderr (no traceback) and returns 1.
     """
     args = _build_arg_parser().parse_args(argv)
     try:
         require_fleet()
         directory = pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY)
-        identity = load_identity(directory) if _is_enrolled(directory) else None
+        identity = _load_identity_or_none(directory)
         kwargs = resolve_publisher_kwargs(StreamsConfig(broker=args.broker), identity)
         publisher = MqttPublisher(**kwargs)
         spool = Spool.for_robot(identity.robot if identity is not None else "dev/robot")

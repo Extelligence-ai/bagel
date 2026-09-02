@@ -302,7 +302,11 @@ uv run python -m src.sink.publish.selftest [--broker mqtt(s)://...] \
 It publishes, in order, using the enrolled identity (or `--broker` on a dev
 rig): one retained schema, N channel batches (default 10, default 0.5 s
 apart), one heartbeat, one event -- then prints a one-line JSON summary and
-exits 0 (any expected failure prints to stderr and exits 1).
+exits 0 (any expected failure prints to stderr and exits 1). It requires both
+spool lanes (`channels`, `events`) to be fully drained (no pending unacked
+entries) before it will start -- it allocates and acks real seqs on those
+lanes, so pending backlog would otherwise be silently advanced past; run it
+with fleet streaming paused or stopped.
 
 The fixture is fixed and deterministic. The schema is exactly these four
 channels:
@@ -324,6 +328,8 @@ fixed). For batch index `i` (0-based) at publish time `t`:
 
 The heartbeat reports `subscriptions: ["selftest"]` and `channels_active: 4`.
 The event has `name: "selftest"`, an `event_id` of the form
-`selftest-<uuid4>`, `summary: {"kind": "selftest", "batches": N}`, and no
-`artifact`. Seqs come from the robot's real lanes, so they continue from
-whatever the robot last used rather than starting at 1.
+`selftest-<uuid4>`, a `summary` that contains at least
+`{"kind": "selftest", "batches": N}` (future fields may be added; existing
+readers must not require an exact match), and no `artifact`. Seqs come from
+the robot's real lanes, so they continue from whatever the robot last used
+rather than starting at 1.

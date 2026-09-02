@@ -114,6 +114,12 @@ spool lanes, and a concurrently running streaming service makes one side fail
 a sequence check. That failure is clean and harmless -- a typed error, exit
 code 1, nothing corrupted -- but the run doesn't count; pause and rerun.
 
+The selftest also refuses outright if either spool lane already has pending
+unacked backlog (e.g. a paused service's queued-but-unsent data) -- exit 1,
+nothing touched -- since it would otherwise ack its way past that backlog and
+silently drop it; let the service drain the backlog, or discard it first via
+`pause_fleet_streaming(discard=True)`.
+
 ## Dev rigs
 
 `FLEET_DEV_INSECURE=1` permits a plaintext `mqtt://` broker **only** when its
