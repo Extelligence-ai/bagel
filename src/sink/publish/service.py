@@ -90,6 +90,32 @@ class FleetService:
         self._started = False
         self._paused = False
 
+    # -- accessors ---------------------------------------------------------------
+
+    @property
+    def sink(self) -> object:
+        """The `TopicSink` this service taps.
+
+        Lets a caller (e.g. `startup.py`'s close hook) identity-compare a
+        sink against the one this service is running against, without
+        reaching into the private `_sink` attribute.
+        """
+        return self._sink
+
+    @property
+    def streams(self) -> StreamsConfig:
+        """The `StreamsConfig` this service was constructed with."""
+        return self._streams
+
+    @property
+    def channels(self) -> list[dict]:
+        """A copy of the resolved schema payload's `channels` list.
+
+        A copy, not a live reference: mutating the returned list must never
+        affect this service's own schema payload.
+        """
+        return list(self._schema_payload["channels"])
+
     # -- lifecycle -------------------------------------------------------------
 
     def start(self) -> None:
@@ -111,12 +137,8 @@ class FleetService:
             raise RuntimeError("FleetService already started")
         require_fleet()
         configured_topics = {rule.topic for rule in self._streams.channels}
-        # TopicSink exposes no public per-topic buffer accessor (only the
-        # aggregate `subscribed_topics` list), so this reaches into `_buffers`
-        # directly -- same attribute name a real TopicSink and this module's
-        # FakeSink test doubles both use.
         structs = {
-            topic: self._sink._buffers[topic].struct
+            topic: self._sink.buffer_writer(topic).struct
             for topic in configured_topics
             if topic in self._sink.subscribed_topics
         }
@@ -137,7 +159,7 @@ class FleetService:
             ],
         }
         self._writers = {
-            topic: self._sink._buffers[topic]
+            topic: self._sink.buffer_writer(topic)
             for topic in sorted({channel.source_topic for channel in resolved})
         }
 

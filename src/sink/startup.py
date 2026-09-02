@@ -53,10 +53,11 @@ taps one sink's topic buffers, and each entry's sink is a fresh instance
 (``module.provide`` never shares one across entries), so a ``streams:``
 block whose topics span two different subscription entries cannot be
 served; it produces a failed fleet report entry naming the limitation
-instead. RULING B (v1, binding): there is no ``TopicSink.close()`` ->
-``FleetService.stop()`` coupling -- the fleet service, once started, runs
-for the process's lifetime (daemon threads, a publisher LWT, and its
-finalizer cover process exit; see ``src/sink/publish/service.py``).
+instead. RULING B (v1, superseded by step 7): a ``TopicSink.close()`` ->
+``FleetService.stop()`` coupling now exists -- closing the sink a fleet
+service taps stops that service too, via a ``base.register_close_hook``
+callback registered at this module's import time (see
+``_stop_fleet_on_sink_close`` below).
 
 The result is one additional report entry, ``{"fleet": "started" | "disabled"
 | "failed", ...}``, alongside the per-subscription ones -- or none at all
@@ -74,6 +75,7 @@ from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
 from src.pipeline import base
+from src.sink import base as sink_base
 from src.sink.publish import StreamConfigError
 from src.sink.publish import identity as identity_mod
 from src.sink.publish.config import StreamsConfig, load_streams
@@ -82,9 +84,45 @@ from src.sink.publish.mqtt import MqttPublisher
 from src.sink.publish.service import FleetService
 from src.sink.publish.spool import Spool
 
-# Step 7's fleet status/control tools read and (for tests) stop this; None
-# until/unless a manifest's `streams:` section successfully starts one.
+# Private holder; `fleet_service()`/`set_fleet_service()` below are its public
+# face. Step 7's fleet status/control tools read and (for tests) stop it via
+# those two functions; None until/unless a manifest's `streams:` section
+# successfully starts one.
 _FLEET_SERVICE: FleetService | None = None
+
+
+def fleet_service() -> FleetService | None:
+    """Return the live `FleetService`, if any -- step 7's tools read this."""
+    return _FLEET_SERVICE
+
+
+def set_fleet_service(service: FleetService | None) -> None:
+    """Replace the live `FleetService` holder -- step 7's tools stop via this."""
+    global _FLEET_SERVICE  # noqa: PLW0603 -- the module-level holder step 7's tools read/stop
+    _FLEET_SERVICE = service
+
+
+def _stop_fleet_on_sink_close(sink: object) -> None:
+    """`TopicSink.close()` -> `FleetService.stop()` coupling (spec §2).
+
+    Registered below as a `base` close hook. Runs on every sink close, so it
+    first checks whether the closing sink is even the one the live fleet
+    service (if any) is tapping.
+    """
+    service = fleet_service()
+    if service is None or service.sink is not sink:
+        return
+    try:
+        service.stop()
+    finally:
+        set_fleet_service(None)
+
+
+# Guard against double-registration on module reload (e.g. test suites that
+# re-import this module): register once, by checking membership of this
+# named function rather than a separate module-level flag.
+if _stop_fleet_on_sink_close not in sink_base._close_hooks:
+    sink_base.register_close_hook(_stop_fleet_on_sink_close)
 
 
 def subscribe_with_pipeline(
@@ -275,7 +313,6 @@ def _start_fleet(
         entry is added in that case); otherwise the fleet report entry.
 
     """
-    global _FLEET_SERVICE  # noqa: PLW0603 -- the module-level holder step 7's tools read/stop
     try:
         streams = load_streams(manifest)
         if streams is None:
@@ -299,7 +336,8 @@ def _start_fleet(
                 "every one of these topics under one entry's 'topics:'",
             )
 
-        if _FLEET_SERVICE is not None:
+        previous = fleet_service()
+        if previous is not None:
             # A second startup.start() in the same process is about to
             # replace the holder: FleetService.start()'s double-start guard
             # is per-instance, so nothing else would ever stop the PREVIOUS
@@ -309,7 +347,7 @@ def _start_fleet(
             # may tap the very same sink/buffers) wires its own. Best-effort:
             # a broken old service must not block the new one from starting.
             try:
-                _FLEET_SERVICE.stop()
+                previous.stop()
             except Exception as stop_error:
                 logging.warning(
                     "Failed to stop the previous FleetService before replacing it: %s",
@@ -320,7 +358,7 @@ def _start_fleet(
             # holder must not keep pointing at this now-stopped instance as
             # if it were still the live one (a caller reading it -- step 7's
             # status/control tools -- would see a dead service as live).
-            _FLEET_SERVICE = None
+            set_fleet_service(None)
 
         directory = settings.FLEET_IDENTITY_DIRECTORY
         identity = (
@@ -333,7 +371,7 @@ def _start_fleet(
             sink=sink, streams=streams, publisher=publisher, spool=spool, identity=identity
         )
         service.start()
-        _FLEET_SERVICE = service
+        set_fleet_service(service)
         logging.info(
             "Fleet streaming started: tenant=%s robot=%s",
             identity.tenant if identity is not None else "dev",

@@ -68,6 +68,25 @@ class FakeSink:
     def subscribed_topics(self) -> list[str]:
         return list(self._buffers)
 
+    def buffer_writer(self, topic: str) -> FakeWriter:
+        return self._buffers[topic]
+
+
+class FakeSinkNoPrivateBuffers:
+    """Duck-typed TopicSink WITHOUT a `_buffers` attribute -- only the public
+    `buffer_writer`/`subscribed_topics` seam. Proves `FleetService.start()` no
+    longer reaches into `_buffers` directly."""
+
+    def __init__(self, buffers: dict[str, FakeWriter]) -> None:
+        self._writers_by_topic = buffers  # deliberately NOT named `_buffers`
+
+    @property
+    def subscribed_topics(self) -> list[str]:
+        return list(self._writers_by_topic)
+
+    def buffer_writer(self, topic: str) -> FakeWriter:
+        return self._writers_by_topic[topic]
+
 
 class FakePublisher(Publisher):
     """In-memory Publisher double: records every kind of publish; can fail on demand."""
@@ -222,6 +241,81 @@ class TestStart:
         try:
             with pytest.raises(RuntimeError, match="already started"):
                 service.start()
+        finally:
+            service.stop()
+
+
+class TestSinkSurface:
+    """Task 3: `start()` builds taps via `sink.buffer_writer()`, never `sink._buffers`
+    directly, plus the `sink`/`streams`/`channels` accessors Task 4 needs."""
+
+    def test_start_works_with_a_sink_that_has_no_private_buffers_attribute(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSinkNoPrivateBuffers({"/imu": writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            assert writer._tap is not None
+        finally:
+            service.stop()
+
+    def test_sink_property_returns_the_constructor_sink(self, tmp_path: pathlib.Path) -> None:
+        sink = FakeSink({})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        assert service.sink is sink
+
+    def test_streams_property_returns_the_constructor_streams(self, tmp_path: pathlib.Path) -> None:
+        streams = _imu_streams()
+        service = FleetService(
+            sink=FakeSink({}),
+            streams=streams,
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        assert service.streams is streams
+
+    def test_channels_returns_the_resolved_schema_channels(self, tmp_path: pathlib.Path) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            assert service.channels == service._schema_payload["channels"]
+        finally:
+            service.stop()
+
+    def test_channels_returns_a_copy_not_a_live_reference(self, tmp_path: pathlib.Path) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            channels = service.channels
+            channels.append({"bogus": "entry"})
+            assert service.channels == service._schema_payload["channels"]
+            assert {"bogus": "entry"} not in service._schema_payload["channels"]
         finally:
             service.stop()
 
