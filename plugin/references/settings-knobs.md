@@ -20,4 +20,5 @@ Defined in `settings.py`; set via the container environment or `.env`.
 | `ROSBRIDGE_QUEUE_LENGTH` | 1000 | Messages buffered in rosbridge before sending |
 | `CLOUDINI_ENABLED` | true | Cloudini pointcloud decompression in pipelines |
 | `FLEET_ENABLED` | true | Kill switch for fleet streaming (beta). `0` makes the publish subsystem inert: nothing connects, nothing leaves the box |
+| `FLEET_SPOOL_MAX_BYTES` | 256 MB | Disk cap for the fleet spool's channels lane; oldest segments evicted first. Events/heartbeats are never dropped and are exempt |
 | `BAGEL_FLEET` (build arg) | true | Compose build arg; `false` omits the MQTT client from the iot/ros2 images entirely |
