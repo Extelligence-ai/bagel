@@ -13,6 +13,7 @@ import importlib
 import json
 import logging
 import pathlib
+import socket
 import ssl
 import stat
 import sys
@@ -855,6 +856,111 @@ class TestRenewUrl:
         assert result.renew_url == fake_renew_server
         doc = yaml.safe_load((directory / "identity.yaml").read_text())
         assert doc["renew_url"] == fake_renew_server
+
+
+class TestEnrollUrlSchemeGate:
+    """Codex review (3909074259): enroll() only checked that enroll_url was
+    http(s) at all -- any nonlocal http:// host was accepted, POSTing the
+    one-time token in cleartext. Now requires https:// unless the host is
+    loopback/private (`connect._is_local_or_private`, reused not duplicated)
+    or `settings.FLEET_DEV_INSECURE` is set -- mirrors the broker's own
+    plaintext-transport policy exactly.
+    """
+
+    def test_nonlocal_http_raises_typed_insecure_error(
+        self, tmp_path: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_getaddrinfo(host: str, *_a: object, **_kw: object) -> list:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+        request_calls: list[str] = []
+        monkeypatch.setattr(
+            identity_mod.urllib.request,
+            "Request",
+            lambda url, *a, **kw: request_calls.append(url),
+        )
+
+        with pytest.raises(EnrollmentError) as excinfo:
+            identity_mod.enroll(VALID_TOKEN, "http://enroll.example.com", tmp_path / "identity")
+
+        assert excinfo.value.status == 0
+        assert excinfo.value.reason == "insecure enroll_url"
+        assert request_calls == []  # rejected before any network call
+
+    def test_localhost_http_is_ok(self, fake_server: str, tmp_path: object) -> None:
+        # fake_server binds 127.0.0.1 -- a loopback literal -- which the gate
+        # must allow over plain http with no FLEET_DEV_INSECURE needed.
+        assert fake_server.startswith("http://127.0.0.1")
+        result = identity_mod.enroll(VALID_TOKEN, fake_server, tmp_path / "identity")
+        assert result.tenant == "acme"
+
+    def test_https_is_always_ok(self, tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_getaddrinfo(host: str, *_a: object, **_kw: object) -> list:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+        # No real server needed -- prove the gate itself doesn't reject this
+        # URL by checking the shared helper directly, since a real https
+        # POST needs a TLS listener out of scope here (covered by
+        # test_mqtt_integration.py-style real-TLS tests elsewhere).
+        assert identity_mod._url_passes_scheme_gate("https://enroll.example.com") is True
+
+    def test_dev_insecure_allows_nonlocal_http(
+        self, tmp_path: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_getaddrinfo(host: str, *_a: object, **_kw: object) -> list:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+        monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+
+        assert identity_mod._url_passes_scheme_gate("http://enroll.example.com") is True
+
+
+class TestRenewUrlSchemeGate:
+    """Same gate applied to the renew URL at use time -- renew() never
+    raises (per its contract), so an insecure target is treated the same as
+    the existing "not http(s)" branch: logged, the attempt recorded, None
+    returned.
+    """
+
+    def test_insecure_renew_target_is_skipped_not_attempted(
+        self, fake_server: str, tmp_path: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Enroll for real (against fake_server's real loopback listener)
+        # BEFORE faking getaddrinfo -- urlopen's own connection setup also
+        # goes through socket.getaddrinfo, so faking it globally during the
+        # enroll() call would break that real connection too, not just the
+        # _is_local_or_private check this test cares about.
+        directory = tmp_path / "identity"
+        enrolled = identity_mod.enroll(VALID_TOKEN, fake_server, directory)
+        identity = dataclasses.replace(
+            enrolled, robot_id="renew-ok", enroll_url="http://renew.example.com"
+        )
+
+        def fake_getaddrinfo(host: str, *_a: object, **_kw: object) -> list:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+        request_calls: list[str] = []
+        real_request = identity_mod.urllib.request.Request
+
+        def spy_request(url: str, *a: object, **kw: object) -> object:
+            request_calls.append(url)
+            return real_request(url, *a, **kw)
+
+        monkeypatch.setattr(identity_mod.urllib.request, "Request", spy_request)
+
+        result = identity_mod.renew(identity)
+
+        assert result is None
+        assert request_calls == []  # never attempted the POST
+        doc = yaml.safe_load((directory / "identity.yaml").read_text())
+        assert "last_renewal_attempt_at" in doc  # attempt still recorded
 
 
 class TestBaseUrlTrailingSlash:

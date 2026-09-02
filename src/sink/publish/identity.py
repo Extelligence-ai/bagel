@@ -54,11 +54,13 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 import yaml
 
 from settings import settings
 from src.sink.publish import EnrollmentError, FleetNotEnrolledError
+from src.sink.publish import connect as _connect
 
 _REQUIRED_RESPONSE_FIELDS = (
     "cert_pem",
@@ -74,6 +76,29 @@ _RENEWAL_MIN_INTERVAL_S = 86400
 # Statuses the cloud uses to mean "renewal isn't offered on this deployment
 # yet" (the flag is off) rather than "the request failed" -- expected, quiet.
 _RENEWAL_NOT_OFFERED_STATUSES = (404, 501)
+
+
+def _url_passes_scheme_gate(url: str) -> bool:
+    """Whether `url` may be used for an enroll/renew POST (Codex review).
+
+    Mirrors connect.py's own mqtt(s):// transport policy exactly, reusing
+    (not duplicating) its ``_is_local_or_private`` helper: ``https://`` is
+    always fine; plaintext ``http://`` is fine only when the host is
+    loopback/private, or when ``settings.FLEET_DEV_INSECURE`` is set (local
+    development only) -- otherwise the one-time enrollment token (or, for
+    renew, the mTLS-authenticated request) would go out in cleartext to an
+    arbitrary nonlocal host. Any other scheme (including no scheme at all)
+    fails the gate; callers already reject those separately with a more
+    specific error before this is even consulted.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        return True
+    if parsed.scheme != "http":
+        return False
+    if settings.FLEET_DEV_INSECURE:
+        return True
+    return bool(parsed.hostname) and _connect._is_local_or_private(parsed.hostname)
 
 
 @dataclasses.dataclass
@@ -196,12 +221,18 @@ def enroll(token: str, enroll_url: str, directory: pathlib.Path) -> Identity:
         ValueError: if ``enroll_url`` is not http(s).
         EnrollmentError: on a non-200 response (401 "unknown token", 410
             "used/expired", other statuses carry a token-redacted body
-            snippet), a malformed 200 body (missing required fields), or a
-            transport failure (status 0, the URLError reason).
+            snippet), a malformed 200 body (missing required fields), a
+            transport failure (status 0, the URLError reason), or an
+            ``enroll_url`` that fails the scheme gate (status 0, reason
+            "insecure enroll_url" -- see ``_url_passes_scheme_gate``: a
+            nonlocal ``http://`` URL without ``FLEET_DEV_INSECURE`` would
+            send the one-time token in cleartext).
 
     """
     if not enroll_url.startswith(("https://", "http://")):
         raise ValueError(f"enroll_url must be http(s): {enroll_url}")
+    if not _url_passes_scheme_gate(enroll_url):
+        raise EnrollmentError(0, "insecure enroll_url")
 
     private_key_pem, csr_pem = generate_key_and_csr()
 
@@ -647,6 +678,17 @@ def _renew_inner(  # noqa: PLR0911 -- one early return per distinct failure bran
     target_base = identity.renew_url or identity.enroll_url
     if not target_base.startswith(("https://", "http://")):
         logger.warning("renewal skipped: renew target is not http(s): %s", target_base)
+        _record_renewal_attempt(identity, now)
+        return None
+    # Same scheme gate as enroll() (Codex review), applied here at USE time
+    # since the renew target is read from stored/on-disk state rather than
+    # validated once at enrollment: a nonlocal http:// target would send
+    # the mTLS-authenticated renewal request in cleartext. renew() never
+    # raises (see its docstring), so an insecure target is treated the same
+    # as the "not http(s) at all" branch above -- logged, attempt recorded,
+    # None returned.
+    if not _url_passes_scheme_gate(target_base):
+        logger.warning("renewal skipped: insecure renew target: %s", target_base)
         _record_renewal_attempt(identity, now)
         return None
 
