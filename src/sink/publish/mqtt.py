@@ -89,6 +89,11 @@ class MqttPublisher(Publisher):
         self._password = password
         self._keepalive_s = keepalive_s
         self._client: object = None
+        # Set while our own close() is tearing the client down, so the
+        # synchronous on_disconnect fire that a clean disconnect() triggers
+        # (see _on_disconnect docstring) doesn't count as a reconnect event.
+        self._closing = False
+        self.reconnects = 0
         self._finalizer = weakref.finalize(self, _finalize, None)
 
     def connect(self) -> None:
@@ -101,7 +106,17 @@ class MqttPublisher(Publisher):
         """
         require_fleet()
         if self._client is not None:
-            _finalize(self._client)
+            # Same _closing gate as close(): tearing down the prior client
+            # here is our own doing, not an unexpected drop. If the prior
+            # client's socket is still live (e.g. we are replacing it after
+            # a wait_for_publish timeout, not a broker-side drop), paho can
+            # fire on_disconnect synchronously from this teardown, and it
+            # must not count as a reconnect.
+            self._closing = True
+            try:
+                _finalize(self._client)
+            finally:
+                self._closing = False
         paho = _paho()
         client = paho.Client(
             callback_api_version=paho.CallbackAPIVersion.VERSION2,
@@ -118,12 +133,46 @@ class MqttPublisher(Publisher):
             client.tls_set(**self._tls)
         if self._username is not None:
             client.username_pw_set(self._username, self._password)
+        client.on_disconnect = self._on_disconnect
         client.connect(self._host, self._port, self._keepalive_s)
         client.loop_start()
         self._client = client
         # Re-register the finalizer against the live client, holding no ref to self.
         self._finalizer.detach()
         self._finalizer = weakref.finalize(self, _finalize, client)
+
+    def _on_disconnect(
+        self,
+        client: object,
+        userdata: object,
+        disconnect_flags: object,
+        reason_code: object,
+        properties: object = None,
+    ) -> None:
+        """Paho VERSION2 on_disconnect hook: `(client, userdata, flags, reason, props)`.
+
+        Verified against the installed paho 2.1.0 source
+        (paho/mqtt/client.py, CallbackOnDisconnect_v2 / _do_on_disconnect):
+        the VERSION2 callback always receives exactly these five positional
+        args. Confirmed paho fires this callback even for a deliberate,
+        clean close() -- our close() calls loop_stop() (which nulls the
+        client's background thread) then disconnect(); with no background
+        thread running, disconnect()'s outgoing DISCONNECT packet is written
+        synchronously on the calling thread, and paho's packet-write path
+        invokes on_disconnect right there. So a clean close is
+        indistinguishable from an unexpected drop unless we gate on it
+        ourselves: self._closing (set for the duration of our close()) is
+        that gate, so `reconnects` counts only disconnects we didn't ask for.
+
+        Never raises: a broker-thread callback that raises would only get
+        logged and swallowed by paho itself, so any exception here is
+        caught rather than relying on that.
+        """
+        try:
+            if not self._closing:
+                self.reconnects += 1
+        except Exception:
+            logging.debug("on_disconnect handler failed", exc_info=True)
 
     @property
     def connected(self) -> bool:
@@ -153,17 +202,21 @@ class MqttPublisher(Publisher):
         client, self._client = self._client, None
         if client is None:
             return
-        if client.is_connected():
-            stopped = {"v": 1, "t": time.time(), "online": False, "reason": "stopped"}
-            try:
-                info = client.publish(
-                    wire_topic(self._tenant, self._robot, "heartbeat"),
-                    _dump(stopped),
-                    qos=1,
-                    retain=True,
-                )
-                info.wait_for_publish(timeout=5.0)
-            except Exception:
-                logging.debug("Clean-stop heartbeat publish failed; closing anyway")
-        client.loop_stop()
-        client.disconnect()
+        self._closing = True
+        try:
+            if client.is_connected():
+                stopped = {"v": 1, "t": time.time(), "online": False, "reason": "stopped"}
+                try:
+                    info = client.publish(
+                        wire_topic(self._tenant, self._robot, "heartbeat"),
+                        _dump(stopped),
+                        qos=1,
+                        retain=True,
+                    )
+                    info.wait_for_publish(timeout=5.0)
+                except Exception:
+                    logging.debug("Clean-stop heartbeat publish failed; closing anyway")
+            client.loop_stop()
+            client.disconnect()
+        finally:
+            self._closing = False

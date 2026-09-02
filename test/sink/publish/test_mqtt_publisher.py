@@ -223,6 +223,92 @@ class TestClose:
         p.close()  # must not raise
 
 
+class TestReconnectCounter:
+    def test_on_disconnect_is_registered_at_connect(self, fake: dict[str, FakeFleetPaho]) -> None:
+        p = _publisher()
+        p.connect()
+        assert fake["client"].on_disconnect is not None
+
+    def test_disconnect_callback_increments_reconnects(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        assert p.reconnects == 0
+        client = fake["client"]
+        # Simulate paho VERSION2 firing the callback (client, userdata, flags, rc, props).
+        client.on_disconnect(client, None, object(), object(), None)
+        assert p.reconnects == 1
+        client.on_disconnect(client, None, object(), object(), None)
+        assert p.reconnects == 2
+
+    def test_clean_close_does_not_double_count_as_reconnect(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        # close() drives the fake client to a disconnected state; since our fake
+        # doesn't synchronously invoke on_disconnect (paho's real client does,
+        # once the network thread is stopped), simulate that here.
+        client = fake["client"]
+
+        def fake_disconnect() -> None:
+            client.calls.append(("disconnect",))
+            client._connected = False
+            client.on_disconnect(client, None, object(), object(), None)
+
+        client.disconnect = fake_disconnect  # type: ignore[method-assign]
+        p.close()
+        assert p.reconnects == 0
+
+    def test_replace_path_teardown_does_not_count_as_reconnect(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        first = fake["client"]
+
+        # Simulate paho's "socket still live" semantics: when the prior
+        # client's TCP session is still up (e.g. we are replacing it after a
+        # wait_for_publish timeout, not a broker-side drop), disconnect()
+        # fires on_disconnect synchronously -- same as the clean-close case
+        # above. connect()'s replace-path teardown must gate this the same
+        # way close() does.
+        def fake_disconnect() -> None:
+            first.calls.append(("disconnect",))
+            first._connected = False
+            first.on_disconnect(first, None, object(), object(), None)
+
+        first.disconnect = fake_disconnect  # type: ignore[method-assign]
+        p.connect()  # replace-path: tears down `first` before building the new client
+
+        assert p.reconnects == 0
+
+    def test_genuine_drop_outside_our_own_teardown_still_counts(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+        # An ordinary broker-drop callback -- not fired from within our own
+        # connect()/close() teardown -- must still be counted; the _closing
+        # gate must not swallow this too.
+        client.on_disconnect(client, None, object(), object(), None)
+        assert p.reconnects == 1
+
+    def test_handler_exceptions_are_swallowed(self, fake: dict[str, FakeFleetPaho]) -> None:
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+
+        class Boom:
+            def __add__(self, other: object) -> "Boom":
+                raise RuntimeError("boom")
+
+        p.reconnects = Boom()  # force the increment inside the handler to raise
+        client.on_disconnect(client, None, object(), object(), None)  # must not raise
+
+
 def test_mqtt_module_does_not_import_paho_eagerly(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in [m for m in sys.modules if m == "paho" or m.startswith("paho.")]:
         monkeypatch.delitem(sys.modules, name)
