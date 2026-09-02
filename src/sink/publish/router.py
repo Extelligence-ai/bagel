@@ -308,9 +308,25 @@ class StreamRouter(threading.Thread):
         self._next_attempt = now + random.uniform(0, self._backoff)  # noqa: S311 -- jitter, not crypto
 
     def stop(self) -> None:
-        """Signal the loop to stop and join with a bounded timeout."""
+        """Signal the loop to stop and join with a bounded timeout.
+
+        The join timeout (12s) is deliberately longer than the 10s
+        `wait_for_publish` bound inside `MqttPublisher.publish` (Codex
+        review): a 5s join could return while `_pump` was still blocked
+        inside a QoS-1 publish call, so termination wasn't actually
+        guaranteed before a caller (e.g. `pause()`/`resume()`) proceeded. If
+        the thread is somehow still alive after this longer join, that is
+        logged rather than silently ignored.
+
+        `_online` is reset to False here too (Codex review): it used to
+        survive a clean stop unchanged, so `FleetService.status()` kept
+        reporting `online: true` for a router that had already stopped.
+        """
         self._stop_event.set()
-        self.join(timeout=5)
+        self.join(timeout=12.0)
+        if self.is_alive():
+            logging.getLogger(__name__).warning("router thread did not terminate")
+        self._online = False
 
     @property
     def online(self) -> bool:

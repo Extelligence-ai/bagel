@@ -417,6 +417,69 @@ class TestStreamRouterThread:
         assert remaining == list(range(remaining[0], total_records + 1))
 
 
+class TestStreamRouterStopResetsOnline:
+    def test_stop_resets_online_to_false(self, tmp_path: pathlib.Path) -> None:
+        # Codex review (3906982938): StreamRouter._online was never reset on
+        # stop(), so FleetService.status() kept reporting online: true for a
+        # router thread that had already cleanly stopped.
+        router, q, _spool, pub = _router(tmp_path, flush_interval_s=0.01)
+        router.start()
+        q.put(("/imu", 1.0, {"x": 1.0}))
+        deadline = time.monotonic() + 2.0
+        while not router.online and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert router.online  # sanity: actually connected before stop()
+
+        router.stop()
+
+        assert router.online is False
+
+
+class TestStreamRouterStopJoinTimeout:
+    def test_stop_joins_with_timeout_longer_than_publish_wait(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex review (3906982943): stop()'s join(timeout=5) can't outlast a
+        # 10s QoS-1 publish wait (wait_for_publish(timeout=10.0) inside
+        # MqttPublisher.publish), so termination wasn't actually guaranteed
+        # before a caller (e.g. pause()/resume()) proceeded. The join timeout
+        # must exceed that 10s bound.
+        router, _q, _spool, _pub = _router(tmp_path, flush_interval_s=1.0)
+
+        join_calls: list[float | None] = []
+        real_join = router.join
+
+        def spy_join(timeout: float | None = None) -> None:
+            join_calls.append(timeout)
+            real_join(timeout)
+
+        monkeypatch.setattr(router, "join", spy_join)
+
+        router.start()
+        router.stop()
+
+        assert join_calls
+        assert join_calls[0] is not None and join_calls[0] > 10.0
+
+    def test_stop_logs_warning_when_thread_does_not_terminate(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        router, _q, _spool, _pub = _router(tmp_path, flush_interval_s=1.0)
+        # Don't actually start the thread -- is_alive() is always False for a
+        # never-started Thread, which is the wrong shape for this test. Fake
+        # is_alive() to simulate a stuck thread that survives the join.
+        monkeypatch.setattr(router, "is_alive", lambda: True)
+        monkeypatch.setattr(router, "join", lambda timeout=None: None)
+
+        with caplog.at_level(logging.WARNING):
+            router.stop()
+
+        warnings_ = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("did not terminate" in r.getMessage() for r in warnings_)
+
+
 class TestStreamRouterDeathIsVisible:
     """A bug in core/spool (not a PublishError) must not die silently.
 
