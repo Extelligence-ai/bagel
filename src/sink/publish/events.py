@@ -26,17 +26,27 @@ at module scope. Never `paho`/`cryptography` here -- see
 
 import json
 import logging
+import threading
+import time
+import uuid
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import pyarrow as pa
 
 from src.pipeline import live
 from src.sink.publish import StreamConfigError
+from src.sink.publish.artifacts import ArtifactStore
 from src.sink.publish.config import EventRule
+from src.sink.publish.health import HealthInputs, HealthSnapshot, build_health_report
 from src.sink.publish.provenance import build_provenance
+from src.sink.publish.router import SampleQueue
+from src.sink.publish.spool import Spool
 
 logger = logging.getLogger(__name__)
+
+HEALTH_SOURCE_TOPIC = "internal:health"
 
 SUPPRESSION_WINDOW_SECONDS = 60.0
 RING_SLACK_SECONDS = 5.0
@@ -45,8 +55,16 @@ RING_SLACK_SECONDS = 5.0
 def validate_predicates(rules: list[EventRule], structs: dict[str, pa.StructType]) -> None:
     """Probe every rule's predicate against its topic's schema at service start.
 
+    Pure module function: it needs nothing service-internal, only the rules
+    and a `topic -> struct` mapping (built from any sink's
+    `buffer_writer(topic).struct`), so a config-swap path can pre-validate an
+    incoming manifest before tearing the old service down.
+
     For each rule: a topic missing from `structs` raises `StreamConfigError`
-    naming `events[i].topic`. Otherwise, `live.evaluate_predicate` is called
+    naming `events[i].topic`; a topic whose struct has no fields at all also
+    raises naming `events[i].topic`, BEFORE the duckdb probe (a fieldless
+    struct poisons the shared duckdb connection one-shot -- see Task-5 F1).
+    Otherwise, `live.evaluate_predicate` is called
     with an empty `{}` message (an all-null one-row relation) inside a broad
     `try/except`; any exception (bad SQL syntax, an unknown column) raises
     `StreamConfigError` naming `events[i].predicate`, wrapping the original
@@ -57,6 +75,10 @@ def validate_predicates(rules: list[EventRule], structs: dict[str, pa.StructType
         if rule.topic not in structs:
             raise StreamConfigError(f"events[{i}].topic", f"not subscribed to topic '{rule.topic}'")
         struct = structs[rule.topic]
+        # Task-5 F1: a fieldless struct poisons the shared duckdb connection
+        # one-shot, so it must be refused BEFORE the probe below ever runs.
+        if struct.num_fields == 0:
+            raise StreamConfigError(f"events[{i}].topic", "topic has no fields to evaluate")
         try:
             live.evaluate_predicate(rule.topic, struct, {}, rule.predicate)
         except Exception as exc:
@@ -288,3 +310,235 @@ def build_event_payload(
     if artifact_uri is not None:
         payload["artifact"] = {"kind": "mcap", "uri": artifact_uri}
     return payload
+
+
+class EventEmitter(threading.Thread):
+    """Drains the event tap queue into the engine and spools whatever fires.
+
+    Task 7's thread half, following the repo's thread-lifecycle precedent
+    (`service.py` module docstring): daemon=True, a `threading.Event` stop
+    signal, a bounded `join` in `stop()`, and a `StreamRouter`-style
+    fatal-catch so an unhandled `_tick` bug is visible via `alive`/
+    `last_error` instead of dying silently.
+
+    ALWAYS built and started by `FleetService`, even with zero event rules:
+    this thread owns the scheduled `health_report` (settle delay, then a
+    fixed interval), which must run whether or not any `events:` rules are
+    configured. Everything it appends goes to the never-drop `events` spool
+    lane, append-only -- the router pumps and acks that lane (Task 3); a
+    spool append failure logs WARNING and increments `spool_failures`
+    (mirroring `HeartbeatThread._tick`'s posture), never killing the thread.
+    """
+
+    def __init__(  # noqa: PLR0913 -- one knob per collaborator, mirrors the plan's signature
+        self,
+        engine: EventEngine,
+        queue: SampleQueue,
+        spool: Spool,
+        *,
+        artifact_store: ArtifactStore | None,
+        health_inputs: Callable[[], HealthInputs],
+        structs: dict[str, pa.StructType],
+        health_interval_s: float,
+        health_settle_s: float,
+        now: Callable[[], float] = time.time,
+    ) -> None:
+        """Wire the engine, queue, spool and health closure; does not start the thread.
+
+        `now` is injectable (tests drive the health schedule with a fake
+        clock); everything time-based in this thread reads it, never
+        `time.time()` directly.
+        """
+        super().__init__(daemon=True)
+        self._engine = engine
+        self._queue = queue
+        self._spool = spool
+        self._artifact_store = artifact_store
+        self._health_inputs = health_inputs
+        self._structs = structs
+        self._health_interval_s = health_interval_s
+        self._health_settle_s = health_settle_s
+        self._now = now
+        self._stop_event = threading.Event()
+        self._fatal_error: str | None = None
+        self._last_error: str | None = None
+        self._spool_failures = 0
+        self._health_prev: HealthSnapshot | None = None
+        self._started_at: float | None = None
+        self._last_report_at: float | None = None
+        self._next_health_at: float | None = None
+
+    def run(self) -> None:
+        """Arm the health schedule, then tick until stop() -- fatal-catch like the router."""
+        self._started_at = self._now()
+        self._next_health_at = self._started_at + self._health_settle_s
+        while not self._stop_event.is_set():
+            try:
+                self._tick(self._now())
+            except Exception as exc:
+                logger.exception("EventEmitter thread died")
+                self._fatal_error = repr(exc)
+                return
+
+    def _tick(self, now: float) -> None:
+        """One iteration: drain the queue into the engine, emit firings, maybe report health.
+
+        `queue.drain`'s bounded timeout paces the loop in `run()` exactly as
+        it does for `StreamRouter._tick`. The health schedule advances by
+        `health_interval_s` after every attempt -- success or a skipped
+        report alike (`_emit_health`'s gatherer failure is retried at the
+        NEXT interval, never rescheduled early).
+        """
+        for topic, t, msg in self._queue.drain(max_items=500, timeout_s=0.2):
+            for firing in self._engine.offer(topic, t, msg):
+                self._emit(firing)
+        if self._next_health_at is not None and now >= self._next_health_at:
+            self._emit_health(now)
+            self._next_health_at += self._health_interval_s
+
+    def _emit(self, firing: Firing) -> None:
+        """Store the artifact (if any), then append the binding envelope to the events lane.
+
+        `event_id` is allocated HERE, before the store call, so the artifact
+        filename and the envelope share it (`build_event_payload` takes it as
+        a parameter for exactly this reason). The window is sorted by `t`
+        before storing (Task-5 F3): out-of-order sources produce unsorted
+        ring windows, and MCAP readers assume chronological log time.
+
+        The event ALWAYS goes out (Global Constraints ruling): an artifact
+        failure -- the store's byte budget (`None` return) or a raised
+        exception -- becomes `summary.artifact_error`, never a dropped event.
+        """
+        event_id = str(uuid.uuid4())
+        uri: str | None = None
+        artifact_error: str | None = None
+        rule = firing.rule
+        if rule.artifact == "mcap" and self._artifact_store is not None:
+            window = sorted(firing.window, key=lambda sample: sample[0])
+            try:
+                path = self._artifact_store.store(
+                    rule.name, event_id, rule.topic, self._structs[rule.topic], window
+                )
+            except Exception as exc:
+                artifact_error = str(exc)
+                logger.warning("events[%s]: artifact store failed", rule.name, exc_info=True)
+            else:
+                if path is None:
+                    artifact_error = "artifact byte budget exceeded"
+                else:
+                    uri = path.as_uri()
+        self._append_to_events_lane(
+            lambda seq: build_event_payload(
+                firing, seq=seq, event_id=event_id, artifact_uri=uri, artifact_error=artifact_error
+            )
+        )
+
+    def _emit_health(self, now: float) -> None:
+        """Build one scheduled health report and append it to the events lane.
+
+        A failing inputs gatherer skips this report (WARNING, `last_error`
+        set) -- never kills the thread; `_tick` still advances the schedule,
+        so the retry lands at the next interval. `t_start`/`t_end` span the
+        period the report's delta counters cover (the previous report time --
+        or the runtime start for the first report -- up to `now`);
+        `source_topic` `"internal:health"` marks robot-internal events
+        (contract doc paragraph 7).
+        """
+        try:
+            inputs = self._health_inputs()
+        except Exception as exc:
+            self._last_error = repr(exc)
+            logger.warning("health inputs gatherer failed; skipping this report", exc_info=True)
+            return
+        self._last_error = None
+        summary, self._health_prev = build_health_report(inputs, self._health_prev, now=now)
+        build = build_provenance()
+        if build is not None:
+            summary["build"] = build
+        t_start = self._last_report_at if self._last_report_at is not None else self._started_at
+        self._append_to_events_lane(
+            lambda seq: {
+                "v": 1,
+                "seq": seq,
+                "event_id": str(uuid.uuid4()),
+                "name": "health_report",
+                "t_start": t_start,
+                "t_end": now,
+                "source_topic": HEALTH_SOURCE_TOPIC,
+                "summary": summary,
+            }
+        )
+        self._last_report_at = now
+
+    def _append_to_events_lane(self, build: Callable[[int], dict]) -> None:
+        """Allocate a seq, build the payload with it, and append to the never-drop lane.
+
+        Append-only -- the router pumps and acks (Task 3). A failure
+        (`SpoolFullError` -- disk full on a never-drop lane -- or anything
+        else from the spool path) logs WARNING and increments
+        `spool_failures` (surfaced in status and the `events_pipeline` health
+        metrics), mirroring `HeartbeatThread._tick`'s posture.
+        """
+        try:
+            seq = self._spool.next_seq("events")
+            self._spool.append("events", seq, build(seq))
+        except Exception:
+            self._spool_failures += 1
+            logger.warning("events spool append failed on lane 'events'", exc_info=True)
+
+    def stop(self) -> None:
+        """Signal the loop to stop, join bounded, then final-flush on the caller's thread.
+
+        The final flush is guarded the same way `StreamRouter._final_flush`
+        is: it only runs once the thread has provably exited its loop (a
+        clean join, no fatal error), so it can never race a concurrent
+        `_tick` touching the same engine/queue/spool. It drains the queue,
+        offers everything, then `engine.flush(now)`s so events still waiting
+        on their post window fire best-effort (never-drop philosophy). No
+        final health report -- a stop is not a schedule.
+        """
+        self._stop_event.set()
+        self.join(timeout=5)
+        if self.is_alive():
+            logger.warning("event emitter thread did not terminate")
+            return
+        if self._fatal_error is not None:
+            return  # died mid-tick; engine/queue state is suspect, no final flush
+        self._final_flush()
+
+    def _final_flush(self) -> None:
+        """Drain-then-offer-then-flush, once, after the thread loop has exited."""
+        while True:
+            samples = self._queue.drain(max_items=500, timeout_s=0.0)
+            if not samples:
+                break
+            for topic, t, msg in samples:
+                for firing in self._engine.offer(topic, t, msg):
+                    self._emit(firing)
+        for firing in self._engine.flush(self._now()):
+            self._emit(firing)
+
+    def status_counters(self) -> dict:
+        """Engine counters plus this thread's own queue/spool/health/liveness state."""
+        return {
+            **self._engine.counters(),
+            "queue_depth": self._queue.depth,
+            "queue_dropped": self._queue.dropped,
+            "spool_failures": self._spool_failures,
+            "health": {
+                "last_report_at": self._last_report_at,
+                "next_report_at": self._next_health_at,
+            },
+            "alive": self.alive,
+            "last_error": self.last_error,
+        }
+
+    @property
+    def alive(self) -> bool:
+        """Whether the thread is running AND has not died on an unhandled `_tick` error."""
+        return self.is_alive() and self._fatal_error is None
+
+    @property
+    def last_error(self) -> str | None:
+        """The fatal `_tick` error, or the most recent health-inputs failure, if any."""
+        return self._fatal_error or self._last_error

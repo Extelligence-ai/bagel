@@ -1,24 +1,36 @@
-"""Tests for the pure fleet event engine: predicates, windows, debounce,
-suppression, ring bounds and the binding event envelope (fleet step 8, Task 5).
+"""Tests for the fleet event engine and its emitter thread (fleet step 8, Tasks 5+7).
 
-All pure -- synthetic structs via `pa.struct`, no threads, clock-injected via
-the `t`/`now` arguments the engine's methods take.
+The engine half is pure -- synthetic structs via `pa.struct`, no threads,
+clock-injected via the `t`/`now` arguments the engine's methods take. The
+emitter half (Task 7) runs the real `EventEmitter` thread against a real tmp
+`Spool` and (where relevant) a real `ArtifactStore` -- no broker anywhere.
 """
 
 import importlib
+import pathlib
 import sys
+import time
 import uuid
 
 import pyarrow as pa
 import pytest
 
+from publish.conftest import _wait_until
 from settings import settings
 from src.pipeline import live
 from src.sink.publish import StreamConfigError, events
+from src.sink.publish.artifacts import ArtifactStore
 from src.sink.publish.config import EventRule
+from src.sink.publish.health import HealthInputs
+from src.sink.publish.router import SampleQueue
+from src.sink.publish.spool import Spool, SpoolFullError
 
 IMU_STRUCT = pa.struct([("accel_x", pa.float64())])
 BLOB_STRUCT = pa.struct([("accel_x", pa.float64()), ("note", pa.string())])
+
+# The binding envelope's top-level key set (spec §7) -- pinned exactly, so an
+# accidentally added or dropped top-level key fails loudly.
+ENVELOPE_BASE_KEYS = {"v", "seq", "event_id", "name", "t_start", "t_end", "source_topic", "summary"}
 
 
 def _rule(  # noqa: PLR0913 -- one field per EventRule window/predicate knob, kept explicit
@@ -28,6 +40,7 @@ def _rule(  # noqa: PLR0913 -- one field per EventRule window/predicate knob, ke
     pre_seconds: float = 0.0,
     post_seconds: float = 0.0,
     debounce_seconds: float = 0.0,
+    artifact: str | None = None,
 ) -> EventRule:
     return EventRule(
         name=name,
@@ -36,6 +49,7 @@ def _rule(  # noqa: PLR0913 -- one field per EventRule window/predicate knob, ke
         pre_seconds=pre_seconds,
         post_seconds=post_seconds,
         debounce_seconds=debounce_seconds,
+        artifact=artifact,
     )
 
 
@@ -84,16 +98,7 @@ class TestBuildEventPayload:
     def test_top_level_keys_exactly(self) -> None:
         firing = self._firing()
         payload = events.build_event_payload(firing, seq=1, event_id=str(uuid.uuid4()))
-        assert set(payload) == {
-            "v",
-            "seq",
-            "event_id",
-            "name",
-            "t_start",
-            "t_end",
-            "source_topic",
-            "summary",
-        }
+        assert set(payload) == ENVELOPE_BASE_KEYS
 
     def test_scalar_fields(self) -> None:
         firing = self._firing()
@@ -141,6 +146,9 @@ class TestBuildEventPayload:
             firing, seq=1, event_id=str(uuid.uuid4()), artifact_uri="file:///tmp/x.mcap"
         )
         assert payload["artifact"] == {"kind": "mcap", "uri": "file:///tmp/x.mcap"}
+        # Exact top-level key-set pin for the artifact branch too (Task-5 F2):
+        # the artifact key is the ONLY addition over the base envelope.
+        assert set(payload) == ENVELOPE_BASE_KEYS | {"artifact"}
 
     def test_build_absent_when_provenance_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(settings, "BAGEL_BUILD_ID", None)
@@ -186,6 +194,18 @@ class TestValidatePredicates:
         with pytest.raises(StreamConfigError) as exc_info:
             events.validate_predicates(rules, {"imu": IMU_STRUCT})
         assert exc_info.value.field == "events[1].topic"
+
+    def test_fieldless_struct_raises_naming_topic_before_the_probe(self) -> None:
+        """Task-5 F1: a fieldless struct poisons the shared duckdb connection
+        one-shot, so the guard must fire BEFORE the probe ever reaches duckdb."""
+        rules = [_rule(predicate="true")]
+        with pytest.raises(StreamConfigError) as exc_info:
+            events.validate_predicates(rules, {"imu": pa.struct([])})
+        assert exc_info.value.field == "events[0].topic"
+        assert "no fields" in str(exc_info.value)
+        # The probe never ran, so the shared duckdb connection is still fine:
+        # a normal validation right after must still succeed.
+        assert events.validate_predicates([_rule()], {"imu": IMU_STRUCT}) is None
 
 
 class TestEdgeAndWindows:
@@ -429,3 +449,347 @@ class TestCounters:
         counters = engine.counters()
         assert counters["fired"] == 1
         assert counters["last_event_at"] == 1.0
+
+
+# -- Task 7: the EventEmitter thread ------------------------------------------------
+
+
+def _canned_health_inputs() -> HealthInputs:
+    """A minimal all-green HealthInputs for emitter tests (the closure seam)."""
+    return HealthInputs(
+        status={"online": True, "router_alive": True, "heartbeat_alive": True},
+        topic_last_seen={},
+        cert_expires_at=None,
+        enrolled=False,
+        disk_free_bytes=10 * 2**30,
+        spool_cap_bytes=1_000_000,
+        artifacts={},
+        artifacts_cap_bytes=1_000_000,
+        events_counters={
+            "queue_depth": 0,
+            "dropped": 0,
+            "predicate_errors": 0,
+            "fired": 0,
+            "suppressed": 0,
+        },
+        uptime_s=1.0,
+    )
+
+
+class _Clock:
+    """An injectable wall clock the test advances by assignment."""
+
+    def __init__(self, t: float) -> None:
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def _engine(rules: list[EventRule], structs: dict | None = None) -> events.EventEngine:
+    return events.EventEngine(
+        rules,
+        structs if structs is not None else {"imu": IMU_STRUCT},
+        max_per_minute=100,
+        ring_max_samples=1000,
+        ring_max_bytes=10_000_000,
+    )
+
+
+def _emitter(  # noqa: PLR0913 -- mirrors EventEmitter's own knob-per-collaborator signature
+    tmp_path: pathlib.Path,
+    rules: list[EventRule],
+    structs: dict | None = None,
+    artifact_store: object | None = None,
+    health_interval_s: float = 3600.0,
+    health_settle_s: float = 3600.0,
+    now: object = time.time,
+    health_inputs: object = _canned_health_inputs,
+) -> tuple[events.EventEmitter, SampleQueue, Spool]:
+    structs = structs if structs is not None else {"imu": IMU_STRUCT}
+    queue = SampleQueue(1000)
+    spool = Spool(tmp_path / "spool")
+    emitter = events.EventEmitter(
+        _engine(rules, structs),
+        queue,
+        spool,
+        artifact_store=artifact_store,
+        health_inputs=health_inputs,
+        structs=structs,
+        health_interval_s=health_interval_s,
+        health_settle_s=health_settle_s,
+        now=now,
+    )
+    return emitter, queue, spool
+
+
+def _events_lane(spool: Spool) -> list[tuple[int, dict]]:
+    return list(spool.pending("events"))
+
+
+class TestEmitterDrainsAndAppends:
+    def test_envelopes_reach_the_events_lane_with_monotonic_seqs(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        emitter, queue, spool = _emitter(tmp_path, [_rule()])
+        emitter.start()
+        try:
+            queue.put(("imu", 1.0, {"accel_x": -12.0}))  # edge 1
+            queue.put(("imu", 2.0, {"accel_x": -1.0}))
+            queue.put(("imu", 3.0, {"accel_x": -12.0}))  # edge 2
+            assert _wait_until(lambda: len(_events_lane(spool)) == 2)
+        finally:
+            emitter.stop()
+
+        records = _events_lane(spool)
+        assert [seq for seq, _ in records] == [1, 2]
+        for (seq, payload), t_start in zip(records, (1.0, 3.0), strict=True):
+            assert payload["seq"] == seq
+            assert payload["name"] == "hard_decel"
+            assert payload["source_topic"] == "imu"
+            assert payload["t_start"] == t_start
+            assert set(payload) == ENVELOPE_BASE_KEYS
+
+    def test_status_counters_shape(self, tmp_path: pathlib.Path) -> None:
+        emitter, _queue, _spool = _emitter(tmp_path, [_rule()])
+        emitter.start()
+        try:
+            counters = emitter.status_counters()
+            assert set(counters) == {
+                "fired",
+                "suppressed",
+                "predicate_errors",
+                "last_event_at",
+                "queue_depth",
+                "queue_dropped",
+                "spool_failures",
+                "health",
+                "alive",
+                "last_error",
+            }
+            assert set(counters["health"]) == {"last_report_at", "next_report_at"}
+            assert counters["alive"] is True
+            assert counters["last_error"] is None
+        finally:
+            emitter.stop()
+
+
+class TestEmitterArtifacts:
+    def test_artifact_rule_writes_mcap_sharing_the_envelopes_event_id(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        store = ArtifactStore(tmp_path / "artifacts", max_bytes=10_000_000)
+        emitter, queue, spool = _emitter(tmp_path, [_rule(artifact="mcap")], artifact_store=store)
+        emitter.start()
+        try:
+            queue.put(("imu", 1.0, {"accel_x": -12.0}))
+            assert _wait_until(lambda: len(_events_lane(spool)) == 1)
+        finally:
+            emitter.stop()
+
+        payload = _events_lane(spool)[0][1]
+        assert set(payload) == ENVELOPE_BASE_KEYS | {"artifact"}
+        uri = payload["artifact"]["uri"]
+        assert uri.startswith("file://")
+        path = pathlib.Path(uri.removeprefix("file://"))
+        assert path.exists()
+        assert path.name == f"hard_decel-{payload['event_id']}.mcap"
+        assert "artifact_error" not in payload["summary"]
+
+    def test_store_returning_none_sets_budget_error_and_no_artifact_key(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        store = ArtifactStore(tmp_path / "artifacts", max_bytes=1)  # everything over budget
+        emitter, queue, spool = _emitter(tmp_path, [_rule(artifact="mcap")], artifact_store=store)
+        emitter.start()
+        try:
+            queue.put(("imu", 1.0, {"accel_x": -12.0}))
+            assert _wait_until(lambda: len(_events_lane(spool)) == 1)
+        finally:
+            emitter.stop()
+
+        payload = _events_lane(spool)[0][1]
+        assert set(payload) == ENVELOPE_BASE_KEYS  # the event ALWAYS goes out
+        assert payload["summary"]["artifact_error"] == "artifact byte budget exceeded"
+
+    def test_store_raising_sets_the_error_string_and_event_still_goes_out(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        class _RaisingStore:
+            def store(self, *args: object, **kwargs: object) -> pathlib.Path | None:
+                raise ValueError("mcap writer exploded")
+
+        emitter, queue, spool = _emitter(
+            tmp_path, [_rule(artifact="mcap")], artifact_store=_RaisingStore()
+        )
+        emitter.start()
+        try:
+            queue.put(("imu", 1.0, {"accel_x": -12.0}))
+            assert _wait_until(lambda: len(_events_lane(spool)) == 1)
+            assert emitter.alive  # a store failure never kills the thread
+        finally:
+            emitter.stop()
+
+        payload = _events_lane(spool)[0][1]
+        assert set(payload) == ENVELOPE_BASE_KEYS
+        assert payload["summary"]["artifact_error"] == "mcap writer exploded"
+
+    def test_emit_sorts_an_unsorted_window_by_t_before_store(self, tmp_path: pathlib.Path) -> None:
+        """Task-5 F3: out-of-order sources produce unsorted ring windows; MCAP
+        readers assume chronological log time, so `_emit` sorts before storing."""
+
+        class _RecordingStore:
+            def __init__(self) -> None:
+                self.calls: list[list[tuple[float, dict]]] = []
+
+            def store(self, *args: object, **kwargs: object) -> pathlib.Path | None:
+                self.calls.append(args[4])  # the samples list
+                return None
+
+        store = _RecordingStore()
+        rule = _rule(pre_seconds=10.0, artifact="mcap")
+        emitter, queue, spool = _emitter(tmp_path, [rule], artifact_store=store)
+        emitter.start()
+        try:
+            queue.put(("imu", 2.0, {"accel_x": -1.0}))
+            queue.put(("imu", 1.0, {"accel_x": -1.0}))  # out of order
+            queue.put(("imu", 3.0, {"accel_x": -12.0}))  # edge, fires now
+            assert _wait_until(lambda: bool(store.calls))
+        finally:
+            emitter.stop()
+
+        assert [t for t, _ in store.calls[0]] == [1.0, 2.0, 3.0]
+
+
+class TestEmitterStopAndFailures:
+    def test_stop_fires_a_post_window_pending_event(self, tmp_path: pathlib.Path) -> None:
+        emitter, queue, spool = _emitter(tmp_path, [_rule(post_seconds=5.0)])
+        emitter.start()
+        try:
+            queue.put(("imu", 1.0, {"accel_x": -12.0}))  # edge; post window never elapses
+            assert _wait_until(lambda: emitter.status_counters()["queue_depth"] == 0)
+            assert _events_lane(spool) == []
+        finally:
+            emitter.stop()  # final flush releases the pending edge, best-effort
+
+        records = _events_lane(spool)
+        assert len(records) == 1
+        assert records[0][1]["t_start"] == 1.0
+
+    def test_spool_append_failure_counts_and_thread_survives(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        emitter, queue, spool = _emitter(tmp_path, [_rule()])
+
+        def boom(*args: object, **kwargs: object) -> None:
+            raise SpoolFullError("disk full")
+
+        monkeypatch.setattr(spool, "append", boom)
+        emitter.start()
+        try:
+            queue.put(("imu", 1.0, {"accel_x": -12.0}))
+            assert _wait_until(lambda: emitter.status_counters()["spool_failures"] == 1)
+            assert emitter.alive
+        finally:
+            monkeypatch.undo()
+            emitter.stop()
+
+    def test_fatal_tick_error_is_visible_via_alive_and_last_error(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        emitter, queue, _spool = _emitter(tmp_path, [_rule()])
+
+        def boom(*args: object, **kwargs: object) -> list:
+            raise RuntimeError("engine exploded")
+
+        monkeypatch.setattr(emitter._engine, "offer", boom)
+        emitter.start()
+        queue.put(("imu", 1.0, {"accel_x": -12.0}))
+        assert _wait_until(lambda: not emitter.is_alive())
+        assert emitter.alive is False
+        assert emitter.last_error is not None
+        assert "engine exploded" in emitter.last_error
+        emitter.stop()  # must not raise (no final flush after a fatal error)
+
+
+class TestEmitterHealthSchedule:
+    def test_settle_then_interval_schedule_with_an_injected_clock(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "BAGEL_BUILD_ID", None)
+        monkeypatch.setattr(settings, "BAGEL_VCS_REF", None)
+        clock = _Clock(1000.0)
+        emitter, _queue, spool = _emitter(
+            tmp_path, [], structs={}, health_settle_s=0.0, health_interval_s=3600.0, now=clock
+        )
+        emitter.start()
+        try:
+            assert _wait_until(lambda: len(_events_lane(spool)) == 1)
+            time.sleep(0.3)  # more ticks elapse; the schedule must not re-fire
+            assert len(_events_lane(spool)) == 1
+
+            clock.t = 1000.0 + 3600.0 + 1.0
+            assert _wait_until(lambda: len(_events_lane(spool)) == 2)
+        finally:
+            emitter.stop()
+
+        first, second = (payload for _, payload in _events_lane(spool))
+        for payload in (first, second):
+            assert payload["name"] == "health_report"
+            assert payload["source_topic"] == "internal:health"
+            assert set(payload) == ENVELOPE_BASE_KEYS
+            assert set(payload["summary"]) == {"schema_rev", "source", "checks", "verdict"}
+            uuid.UUID(payload["event_id"])
+        assert first["t_start"] == 1000.0  # runtime start
+        assert first["t_end"] == 1000.0
+        assert second["t_start"] == first["t_end"]  # reports describe an interval
+        assert second["t_end"] == 4601.0
+
+    def test_summary_carries_build_when_provenance_set(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "BAGEL_BUILD_ID", "abc123")
+        monkeypatch.setattr(settings, "BAGEL_VCS_REF", None)
+        clock = _Clock(1000.0)
+        emitter, _queue, spool = _emitter(tmp_path, [], structs={}, health_settle_s=0.0, now=clock)
+        emitter.start()
+        try:
+            assert _wait_until(lambda: len(_events_lane(spool)) == 1)
+        finally:
+            emitter.stop()
+        summary = _events_lane(spool)[0][1]["summary"]
+        assert set(summary) == {"schema_rev", "source", "checks", "verdict", "build"}
+        assert summary["build"] == {"build_id": "abc123"}
+
+    def test_failing_inputs_gatherer_skips_the_report_and_retries_next_interval(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        state = {"fail": True}
+
+        def flaky_inputs() -> HealthInputs:
+            if state["fail"]:
+                raise RuntimeError("gatherer exploded")
+            return _canned_health_inputs()
+
+        clock = _Clock(0.0)
+        emitter, _queue, spool = _emitter(
+            tmp_path,
+            [],
+            structs={},
+            health_settle_s=0.0,
+            health_interval_s=100.0,
+            now=clock,
+            health_inputs=flaky_inputs,
+        )
+        emitter.start()
+        try:
+            assert _wait_until(lambda: emitter.status_counters()["last_error"] is not None)
+            assert emitter.alive  # never kills the thread
+            assert _events_lane(spool) == []  # report skipped, not half-written
+
+            state["fail"] = False
+            clock.t = 101.0  # retried at the NEXT interval, not rescheduled early
+            assert _wait_until(lambda: len(_events_lane(spool)) == 1)
+            assert emitter.status_counters()["last_error"] is None
+        finally:
+            emitter.stop()

@@ -8,6 +8,7 @@ import sys
 import time
 import types
 
+import pyarrow as pa
 import pytest
 
 from publish.conftest import (
@@ -21,12 +22,14 @@ from publish.conftest import (
     _wait_until,
 )
 from publish.test_identity import VALID_TOKEN, fake_renew_server, fake_server
+from settings import settings
 from src.sink.publish import StreamConfigError
 from src.sink.publish import identity as identity_mod
 from src.sink.publish import mqtt as publish_mqtt
 from src.sink.publish import service as service_mod
 from src.sink.publish.identity import Identity
 from src.sink.publish.mqtt import MqttPublisher
+from src.sink.publish.router import SampleQueue
 from src.sink.publish.service import FleetService
 from src.sink.publish.spool import Spool
 
@@ -451,7 +454,10 @@ class TestStatus:
                 "heartbeat_alive",
                 "heartbeat_error",
                 "cert_expires_at",
+                "events",
             }
+            assert status["events"]["rules"] == 0
+            assert status["events"]["artifacts"] == {"bytes": 0, "files": 0}
             assert status["subscriptions"] == ["/imu"]
             assert status["channels_active"] == 1
             assert set(status["queue"]) == {"depth", "dropped"}
@@ -479,6 +485,8 @@ class TestStatus:
         assert status["router_alive"] is False
         assert status["heartbeat_alive"] is False
         assert status["heartbeat_error"] is None
+        assert status["events"]["rules"] == 0
+        assert status["events"]["artifacts"] == {"bytes": 0, "files": 0}
 
     def test_dead_router_is_visible(self, tmp_path: pathlib.Path) -> None:
         writer = FakeWriter(_imu_struct())
@@ -907,3 +915,261 @@ class TestRenewalReconnectPicksUpNewTlsMaterial:
             "certfile": str(new_identity.cert_path),
             "keyfile": str(new_identity.key_path),
         }
+
+
+# -- Task 7: event-rule wiring (emitter + engine + artifact store + tap fan-out) ------
+
+
+def _gps_struct() -> pa.StructType:
+    return pa.struct([pa.field("lat", pa.float64())])
+
+
+def _event_rule(**overrides: object) -> dict:
+    rule = {"name": "hard_decel", "topic": "/gps", "predicate": "\"/gps\"['lat'] < -10"}
+    rule.update(overrides)
+    return rule
+
+
+class TestEventRuleWiring:
+    def test_start_covers_channel_and_event_topics_with_taps(self, tmp_path: pathlib.Path) -> None:
+        imu_writer = FakeWriter(_imu_struct())
+        gps_writer = FakeWriter(_gps_struct())
+        sink = FakeSink({"/imu": imu_writer, "/gps": gps_writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(events=[_event_rule()]),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            assert imu_writer._tap is not None
+            assert gps_writer._tap is not None
+            assert sorted(service._writers) == ["/gps", "/imu"]
+            assert service._emitter is not None and service._emitter.is_alive()
+            assert service._engine is not None
+            assert service.status()["events"]["rules"] == 1
+        finally:
+            service.stop()
+
+    def test_event_rule_on_unsubscribed_topic_raises_and_starts_nothing(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        imu_writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": imu_writer})  # /gps never subscribed
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(events=[_event_rule()]),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        with pytest.raises(StreamConfigError) as exc_info:
+            service.start()
+        assert exc_info.value.field == "events[0].topic"
+        assert service._started is False
+        assert service._router is None
+        assert imu_writer._tap is None  # nothing started, nothing tapped
+
+    def test_bad_event_predicate_raises_at_start(self, tmp_path: pathlib.Path) -> None:
+        gps_writer = FakeWriter(_gps_struct())
+        sink = FakeSink({"/imu": FakeWriter(_imu_struct()), "/gps": gps_writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(events=[_event_rule(predicate="this is not (( sql")]),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        with pytest.raises(StreamConfigError) as exc_info:
+            service.start()
+        assert exc_info.value.field == "events[0].predicate"
+        assert service._started is False
+        assert service._router is None
+
+    def test_zero_event_rules_still_runs_the_emitter_with_an_armed_health_schedule(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(),  # no events at all
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            assert service._emitter is not None and service._emitter.is_alive()
+            events_status = service.status()["events"]
+            assert events_status["rules"] == 0
+            assert _wait_until(
+                lambda: service.status()["events"]["health"]["next_report_at"] is not None
+            )
+        finally:
+            service.stop()
+
+    def test_stop_pause_stop_the_emitter_and_resume_builds_a_fresh_one(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        gps_writer = FakeWriter(_gps_struct())
+        sink = FakeSink({"/imu": FakeWriter(_imu_struct()), "/gps": gps_writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(events=[_event_rule()]),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            first = service._emitter
+            assert first.is_alive()
+            service.pause()
+            assert not first.is_alive()
+
+            service.resume()
+            assert service._emitter is not first
+            assert service._emitter.is_alive()
+        finally:
+            service.stop()
+        assert not service._emitter.is_alive()
+
+    def test_artifact_store_built_only_when_a_rule_requests_mcap(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path / "cache"))
+        gps_writer = FakeWriter(_gps_struct())
+        sink = FakeSink({"/imu": FakeWriter(_imu_struct()), "/gps": gps_writer})
+
+        plain = FleetService(
+            sink=sink,
+            streams=_imu_streams(events=[_event_rule()]),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool-plain"),
+        )
+        plain.start()
+        try:
+            assert plain._artifact_store is None
+            assert plain.status()["events"]["artifacts"] == {"bytes": 0, "files": 0}
+        finally:
+            plain.stop()
+
+        with_artifact = FleetService(
+            sink=sink,
+            streams=_imu_streams(events=[_event_rule(artifact="mcap")]),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool-mcap"),
+        )
+        with_artifact.start()
+        try:
+            assert with_artifact._artifact_store is not None
+            assert with_artifact.status()["events"]["artifacts"] == {"bytes": 0, "files": 0}
+        finally:
+            with_artifact.stop()
+
+
+class TestTapFanOut:
+    def test_fanout_tap_puts_one_sample_into_every_target_queue(self) -> None:
+        first, second = SampleQueue(10), SampleQueue(10)
+        tap = service_mod._fanout_tap([first, second])
+        tap("/imu", 1.0, {"x": 1.0})
+        assert first.depth == 1
+        assert second.depth == 1
+        assert first.drain(max_items=10, timeout_s=0.0) == [("/imu", 1.0, {"x": 1.0})]
+        assert second.drain(max_items=10, timeout_s=0.0) == [("/imu", 1.0, {"x": 1.0})]
+
+    def test_topic_serving_both_channel_and_event_feeds_both_queues(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher()
+        spool = Spool(tmp_path / "spool")
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(
+                events=[_event_rule(topic="/imu", predicate="\"/imu\"['x'] < -10")]
+            ),
+            publisher=pub,
+            spool=spool,
+        )
+        service.start()
+        try:
+            assert service._tap_targets["/imu"] == [service._queue, service._event_queue]
+            assert _wait_until(lambda: bool(pub.schema_calls))
+            writer.feed("/imu", 1.0, {"x": -12.0})
+            # The one sample must reach BOTH halves: the channel batch...
+            assert _wait_until(lambda: bool(pub.channel_calls))
+            # ...and the event engine -- the rule fires into the events lane,
+            # which the router pumps out to the publisher (and acks, so the
+            # published call is the stable thing to observe, not `pending`).
+            assert _wait_until(lambda: bool(pub.event_calls))
+            assert pub.event_calls[0]["name"] == "hard_decel"
+        finally:
+            service.stop()
+
+    def test_channel_only_topic_never_reaches_the_emitter_queue(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        imu_writer = FakeWriter(_imu_struct())
+        gps_writer = FakeWriter(_gps_struct())
+        sink = FakeSink({"/imu": imu_writer, "/gps": gps_writer})
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(events=[_event_rule()]),
+            publisher=FakePublisher(),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            assert service._tap_targets["/imu"] == [service._queue]
+            assert service._tap_targets["/gps"] == [service._event_queue]
+        finally:
+            service.stop()
+
+
+class TestHealthInputsClosure:
+    def test_events_counters_are_flattened_and_health_report_builds_end_to_end(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Task-6 rider: `predicate_errors` must reach HealthInputs as a SINGLE
+        INT (summed across rules) -- the raw per-rule dict from
+        `EventEngine.counters()` would crash the events_pipeline check."""
+        (tmp_path / "cache").mkdir()  # disk_free() stats it inside the closure
+        monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path / "cache"))
+        gps_writer = FakeWriter(_gps_struct())
+        sink = FakeSink({"/imu": FakeWriter(_imu_struct()), "/gps": gps_writer})
+        spool = Spool(tmp_path / "spool")
+        service = FleetService(
+            sink=sink,
+            streams=_imu_streams(events=[_event_rule()]),
+            publisher=FakePublisher(),
+            spool=spool,
+        )
+        service.start()
+        try:
+            # A wrongly-typed live message makes the predicate raise (pyarrow
+            # conversion error) -- counted per-rule inside the engine.
+            gps_writer.feed("/gps", 1.0, {"lat": "not-a-number"})
+            assert _wait_until(
+                lambda: service._engine.counters()["predicate_errors"]["hard_decel"] == 1
+            )
+
+            inputs = service._health_inputs()
+            assert inputs.events_counters["predicate_errors"] == 1  # an int, not a dict
+            assert set(inputs.events_counters) == {
+                "queue_depth",
+                "dropped",
+                "predicate_errors",
+                "fired",
+                "suppressed",
+            }
+
+            # End to end: the emitter's own health path builds and spools a
+            # report from that closure without tripping over the counters.
+            service._emitter._emit_health(time.time())
+            reports = [p for _, p in spool.pending("events") if p["name"] == "health_report"]
+            assert len(reports) == 1
+            checks = {c["name"]: c for c in reports[0]["summary"]["checks"]}
+            assert checks["events_pipeline"]["status"] == "warn"
+            assert checks["events_pipeline"]["metrics"]["predicate_errors"] == 1
+        finally:
+            service.stop()

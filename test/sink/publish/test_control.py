@@ -924,9 +924,11 @@ class TestStreamTopics:
         `_merge_by_key` unit alone."""
         self._running_multi_topic_service(tmp_path)
 
+        # Predicates must be valid against the topic's struct since Task 7:
+        # FleetService.start() probes them via events.validate_predicates.
         control.stream_topics(
             channels=None,
-            events=[{"name": "hard_decel", "topic": "/imu", "predicate": "x < -10"}],
+            events=[{"name": "hard_decel", "topic": "/imu", "predicate": "\"/imu\"['x'] < -10"}],
         )
         result = control.stream_topics(
             channels=None,
@@ -934,7 +936,7 @@ class TestStreamTopics:
                 {
                     "name": "hard_decel",
                     "topic": "/imu",
-                    "predicate": "x < -20",
+                    "predicate": "\"/imu\"['x'] < -20",
                     "pre_seconds": 5,
                 }
             ],
@@ -942,7 +944,7 @@ class TestStreamTopics:
 
         new_service = startup.fleet_service()
         assert len(new_service.streams.events) == 1
-        assert new_service.streams.events[0].predicate == "x < -20"
+        assert new_service.streams.events[0].predicate == "\"/imu\"['x'] < -20"
         assert new_service.streams.events[0].pre_seconds == 5.0
         assert result["events_configured"] == ["hard_decel"]
         assert result["events_active"] is False
@@ -958,7 +960,9 @@ class TestStreamTopics:
         with caplog.at_level("WARNING", logger="src.sink.publish.control"):
             control.stream_topics(
                 channels=None,
-                events=[{"name": "hard_decel", "topic": "/imu", "predicate": "x < -10"}],
+                events=[
+                    {"name": "hard_decel", "topic": "/imu", "predicate": "\"/imu\"['x'] < -10"}
+                ],
             )
 
         assert any(
