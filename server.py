@@ -2,6 +2,7 @@
 
 import logging
 import pathlib
+from datetime import datetime
 from typing import Any
 
 import duckdb
@@ -561,6 +562,46 @@ def save_agent_capability(name: str, content: str, overwrite: bool = False) -> d
 
 
 @server.tool(
+    title="Delete a user capability",
+    description=(
+        "Delete a capability previously saved with `save_agent_capability`, by the "
+        "same `name` `list_agent_capabilities` reports. Only user-saved capabilities "
+        "can be deleted -- builtins shipped with Bagel refuse with a clear message. "
+        "An unknown name raises rather than silently no-op-ing, listing the user "
+        "capabilities that do exist."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
+)
+def delete_capability(name: str) -> dict[str, str]:
+    """Delete one user-authored capability by name.
+
+    Args:
+        name (str): The capability to delete, exactly as `list_agent_capabilities`
+            reports it (`user/`-prefixed, e.g. `user/battery-triage`) or the bare
+            slug (`battery-triage`).
+
+    Returns:
+        dict[str, str]: The deleted capability's `name` (`user/`-prefixed) and `path`.
+
+    Raises:
+        InvalidCapabilityError: If `name` names a builtin capability (only
+            user-saved capabilities can be deleted), is not a valid capability
+            slug, would resolve outside the user-capabilities directory, or
+            does not exist -- validated before any file is touched, so a
+            rejected call deletes nothing.
+
+    Examples:
+        As an LLM prompt:
+            Delete the capability I saved as "battery-triage".
+
+        As a Python call:
+            >>> delete_capability("user/battery-triage")
+
+    """
+    return agent_capabilities.delete_capability(name)
+
+
+@server.tool(
     title="List pipeline capabilities",
     description=(
         "List the tasks and gates available to compose a data pipeline, including "
@@ -679,6 +720,39 @@ def preview_pipeline(  # noqa: PLR0913
     }
 
 
+def _pipeline_summary(text: str, yaml_file: pathlib.Path) -> str:
+    """One-line summary of a saved pipeline: task count, site/asset, cadence.
+
+    Cheap: reuses the YAML already read for the file's `name`/`path` entry --
+    no second pass over the pipeline. Falls back to the file's last-modified
+    time when the content doesn't parse as a pipeline config (e.g. a
+    hand-edited or unrelated file dropped into the directory), the same
+    fallback the tool-design review called out for anything non-trivial to
+    summarize.
+    """
+    try:
+        config = yaml.safe_load(text)
+    except yaml.YAMLError:
+        config = None
+    if not isinstance(config, dict):
+        modified = datetime.fromtimestamp(yaml_file.stat().st_mtime).isoformat(timespec="seconds")
+        return f"(unrecognized pipeline file; modified {modified})"
+
+    tasks = config.get("tasks")
+    task_count = len(tasks) if isinstance(tasks, list) else 0
+    site, asset = config.get("site"), config.get("asset")
+    cadence = config.get("cadence") if isinstance(config.get("cadence"), dict) else {}
+    when = cadence.get("when")
+
+    pieces = [f"{task_count} task{'s' if task_count != 1 else ''}"]
+    target = "/".join(part for part in (site, asset) if part)
+    if target:
+        pieces.append(f"for {target}")
+    if when:
+        pieces.append(f"({when})")
+    return " ".join(pieces) + "."
+
+
 @server.tool(
     title="Save a pipeline to a YAML file",
     description=(
@@ -720,6 +794,117 @@ def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines
     with open(output_file, "w") as stream:
         yaml.safe_dump(config, stream, sort_keys=False)
     return str(output_file)
+
+
+@server.tool(
+    title="List saved pipelines",
+    description=(
+        "List the pipeline YAML files saved by `save_pipeline` in a directory: each "
+        "entry's `name`, `path`, and a one-line `summary` (task count, site/asset, "
+        "and cadence). Use this to discover what has already been saved before "
+        "reusing, editing, or deleting it -- instead of guessing file names."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def list_pipelines(directory: str = "pipelines") -> list[dict[str, str]]:
+    """List the pipeline YAML files saved directly under `directory`.
+
+    Args:
+        directory (str, optional): Directory to scan (the same directory
+            `save_pipeline` writes into). Not recursive. Defaults to "pipelines".
+
+    Returns:
+        list[dict[str, str]]: One entry per `*.yaml` file, sorted by `name`:
+            `name` (the file stem, the same value `delete_pipeline` accepts),
+            `path`, and a one-line `summary`.
+
+    Examples:
+        As an LLM prompt:
+            What pipelines have I saved?
+
+        As a Python call:
+            >>> list_pipelines()
+
+    """
+    root = pathlib.Path(directory)
+    if not root.is_dir():
+        return []
+    entries = [
+        {
+            "name": yaml_file.stem,
+            "path": str(yaml_file),
+            "summary": _pipeline_summary(
+                yaml_file.read_text(encoding="utf-8", errors="replace"), yaml_file
+            ),
+        }
+        for yaml_file in root.glob("*.yaml")
+        if yaml_file.is_file()
+    ]
+    entries.sort(key=lambda entry: entry["name"])
+    return entries
+
+
+@server.tool(
+    title="Delete a saved pipeline",
+    description=(
+        "Delete exactly one pipeline YAML file previously written by `save_pipeline`, "
+        "by the same `name` `list_pipelines` reports. Confined to `directory`: a name "
+        "that would resolve outside it is refused before anything is touched. "
+        "Deleting an unknown name raises rather than silently no-op-ing, listing the "
+        "names that do exist -- so a second delete of the same name also raises."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
+)
+def delete_pipeline(name: str, directory: str = "pipelines") -> dict[str, str]:
+    """Delete one saved pipeline YAML file by name.
+
+    Identity is fully validated -- name syntax, then containment within
+    `directory` -- before anything is unlinked, so a rejected call deletes
+    nothing.
+
+    Args:
+        name (str): The pipeline's name, i.e. its file stem (without `.yaml`),
+            exactly as `list_pipelines` reports it. Must be a plain file name:
+            no path separators.
+        directory (str, optional): Directory the pipeline was saved into.
+            Defaults to "pipelines".
+
+    Returns:
+        dict[str, str]: The deleted pipeline's `name` and `path`.
+
+    Raises:
+        ValueError: If `name` contains a path separator or would otherwise
+            resolve outside `directory` (path traversal, e.g. "../x") --
+            checked before any file is touched -- or if no pipeline named
+            `name` exists in `directory`, in which case the error lists the
+            names that do.
+
+    Examples:
+        As an LLM prompt:
+            Delete the saved pipeline "csv_smoke".
+
+        As a Python call:
+            >>> delete_pipeline("csv_smoke")
+
+    """
+    root = pathlib.Path(directory)
+    if "/" in name or "\\" in name or name in (".", ".."):
+        raise ValueError(f"Invalid pipeline name {name!r}: must be a plain file name, not a path.")
+
+    target = root / f"{name}.yaml"
+    if not target.resolve().is_relative_to(root.resolve()):
+        raise ValueError(
+            f"Refusing to delete {name!r}: it resolves to {target.resolve()}, "
+            f"outside the pipelines directory {root.resolve()}."
+        )
+
+    if not target.is_file():
+        available = sorted(entry["name"] for entry in list_pipelines(directory))
+        detail = f"Available: {available}" if available else "No pipelines are saved there."
+        raise ValueError(f"No saved pipeline named {name!r} in {directory!r}. {detail}")
+
+    target.unlink()
+    return {"name": name, "path": str(target)}
 
 
 @server.tool(

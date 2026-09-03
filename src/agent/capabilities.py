@@ -365,3 +365,79 @@ def save_capability(name: str, content: str, overwrite: bool = False) -> dict[st
         "path": str(target.resolve()),
         "summary": summarize(content, relative.stem),
     }
+
+
+def delete_capability(name: str) -> dict[str, str]:
+    """Delete one user-authored capability and return what was removed.
+
+    Only capabilities under ``settings.USER_CAPABILITIES_DIRECTORY`` can be
+    deleted; the builtins shipped under ``src/agent`` are refused outright.
+    ``name`` may be given either exactly as ``list_capabilities`` reports it
+    (``user/``-prefixed, e.g. ``user/battery-triage``) or as the bare slug
+    (``battery-triage``) -- a leading ``user/`` is stripped the same way
+    ``save_capability`` strips it before validating and resolving the file.
+
+    Identity is fully validated -- name syntax, then containment within the
+    user-capabilities root -- before anything is unlinked, mirroring
+    ``save_capability``'s discipline of never touching disk on a rejected
+    path.
+
+    Args:
+        name (str): The capability to delete, ``user/``-prefixed or bare.
+
+    Returns:
+        dict[str, str]: The deleted capability's ``name`` (``user/``-prefixed)
+            and ``path`` (the file that was removed).
+
+    Raises:
+        InvalidCapabilityError: If ``name`` matches a builtin capability
+            (only user-saved capabilities can be deleted); if the name is
+            not a valid capability slug; if it would resolve outside the
+            user-capabilities directory (checked before any file is
+            touched, so nothing is deleted); or if no user capability named
+            ``name`` exists (the error lists the user capabilities that do).
+
+    """
+    builtin_names = {
+        capability["name"]
+        for capability in list_capabilities()
+        if not capability["name"].startswith("user/")
+    }
+    if name in builtin_names:
+        raise InvalidCapabilityError(
+            f"{name!r} is a builtin capability shipped with Bagel; only user-saved "
+            "capabilities (the `user/`-prefixed entries from list_agent_capabilities) "
+            "can be deleted."
+        )
+
+    stripped = name[len("user/") :] if name.startswith("user/") else name
+    if not _NAME_PATTERN.fullmatch(stripped) or stripped.lower().endswith(_RESERVED_SUFFIXES):
+        raise InvalidCapabilityError(
+            f"Invalid capability name {name!r}: letters, digits, spaces, '-', '_' or '.', "
+            "optionally in '/'-separated subdirectories; segments cannot start with '.' "
+            "and the name must not end in .poml or .md."
+        )
+
+    user_root = _user_root()
+    candidates = (user_root / f"{stripped}.poml", user_root / f"{stripped}.md")
+    for candidate in candidates:
+        _assert_confined(candidate, user_root, action="delete a capability under")
+
+    existing = [candidate for candidate in candidates if candidate.exists()]
+    if not existing:
+        available = sorted(
+            capability["name"]
+            for capability in list_capabilities()
+            if capability["name"].startswith("user/")
+        )
+        detail = (
+            f"Available user capabilities: {available}"
+            if available
+            else "No user capabilities are saved."
+        )
+        raise InvalidCapabilityError(f"No user capability named {name!r}. {detail}")
+
+    for candidate in existing:
+        candidate.unlink()
+
+    return {"name": f"user/{stripped}", "path": str(existing[0].resolve())}

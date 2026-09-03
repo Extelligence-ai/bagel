@@ -354,6 +354,86 @@ def test_parameterized_poml_saves_without_context(user_dir: pathlib.Path) -> Non
     assert saved["path"].endswith("param-check.poml")
 
 
+# --- delete_capability: lifecycle round-trip, builtin refusal, traversal ---
+
+
+def test_delete_capability_round_trip(user_dir: pathlib.Path) -> None:
+    capabilities.save_capability("battery-triage", VALID_POML)
+    assert "user/battery-triage" in _by_name()
+
+    result = capabilities.delete_capability("user/battery-triage")
+    assert result["name"] == "user/battery-triage"
+    assert not (user_dir / "battery-triage.poml").exists()
+    assert "user/battery-triage" not in _by_name()
+
+
+def test_delete_capability_accepts_bare_name(user_dir: pathlib.Path) -> None:
+    capabilities.save_capability("preflight", "# Preflight\n\nCheck the props.\n")
+    capabilities.delete_capability("preflight")
+    assert not (user_dir / "preflight.md").exists()
+
+
+def test_delete_capability_second_delete_raises(user_dir: pathlib.Path) -> None:
+    capabilities.save_capability("battery-triage", VALID_POML)
+    capabilities.delete_capability("user/battery-triage")
+    with pytest.raises(capabilities.InvalidCapabilityError, match="battery-triage"):
+        capabilities.delete_capability("user/battery-triage")
+
+
+def test_delete_capability_unknown_name_lists_available(user_dir: pathlib.Path) -> None:
+    capabilities.save_capability("battery-triage", VALID_POML)
+    with pytest.raises(capabilities.InvalidCapabilityError, match="battery-triage"):
+        capabilities.delete_capability("user/does-not-exist")
+
+
+def test_delete_capability_refuses_builtin(user_dir: pathlib.Path) -> None:
+    with pytest.raises(capabilities.InvalidCapabilityError, match="builtin"):
+        capabilities.delete_capability("compose/pipeline")
+    # the builtin file itself is untouched
+    assert "compose/pipeline" in _by_name()
+
+
+@pytest.mark.parametrize("bad_name", ["../escape", "/absolute", "a//b", ".hidden"])
+def test_delete_capability_rejects_bad_names(user_dir: pathlib.Path, bad_name: str) -> None:
+    with pytest.raises(capabilities.InvalidCapabilityError):
+        capabilities.delete_capability(bad_name)
+
+
+def test_delete_capability_confinement_checked_before_unlink(
+    user_dir: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A traversal-style name must never reach unlink()."""
+
+    def boom(self: pathlib.Path) -> None:  # pragma: no cover - should never run
+        raise AssertionError("unlink should not be called for a traversal name")
+
+    monkeypatch.setattr(pathlib.Path, "unlink", boom)
+    with pytest.raises(capabilities.InvalidCapabilityError):
+        capabilities.delete_capability("../escape")
+
+
+def test_delete_capability_refuses_directory_symlink_escape(
+    tmp_path: pathlib.Path, user_dir: pathlib.Path
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "pwn.md").write_text("# Pwn\n\nSecret.\n", encoding="utf-8")
+    (user_dir / "escape").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(capabilities.InvalidCapabilityError, match="outside|escape|root"):
+        capabilities.delete_capability("escape/pwn")
+    assert (outside / "pwn.md").exists()
+
+
+def test_delete_capability_tool_round_trip(user_dir: pathlib.Path) -> None:
+    import server
+
+    server.save_agent_capability("via-tool", VALID_POML)
+    result = server.delete_capability("user/via-tool")
+    assert result["name"] == "user/via-tool"
+    names = {capability["name"] for capability in server.list_agent_capabilities()}
+    assert "user/via-tool" not in names
+
+
 def test_save_lock_is_not_inside_user_directory(
     user_dir: pathlib.Path, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
