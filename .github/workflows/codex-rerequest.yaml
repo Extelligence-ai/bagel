@@ -1,0 +1,42 @@
+# One-click Codex review re-request: add the `codex-rerequest` label to a PR
+# and this workflow (1) posts a fresh `@codex review` comment for the current
+# head, (2) re-runs the PR's most recent failed codex-review-gate run so the
+# check goes green as soon as the review lands, and (3) removes the label so
+# it can be used again. Built for connector-outage recovery: after a
+# reconnect, one label click replaces the manual comment-plus-rerun dance.
+name: codex-rerequest
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  pull-requests: write
+  issues: write
+  actions: write
+
+jobs:
+  rerequest:
+    if: github.event.label.name == 'codex-rerequest'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-request the review and re-run the stale gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api -X POST "repos/$REPO/issues/$PR/comments" \
+            -f body="$(printf '@codex review\n\n<!-- codex-rerequest:%s:%s -->' "$HEAD_SHA" "$GITHUB_RUN_ID")" >/dev/null
+          echo "Requested a Codex review of $HEAD_SHA."
+          # Re-run the newest failed codex-gate run for this head, if any.
+          run_id=$(gh api "repos/$REPO/actions/workflows/codex-gate.yaml/runs?head_sha=$HEAD_SHA&status=failure&per_page=1" \
+            --jq '.workflow_runs[0].id // empty')
+          if [ -n "$run_id" ]; then
+            gh api -X POST "repos/$REPO/actions/runs/$run_id/rerun-failed-jobs" >/dev/null \
+              && echo "Re-ran failed gate run $run_id." \
+              || echo "Gate rerun not started (may already be running)."
+          else
+            echo "No failed gate run for $HEAD_SHA; nothing to re-run."
+          fi
+          gh api -X DELETE "repos/$REPO/issues/$PR/labels/codex-rerequest" >/dev/null || true
