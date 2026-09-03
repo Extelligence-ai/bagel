@@ -714,10 +714,15 @@ def _read_manifest_doc() -> dict:
     """Read the startup manifest into a dict; `{}` when unset, unwritten, or empty.
 
     Raises:
-        StreamConfigError: the file exists but fails to parse as YAML, or
-            parses to something other than a mapping -- so a corrupt
-            manifest is never silently treated as empty and then clobbered
-            by a subsequent `_persist_streams` write.
+        StreamConfigError: the file exists but fails to parse as YAML,
+            fails to even decode as UTF-8 (`Path.read_text()` raises
+            `UnicodeDecodeError` on invalid bytes -- before `yaml.safe_load`
+            ever runs, so this must be caught alongside `yaml.YAMLError`,
+            not just it; Codex round 3 follow-up, PR #214 P2, comment
+            3927023413's sibling finding), or parses to something other
+            than a mapping -- so a corrupt manifest is never silently
+            treated as empty and then clobbered by a subsequent
+            `_persist_streams` write.
 
     """
     path = _manifest_path()
@@ -725,7 +730,7 @@ def _read_manifest_doc() -> dict:
         return {}
     try:
         doc = yaml.safe_load(path.read_text())
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, UnicodeDecodeError) as exc:
         raise StreamConfigError("manifest", f"unparsable manifest at {path}: {exc}") from exc
     if doc is None:
         return {}

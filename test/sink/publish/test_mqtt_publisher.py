@@ -58,6 +58,7 @@ class FakeFleetPaho:
         # traffic.
         self.on_message: object = None
         self.subscribed_topics: list[str] = []
+        self.subscribe_options: list[object] = []
         self.unsubscribed_topics: list[str] = []
         self.queued_message: FakeMqttMessage | None = None
 
@@ -91,15 +92,25 @@ class FakeFleetPaho:
         self.calls.append(("publish", topic, payload, qos, retain))
         return self.next_info
 
-    def subscribe(self, topic: str, qos: int = 0) -> None:
-        self.calls.append(("subscribe", topic, qos))
+    def subscribe(self, topic: str, qos: int = 0, options: object = None) -> None:
+        self.calls.append(("subscribe", topic, qos, options))
         self.subscribed_topics.append(topic)
+        self.subscribe_options.append(options)
         if self.queued_message is not None and self.on_message is not None:
             self.on_message(self, None, self.queued_message)
 
     def unsubscribe(self, topic: str) -> None:
         self.calls.append(("unsubscribe", topic))
         self.unsubscribed_topics.append(topic)
+
+
+class FakeSubscribeOptions:
+    """Minimal stand-in for paho's MQTT5 `SubscribeOptions` -- just enough to
+    let `mqtt.py` construct one and this fake record what it asked for."""
+
+    def __init__(self, qos: int = 0, noLocal: bool = False, **_kw: object) -> None:  # noqa: N803
+        self.qos = qos
+        self.noLocal = noLocal
 
 
 @pytest.fixture()
@@ -115,6 +126,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> dict[str, FakeFleetPaho]:
         CallbackAPIVersion=types.SimpleNamespace(VERSION2="v2"),
         MQTTv5=5,
         MQTT_ERR_SUCCESS=0,
+        SubscribeOptions=FakeSubscribeOptions,
     )
     monkeypatch.setattr(publish_mqtt, "_paho", lambda: fake_module)
     return holder
@@ -386,9 +398,42 @@ class TestWaitForRetainedHeartbeat:
 
         assert result is None
 
-    def test_no_message_returns_none_within_timeout(
-        self, fake: dict[str, FakeFleetPaho]
-    ) -> None:
+    def test_garbage_bytes_fail_closed(self, fake: dict[str, FakeFleetPaho]) -> None:
+        """Codex round 3 follow-up (PR #214, P2, comment 3927023413's
+        sibling finding): a retained payload that isn't even valid UTF-8/
+        JSON must never be silently treated the same as "nothing retained,
+        proceed" -- something IS on the topic and this process cannot tell
+        what it means, so the safe default is to refuse."""
+        p = _publisher()
+        p.connect()
+        fake["client"].queued_message = FakeMqttMessage(
+            topic="bagel/v1/acme/r7/heartbeat",
+            payload=b"\xff\xfe not valid utf-8 or json",
+            retain=True,
+        )
+
+        with pytest.raises(PublishError, match="heartbeat"):
+            p.wait_for_retained_heartbeat(timeout_s=0.05)
+
+        # Still tears itself down cleanly even on the fail-closed path.
+        assert fake["client"].unsubscribed_topics == ["bagel/v1/acme/r7/heartbeat"]
+
+    def test_non_object_json_fails_closed(self, fake: dict[str, FakeFleetPaho]) -> None:
+        """Valid JSON that isn't a mapping (e.g. a bare array) is just as
+        unusable as garbage bytes -- `.get("online")` would either crash or
+        (worse) silently misbehave; refuse instead of guessing."""
+        p = _publisher()
+        p.connect()
+        fake["client"].queued_message = FakeMqttMessage(
+            topic="bagel/v1/acme/r7/heartbeat",
+            payload=json.dumps([1, 2, 3]).encode(),
+            retain=True,
+        )
+
+        with pytest.raises(PublishError, match="heartbeat"):
+            p.wait_for_retained_heartbeat(timeout_s=0.05)
+
+    def test_no_message_returns_none_within_timeout(self, fake: dict[str, FakeFleetPaho]) -> None:
         """A fresh robot/broker with nothing retained: times out, returns
         `None` (not an error -- `None` means "proceed" to the caller)."""
         p = _publisher()
@@ -421,6 +466,154 @@ class TestWaitForRetainedHeartbeat:
             p.wait_for_retained_heartbeat()
 
 
+class TestWatchLiveSession:
+    """Codex round 3 follow-up (PR #214, P1, comment 3927287968's own
+    follow-up): unlike `wait_for_retained_heartbeat` (a bounded, one-shot,
+    START-only probe), `watch_live_session()` keeps the heartbeat
+    subscription open so a beat arriving ANY time later -- not just the
+    state retained at subscribe time -- still sets `.detected`.
+    """
+
+    def test_subscribes_and_does_not_block(self, fake: dict[str, FakeFleetPaho]) -> None:
+        p = _publisher()
+        p.connect()
+
+        watch = p.watch_live_session()
+
+        assert fake["client"].subscribed_topics == ["bagel/v1/acme/r7/heartbeat"]
+        assert not watch.detected.is_set()
+
+    def test_subscribes_with_no_local_so_this_clients_own_beats_are_not_echoed(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        """Critical: without MQTT5's `noLocal` subscribe option, a broker
+        delivers a client's OWN publishes back to itself when it's
+        subscribed to a matching topic -- so `run_selftest`'s own,
+        perfectly healthy heartbeat publish (before the events publish)
+        would loop back through this exact watch and be mistaken for a
+        DIFFERENT, live session appearing mid-run. Caught only by the live-
+        broker e2e suite (`FakeFleetPaho` doesn't simulate broker echo),
+        traced back to this missing option."""
+        p = _publisher()
+        p.connect()
+
+        p.watch_live_session()
+
+        [options] = fake["client"].subscribe_options
+        assert options is not None
+        assert options.noLocal is True
+
+    def test_a_later_online_true_message_sets_detected(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        """The core fix: a message arriving well AFTER `watch_live_session()`
+        returns -- simulating a live service that resumes mid-selftest-run
+        -- must still be caught, not just the state present at subscribe
+        time."""
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+
+        watch = p.watch_live_session()
+        assert not watch.detected.is_set()
+
+        # A later message, delivered well after subscribe() returned --
+        # mirroring a live FleetService publishing its own heartbeat while
+        # this watch is still open. Per MQTT-3.3.1-9, a message delivered
+        # to an ALREADY-established subscription carries retain=False
+        # regardless of how the publisher published it -- so this must not
+        # depend on the retain flag the way the START-only probe does.
+        client.on_message(
+            client,
+            None,
+            FakeMqttMessage(
+                topic="bagel/v1/acme/r7/heartbeat",
+                payload=json.dumps({"v": 1, "online": True}).encode(),
+                retain=False,
+            ),
+        )
+
+        assert watch.detected.is_set()
+
+    def test_an_online_false_message_does_not_set_detected(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+
+        watch = p.watch_live_session()
+        client.on_message(
+            client,
+            None,
+            FakeMqttMessage(
+                topic="bagel/v1/acme/r7/heartbeat",
+                payload=json.dumps({"v": 1, "online": False, "reason": "paused"}).encode(),
+                retain=False,
+            ),
+        )
+
+        assert not watch.detected.is_set()
+
+    def test_an_unparsable_message_fails_closed_by_setting_detected(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        """Same fail-closed rule as `wait_for_retained_heartbeat`: an
+        unparsable beat means "can't tell", which is treated as unsafe, not
+        safe."""
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+
+        watch = p.watch_live_session()
+        client.on_message(
+            client,
+            None,
+            FakeMqttMessage(
+                topic="bagel/v1/acme/r7/heartbeat",
+                payload=b"\xff\xfe garbage",
+                retain=False,
+            ),
+        )
+
+        assert watch.detected.is_set()
+
+    def test_stop_unsubscribes_and_restores_prior_handler(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+
+        def _prior_handler(*_args: object) -> None:
+            pass
+
+        client.on_message = _prior_handler
+        watch = p.watch_live_session()
+        assert client.on_message is not _prior_handler
+
+        watch.stop()
+
+        assert client.unsubscribed_topics == ["bagel/v1/acme/r7/heartbeat"]
+        assert client.on_message is _prior_handler
+
+    def test_stop_is_idempotent(self, fake: dict[str, FakeFleetPaho]) -> None:
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+
+        watch = p.watch_live_session()
+        watch.stop()
+        watch.stop()  # must not raise, must not double-unsubscribe
+
+        assert client.unsubscribed_topics == ["bagel/v1/acme/r7/heartbeat"]
+
+    def test_raises_when_not_connected(self, fake: dict[str, FakeFleetPaho]) -> None:
+        p = _publisher()
+        with pytest.raises(PublishError):
+            p.watch_live_session()
+
+
 class TestDisconnectWithoutPublishing:
     """Codex round 3 follow-up (PR #214, P1, comment 3927287968): the
     silent-teardown helper `_check_no_live_session` uses on refusal --
@@ -428,9 +621,7 @@ class TestDisconnectWithoutPublishing:
     publishing a clean-stop beat that could itself mislead a live watcher.
     """
 
-    def test_tears_down_without_publishing_anything(
-        self, fake: dict[str, FakeFleetPaho]
-    ) -> None:
+    def test_tears_down_without_publishing_anything(self, fake: dict[str, FakeFleetPaho]) -> None:
         p = _publisher()
         p.connect()
         client = fake["client"]
@@ -442,9 +633,7 @@ class TestDisconnectWithoutPublishing:
         assert not any(c[0] == "publish" for c in client.calls)
         assert p.connected is False
 
-    def test_idempotent_and_safe_when_never_connected(
-        self, fake: dict[str, FakeFleetPaho]
-    ) -> None:
+    def test_idempotent_and_safe_when_never_connected(self, fake: dict[str, FakeFleetPaho]) -> None:
         p = _publisher()
         p.disconnect_without_publishing()  # must not raise
         p.disconnect_without_publishing()  # a second call must not raise either

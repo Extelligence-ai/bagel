@@ -12,6 +12,7 @@ import these from here.
 """
 
 import pathlib
+import threading
 import time
 
 import pyarrow as pa
@@ -73,6 +74,23 @@ class FakeSinkNoPrivateBuffers:
         return self._writers_by_topic[topic]
 
 
+class FakeLiveSessionWatch:
+    """In-memory double for `mqtt.LiveSessionWatch` (Codex round 3 follow-up,
+    PR #214 P1, comment 3927287968's own follow-up): `.detected` is set
+    directly by `FakePublisher`'s `publish()` (see `live_session_beat_after_batch`)
+    to simulate a live beat arriving mid-run, without needing a real paho
+    callback thread. `stop_calls` counts `.stop()` calls, mirroring the real
+    `LiveSessionWatch.stop()`'s idempotency contract.
+    """
+
+    def __init__(self) -> None:
+        self.detected = threading.Event()
+        self.stop_calls = 0
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+
 class FakePublisher(Publisher):
     """In-memory Publisher double: records every kind of publish; can fail on demand.
 
@@ -103,6 +121,16 @@ class FakePublisher(Publisher):
     calls to the matching silent-teardown helper `_check_no_live_session`
     uses on refusal (comment 3927287968) -- distinct from `close_calls`,
     since that path must NEVER publish a clean-stop beat.
+
+    `live_session_beat_after_batch` (Codex round 3 follow-up, PR #214 P1,
+    comment 3927287968's own follow-up) simulates a live service RESUMING
+    mid-run: when set, the Nth (1-indexed) successful `publish_channels`
+    call sets the open `FakeLiveSessionWatch`'s `.detected` Event, exactly
+    as a real `LiveSessionWatch`'s paho callback would upon receiving a
+    later `online: true` beat. `watch_live_session()` -- the ongoing-watch
+    capability `run_selftest` polls between batches and before the
+    heartbeat/event publishes -- returns a `FakeLiveSessionWatch`
+    (`watch_open_calls` counts calls to it).
     """
 
     def __init__(
@@ -111,10 +139,12 @@ class FakePublisher(Publisher):
         connect_should_fail: bool = False,
         fail_at_channel_call: int | None = None,
         live_session_beat: dict | None = None,
+        live_session_beat_after_batch: int | None = None,
     ) -> None:
         self.connect_should_fail = connect_should_fail
         self.fail_at_channel_call = fail_at_channel_call
         self.live_session_beat = live_session_beat
+        self.live_session_beat_after_batch = live_session_beat_after_batch
         self.connect_calls = 0
         self.schema_calls: list[dict] = []
         self.channel_calls: list[dict] = []
@@ -126,6 +156,8 @@ class FakePublisher(Publisher):
         self.calls: list[str] = []
         self.live_session_probe_calls = 0
         self.disconnect_without_publishing_calls = 0
+        self.watch_open_calls = 0
+        self._watch: FakeLiveSessionWatch | None = None
         self._connected = False
 
     def connect(self) -> None:
@@ -139,6 +171,12 @@ class FakePublisher(Publisher):
         self.calls.append("live_session_probe")
         self.live_session_probe_calls += 1
         return self.live_session_beat
+
+    def watch_live_session(self) -> FakeLiveSessionWatch:
+        self.calls.append("watch_open")
+        self.watch_open_calls += 1
+        self._watch = FakeLiveSessionWatch()
+        return self._watch
 
     def disconnect_without_publishing(self) -> None:
         self.calls.append("disconnect_without_publishing")
@@ -156,6 +194,12 @@ class FakePublisher(Publisher):
             if self.fail_at_channel_call == call_index:
                 raise PublishError(f"forced failure at channel batch {call_index}")
             self.channel_calls.append(payload)
+            if (
+                self.live_session_beat_after_batch is not None
+                and call_index == self.live_session_beat_after_batch
+                and self._watch is not None
+            ):
+                self._watch.detected.set()
         elif kind == "heartbeat":
             self.heartbeat_calls.append(payload)
         elif kind == "events":

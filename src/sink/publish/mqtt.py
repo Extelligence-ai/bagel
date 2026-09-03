@@ -29,6 +29,86 @@ def _dump(payload: dict) -> str:
     return json.dumps(payload, separators=(",", ":"))
 
 
+_TRUNCATED_PAYLOAD_MAX_BYTES = 200
+
+
+def _parse_heartbeat_payload(raw: bytes) -> dict:
+    """Parse a heartbeat-topic payload; fail CLOSED on anything but a JSON object.
+
+    Codex round 3 follow-up (PR #214, P2, comment 3927023413's sibling
+    finding): `wait_for_retained_heartbeat` used to treat an unparsable
+    payload (garbage bytes, or valid JSON that isn't an object -- e.g. a
+    bare array) the same as "nothing retained" and let the selftest
+    proceed. That is backwards: SOMETHING is retained on the robot's own
+    heartbeat topic and this process cannot tell what it means, so the safe
+    default is to refuse, not to guess "safe". Shared by
+    `wait_for_retained_heartbeat` (the bounded START-only probe) and
+    `MqttPublisher.watch_live_session`'s ongoing callback (Codex round 3
+    follow-up, PR #214 P1, comment 3927287968's own follow-up) so both
+    apply the identical fail-closed rule.
+
+    Raises:
+        PublishError: `raw` isn't valid UTF-8 JSON, or parses to something
+            other than a JSON object. The message names the truncated raw
+            payload (capped at 200 bytes) for diagnosis, without risking an
+            unbounded error message for a pathological payload.
+
+    """
+    truncated = raw[:_TRUNCATED_PAYLOAD_MAX_BYTES]
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise PublishError(f"heartbeat topic: unparsable retained payload: {truncated!r}") from exc
+    if not isinstance(parsed, dict):
+        raise PublishError(f"heartbeat topic: retained payload is not a JSON object: {truncated!r}")
+    return parsed
+
+
+class LiveSessionWatch:
+    """Handle from `MqttPublisher.watch_live_session()`: an ONGOING probe.
+
+    Codex round 3 follow-up (PR #214, P1, comment 3927287968's own
+    follow-up): `wait_for_retained_heartbeat` only ever looks at the
+    heartbeat topic's state at ONE moment (subscribe, wait a bounded
+    window, unsubscribe) -- exactly the state at the START of a
+    `run_selftest` call. A live `FleetService` that RESUMES partway through
+    a (multi-second, `interval_s`-spaced) selftest run reopens the same
+    schema-pollution window the original START-only check was meant to
+    close: nothing about a START check tells `run_selftest` that a session
+    connected a moment ago.
+
+    `watch_live_session()` instead keeps the heartbeat subscription open
+    for as long as the caller wants (until `.stop()`), so `.detected`
+    (a `threading.Event`) can be set by ANY message arriving on the topic
+    for the life of the watch, not just the one seen at subscribe time --
+    covering exactly the "live session appears mid-run" case. `run_selftest`
+    polls `.detected.is_set()` between batches and before the
+    heartbeat/event publishes, aborting the instant it's set.
+
+    `.stop()` unsubscribes and restores the client's prior `on_message`
+    handler; idempotent (a second call is a no-op), mirroring `close()`'s
+    own idempotency contract.
+    """
+
+    def __init__(self, *, client: object, topic: str, previous_on_message: object) -> None:
+        """Store the subscribed client/topic and the handler to restore on `.stop()`."""
+        self.detected = threading.Event()
+        self._client = client
+        self._topic = topic
+        self._previous_on_message = previous_on_message
+        self._stopped = False
+
+    def stop(self) -> None:
+        """Unsubscribe and restore the client's prior `on_message` handler; idempotent."""
+        if self._stopped:
+            return
+        self._stopped = True
+        try:
+            self._client.unsubscribe(self._topic)
+        finally:
+            self._client.on_message = self._previous_on_message
+
+
 def _finalize(client: object) -> None:
     """Best-effort teardown for a garbage-collected publisher's client."""
     if client is None:
@@ -340,12 +420,18 @@ class MqttPublisher(Publisher):
         Returns:
             The retained heartbeat's parsed JSON payload, or `None` if
             nothing retained arrived within `timeout_s` (a fresh
-            robot/broker with nothing retained yet) or the retained
-            payload failed to parse (treated the same as "unknown" --
-            never raises here; the caller decides what "unknown" means).
+            robot/broker with nothing retained yet).
 
         Raises:
-            PublishError: not connected.
+            PublishError: not connected, or a retained payload DID arrive
+                but failed to parse as a JSON object -- garbage bytes or
+                valid-but-non-object JSON (e.g. a bare array) on the
+                robot's own heartbeat topic (Codex round 3 follow-up, PR
+                #214 P2, comment 3927023413's sibling finding: fail CLOSED
+                here rather than silently treating "couldn't tell" the same
+                as "definitely safe, proceed" -- see
+                `_parse_heartbeat_payload`). The message names the
+                truncated raw payload.
 
         """
         if self._client is None:
@@ -358,20 +444,83 @@ class MqttPublisher(Publisher):
             if done.is_set() or not message.retain:  # type: ignore[attr-defined]
                 return
             try:
-                result["payload"] = json.loads(message.payload.decode("utf-8"))  # type: ignore[attr-defined]
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                result["payload"] = None
+                result["payload"] = _parse_heartbeat_payload(message.payload)  # type: ignore[attr-defined]
+            except PublishError as exc:
+                result["error"] = exc
             done.set()
 
         previous_on_message = self._client.on_message
         self._client.on_message = _on_retained_message
-        self._client.subscribe(topic, qos=1)
+        self._client.subscribe(topic, options=_paho().SubscribeOptions(qos=1, noLocal=True))
         try:
             done.wait(timeout=timeout_s)
         finally:
             self._client.unsubscribe(topic)
             self._client.on_message = previous_on_message
+        if "error" in result:
+            raise result["error"]  # type: ignore[misc]
         return result.get("payload")  # type: ignore[return-value]
+
+    def watch_live_session(self) -> LiveSessionWatch:
+        """Subscribe to this robot's heartbeat topic and keep watching it.
+
+        Codex round 3 follow-up (PR #214, P1, comment 3927287968's own
+        follow-up): unlike `wait_for_retained_heartbeat` (a bounded
+        one-shot probe that unsubscribes as soon as it returns), the
+        returned `LiveSessionWatch` stays subscribed until its own
+        `.stop()` is called, so `run_selftest` can keep polling
+        `.detected` for the ENTIRE run -- catching a live service that
+        RESUMES mid-run, not just one that was already connected at the
+        moment this was called. See `LiveSessionWatch`'s own docstring for
+        the full reasoning.
+
+        Every message on the topic is parsed with the same fail-closed
+        `_parse_heartbeat_payload` `wait_for_retained_heartbeat` uses: an
+        unparsable payload sets `.detected` too (can't tell what it means,
+        so don't guess "safe"), not just a payload with `online: true`.
+
+        Intended to be called right after `wait_for_retained_heartbeat` has
+        already cleared the START state (see `selftest._check_no_live_session`)
+        -- this method does not itself wait for or return the current
+        retained state; it only arms the ongoing watch going forward.
+
+        Subscribes with MQTT5's `noLocal` option set (critical, found only
+        by the live-broker e2e suite -- `FakeFleetPaho`'s unit-test double
+        doesn't simulate broker echo, so this was invisible to the mocked
+        tests): without it, a broker delivers a client's OWN publishes back
+        to itself on any topic it's subscribed to. `run_selftest` publishes
+        its OWN `online: true` heartbeat over THIS SAME publisher partway
+        through the run, on the exact topic this watch subscribes to --
+        with `noLocal=False` (the default), that publish loops straight
+        back through this watch's own `on_message` callback and gets
+        mistaken for a genuinely different, live session appearing mid-run,
+        aborting every single run. `noLocal=True` tells the broker to never
+        deliver this client's own publishes back to it, so only an actual
+        OTHER session's beat can ever set `.detected`.
+
+        Raises:
+            PublishError: not connected.
+
+        """
+        if self._client is None:
+            raise PublishError("publisher is not connected")
+        topic = wire_topic(self._tenant, self._robot, "heartbeat")
+        watch = LiveSessionWatch(
+            client=self._client, topic=topic, previous_on_message=self._client.on_message
+        )
+
+        def _on_message(_client: object, _userdata: object, message: object) -> None:
+            try:
+                payload = _parse_heartbeat_payload(message.payload)  # type: ignore[attr-defined]
+            except PublishError:
+                watch.detected.set()
+                return
+            if payload.get("online") is True:
+                watch.detected.set()
+
+        self._client.on_message = _on_message
+        self._client.subscribe(topic, options=_paho().SubscribeOptions(qos=1, noLocal=True))
+        return watch
 
     def disconnect_without_publishing(self) -> None:
         """Tear down the connection WITHOUT publishing a clean-stop heartbeat.

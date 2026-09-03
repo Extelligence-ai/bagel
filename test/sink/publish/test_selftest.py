@@ -61,14 +61,24 @@ class TestRunSelftest:
 
         result = run_selftest(pub, spool, batches=5, interval_s=0.0, now=lambda: 1000.0)
 
-        # -- call order: connect, the live-session probe (Codex round 3
-        # follow-up, P1, comment 3927287968), schema, then 5 channel
-        # batches, then heartbeat, then one event, then close last.
-        assert pub.calls == ["connect", "live_session_probe", "schema"] + ["channels"] * 5 + [
+        # -- call order: connect, the START live-session probe (Codex
+        # round 3 follow-up, P1, comment 3927287968), the ONGOING watch
+        # opening right after it (comment 3927287968's own follow-up --
+        # kept open for the whole run so a live service resuming mid-run
+        # is still caught), schema, then 5 channel batches, then
+        # heartbeat, then one event, then close last.
+        assert pub.calls == [
+            "connect",
+            "live_session_probe",
+            "watch_open",
+            "schema",
+        ] + ["channels"] * 5 + [
             "heartbeat",
             "events",
             "close",
         ]
+        assert pub._watch is not None
+        assert pub._watch.stop_calls == 1
 
         # -- schema payload is the fixed four-channel conformance schema.
         assert pub.schema_calls == [{"v": 1, "channels": SELFTEST_CHANNELS}]
@@ -212,9 +222,7 @@ class TestRefusesWhileLiveSessionConnected:
     for a retained heartbeat right after connect(), before any publish.
     """
 
-    def test_retained_online_true_refuses_before_any_publish(
-        self, tmp_path: pathlib.Path
-    ) -> None:
+    def test_retained_online_true_refuses_before_any_publish(self, tmp_path: pathlib.Path) -> None:
         from src.sink.publish.selftest import SelftestPreconditionError, run_selftest
 
         spool = Spool(tmp_path / "spool")
@@ -248,7 +256,7 @@ class TestRefusesWhileLiveSessionConnected:
         result = run_selftest(pub, spool, batches=1, interval_s=0.0)
 
         assert result["batches"] == 1
-        assert pub.calls[:3] == ["connect", "live_session_probe", "schema"]
+        assert pub.calls[:4] == ["connect", "live_session_probe", "watch_open", "schema"]
 
     def test_no_retained_beat_proceeds(self, tmp_path: pathlib.Path) -> None:
         """A fresh robot/broker with nothing retained yet -- must proceed,
@@ -263,9 +271,7 @@ class TestRefusesWhileLiveSessionConnected:
         assert result["batches"] == 1
         assert pub.live_session_probe_calls == 1
 
-    def test_publisher_without_the_probe_capability_proceeds(
-        self, tmp_path: pathlib.Path
-    ) -> None:
+    def test_publisher_without_the_probe_capability_proceeds(self, tmp_path: pathlib.Path) -> None:
         """A `Publisher` implementation that doesn't offer
         `wait_for_retained_heartbeat` (not part of the ABC) must not break
         -- the check is skipped entirely, matching pre-round-9 behavior."""
@@ -280,6 +286,61 @@ class TestRefusesWhileLiveSessionConnected:
         result = run_selftest(pub, spool, batches=1, interval_s=0.0)
 
         assert result["batches"] == 1
+
+
+class TestRefusesWhileLiveSessionConnectsMidRun:
+    """Codex round 3 follow-up (PR #214, P1, comment 3927287968's own
+    follow-up): the original live-session refusal probe only checked the
+    heartbeat topic's state right after `connect()`, at the START of the
+    run -- a live `FleetService` that RESUMES partway through a (multi-
+    batch, `interval_s`-spaced) selftest run reopens the exact same
+    schema-pollution window. The fix keeps the heartbeat subscription open
+    for the whole run and checks it between batches and before the
+    heartbeat/event publishes, aborting the instant a live beat is seen."""
+
+    def test_online_true_beat_after_batch_two_aborts_before_batch_three(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        from src.sink.publish.selftest import SelftestPreconditionError, run_selftest
+
+        spool = Spool(tmp_path / "spool")
+        pub = FakePublisher(live_session_beat_after_batch=2)
+
+        with pytest.raises(SelftestPreconditionError, match="live fleet session"):
+            run_selftest(pub, spool, batches=5, interval_s=0.0)
+
+        # Batches 1-2 published (and immediately acked, per the existing
+        # per-batch ack order) before the mid-run beat was seen; batch 3
+        # never attempted, and nothing past it (heartbeat/events/close) was
+        # ever reached.
+        assert len(pub.channel_calls) == 2
+        assert pub.heartbeat_calls == []
+        assert pub.event_calls == []
+        assert pub.close_calls == 0
+
+        # Same silent-teardown contract as the START-only refusal: no
+        # close-beat, connection torn down via disconnect_without_publishing.
+        assert pub.disconnect_without_publishing_calls == 1
+
+        # Both lanes end zero-pending -- the two successful batches were
+        # already acked in-loop; the events lane was never touched.
+        assert list(spool.pending("channels")) == []
+        assert list(spool.pending("events")) == []
+
+    def test_no_beat_ever_arriving_runs_to_completion_normally(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Regression guard: the new ongoing watch must not itself break the
+        (still far more common) case where no live session ever appears."""
+        from src.sink.publish.selftest import run_selftest
+
+        spool = Spool(tmp_path / "spool")
+        pub = FakePublisher()
+
+        result = run_selftest(pub, spool, batches=3, interval_s=0.0)
+
+        assert result["batches"] == 3
+        assert pub.close_calls == 1
 
 
 class TestExclusiveLockDuringRun:
@@ -319,9 +380,7 @@ class TestExclusiveLockDuringRun:
         assert pub.calls == []
         assert list(run_spool.pending("channels")) == []
 
-    def test_waits_out_a_briefly_held_lock_then_runs_normally(
-        self, tmp_path: pathlib.Path
-    ) -> None:
+    def test_waits_out_a_briefly_held_lock_then_runs_normally(self, tmp_path: pathlib.Path) -> None:
         from src.sink.publish.selftest import run_selftest
 
         root = tmp_path / "spool"

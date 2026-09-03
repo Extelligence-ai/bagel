@@ -219,6 +219,68 @@ def _check_no_live_session(
         )
 
 
+def _open_live_session_watch(publisher: Publisher) -> object | None:
+    """Arm the ONGOING live-session watch for the rest of the run, if offered.
+
+    Codex round 3 follow-up (PR #214 P1, comment 3927287968's own
+    follow-up): `_check_no_live_session` only ever proves the heartbeat
+    topic's state at the moment it's called -- right after `connect()`,
+    before the schema publish. A live `FleetService` that RESUMES any time
+    AFTER that check (mid-run, between batches, or even between the last
+    batch and the heartbeat/event publishes) reopens the exact schema-
+    pollution window `_check_no_live_session` exists to close, since
+    nothing about a one-shot START check tells `run_selftest` about a
+    session that connects a moment later.
+
+    `publisher.watch_live_session()` (see `MqttPublisher`'s implementation),
+    called here right after `_check_no_live_session` has cleared the START
+    state, keeps the heartbeat subscription open for the remainder of the
+    run -- `run_selftest` polls the returned watch's `.detected` Event
+    between batches and before the heartbeat/event publishes via
+    `_abort_if_live_session_detected`. Same optional-capability pattern as
+    `_check_no_live_session`'s own probe (`getattr(...,  None)`): a
+    `Publisher` that doesn't offer this (most test doubles, and any future
+    non-MQTT implementation) simply isn't watched, matching this module's
+    existing behavior before this round.
+    """
+    open_watch = getattr(publisher, "watch_live_session", None)
+    if open_watch is None:
+        return None
+    return open_watch()
+
+
+def _abort_if_live_session_detected(watch: object | None, publisher: Publisher) -> None:
+    """Raise the same typed refusal as `_check_no_live_session` if `watch` fired.
+
+    Called between every channel batch and immediately before the
+    heartbeat and event publishes (see `run_selftest`) -- checking the
+    SAME `watch.detected` Event a live beat's paho callback sets the
+    instant it arrives (Codex round 3 follow-up, PR #214 P1, comment
+    3927287968's own follow-up), so a live service resuming at any point
+    during the run is caught before this run's next publish, not just at
+    the very start.
+
+    Mirrors `_check_no_live_session`'s own refusal exactly: the connection
+    is torn down silently via `disconnect_without_publishing` (never
+    `close()`, which would publish a clean-stop beat and could itself
+    mislead whoever is watching the live session's own heartbeat topic) --
+    the same typed `SelftestPreconditionError`, the same "exit 1" contract
+    via `main()`'s `_EXPECTED_ERRORS`. `watch.stop()` is deliberately NOT
+    called here: `disconnect_without_publishing` already tears down the
+    whole underlying connection the watch's subscription lives on, so
+    there is nothing left for `.stop()` to usefully unwind.
+    """
+    if watch is None or not watch.detected.is_set():  # type: ignore[attr-defined]
+        return
+    disconnect_silently = getattr(publisher, "disconnect_without_publishing", None)
+    if disconnect_silently is not None:
+        disconnect_silently()
+    raise SelftestPreconditionError(
+        "selftest refused: a live fleet session connected for this robot "
+        "partway through this run; pause or stop the fleet service first"
+    )
+
+
 def run_selftest(  # noqa: PLR0913
     publisher: Publisher,
     spool: Spool,
@@ -256,6 +318,16 @@ def run_selftest(  # noqa: PLR0913
     schema update, remapping live channel batches to the fixture's
     `selftest.*` channels until the live service's next reconnect.
 
+    That START-only check is not the end of it: right after it passes, an
+    ONGOING watch is armed too (Codex round 3 follow-up, PR #214 P1,
+    comment 3927287968's own follow-up -- see `_open_live_session_watch`)
+    and re-checked between every channel batch and immediately before the
+    heartbeat and event publishes (`_abort_if_live_session_detected`). A
+    live `FleetService` that RESUMES at any point DURING the run -- not
+    just one that was already connected at the start -- reopens the exact
+    same schema-pollution window; the ongoing watch is what closes it for
+    the run's full duration, not just its first instant.
+
     The entire run -- the backlog check and every `append_next`/`ack` call
     that follows -- holds `spool.exclusive()` (Codex round 3, P1b): a
     concurrently running `FleetService`/`StreamRouter` writing this same
@@ -286,9 +358,11 @@ def run_selftest(  # noqa: PLR0913
     Raises:
         SelftestPreconditionError: a spool lane has pending unacked backlog
             or another writer already holds the spool's lock (both checked
-            before any connect/append side effect), or the robot's live
-            fleet session is already connected (checked right after
-            connecting, before any publish).
+            before any connect/append side effect), the robot's live fleet
+            session is already connected (checked right after connecting,
+            before any publish), or a live session connects PARTWAY through
+            the run (checked between batches and before the heartbeat/event
+            publishes -- see `_abort_if_live_session_detected`).
         Whatever `publisher`/`spool` raise thereafter (typically
         `PublishError` or a spool `ValueError`/`SpoolError`) -- always
         re-raised after the cleanup below.
@@ -313,9 +387,11 @@ def run_selftest(  # noqa: PLR0913
         try:
             publisher.connect()
             _check_no_live_session(publisher)
+            watch = _open_live_session_watch(publisher)
             publisher.publish_schema({"v": 1, "channels": SELFTEST_CHANNELS})
 
             for i in range(batches):
+                _abort_if_live_session_detected(watch, publisher)
                 t = now()
                 batch = _build_batch(i, t)
                 seq = spool.append_next("channels", lambda seq, batch=batch: _stamp_seq(batch, seq))
@@ -327,6 +403,7 @@ def run_selftest(  # noqa: PLR0913
                 if interval_s:
                     time.sleep(interval_s)
 
+            _abort_if_live_session_detected(watch, publisher)
             heartbeat_payload = build_heartbeat(
                 started_at=t0,
                 subscriptions=["selftest"],
@@ -356,11 +433,14 @@ def run_selftest(  # noqa: PLR0913
                 }
                 return event_payload
 
+            _abort_if_live_session_detected(watch, publisher)
             events_seq = spool.append_next("events", _build_event_payload)
             last_events_seq = events_seq
             publisher.publish_event(event_payload)
             spool.ack("events", events_seq)
 
+            if watch is not None:
+                watch.stop()  # type: ignore[attr-defined]
             publisher.close()
         except Exception:
             if last_channels_seq is not None:

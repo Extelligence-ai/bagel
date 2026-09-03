@@ -524,9 +524,7 @@ class TestStats:
         assert st.acked_seq == 1
         assert st.bytes > 0
 
-    def test_stats_last_seq_is_disk_authoritative_on_a_warm_cache(
-        self, root: pathlib.Path
-    ) -> None:
+    def test_stats_last_seq_is_disk_authoritative_on_a_warm_cache(self, root: pathlib.Path) -> None:
         """Codex round 3 follow-up (PR #214, P2, comment 3925391258):
         `stats()`'s `last_seq` must reflect disk, not this instance's own
         possibly-stale cache -- `acked_seq` (`_watermarks()`) and `pending`
@@ -831,7 +829,7 @@ class TestUnterminatedTailReseal:
     a trustworthy seq; (b) a genuinely partial/mid-write tail failed to
     parse, but nothing then truncated it before the next write landed
     directly on top of it. Either way, `append()`'s next `write()` (append
-    mode) grafted new bytes onto the untermianted tail with no separating
+    mode) grafted new bytes onto the unterminated tail with no separating
     newline -- permanent mid-file corruption, discovered only later when
     `pending()` raises `SpoolCorruptError`.
     """
@@ -1068,9 +1066,7 @@ class TestAppendNext:
         assert actual_seq == 2  # correctly re-derived, not the stale peeked=1
         assert [seq for seq, _ in a.pending("channels")] == [1, 2]
 
-    def test_competitor_cannot_land_between_allocation_and_write(
-        self, root: pathlib.Path
-    ) -> None:
+    def test_competitor_cannot_land_between_allocation_and_write(self, root: pathlib.Path) -> None:
         """Direct proof of atomicity: while A's `append_next` is mid-flight
         (its `build` callable deliberately blocked, so we can observe it
         running -- `build` runs INSIDE the lock), B's `append_next` must be
@@ -1150,6 +1146,28 @@ class TestExclusiveLock:
     across a multi-call critical section, cross-process-safe, bounded wait.
     """
 
+    def test_negative_timeout_raises_value_error_at_entry(self, root: pathlib.Path) -> None:
+        """`filelock` treats a negative `timeout` as "wait forever" (Codex
+        round 3 follow-up, PR #214 P2, comment 3927023413's sibling
+        finding): silently accepting one would break `exclusive()`'s own
+        documented bounded-wait contract (`SelftestPreconditionError` after
+        `lock_timeout_s`, never an indefinite hang). Refused up front,
+        before ever touching `filelock.FileLock.acquire`, so this can never
+        depend on `filelock`'s own undocumented behavior for negative
+        values."""
+        s = Spool(root)
+        with pytest.raises(ValueError, match="timeout"):
+            s.exclusive(timeout=-1.0)
+
+    def test_zero_timeout_is_still_accepted_not_treated_as_negative(
+        self, root: pathlib.Path
+    ) -> None:
+        """The fix must reject only `timeout < 0`, not `timeout == 0`
+        (a legitimate "don't wait at all" bounded wait)."""
+        s = Spool(root)
+        with s.exclusive(timeout=0.0):
+            pass
+
     def test_reentrant_with_mutators_on_the_same_instance(self, root: pathlib.Path) -> None:
         """Calls made inside the `with` block must not deadlock on their own lock."""
         s = Spool(root)
@@ -1160,26 +1178,36 @@ class TestExclusiveLock:
             s.stats()
         assert list(s.pending("channels")) == []
 
-    def test_second_instance_blocks_until_released_then_proceeds(
-        self, root: pathlib.Path
-    ) -> None:
+    def test_second_instance_blocks_until_released_then_proceeds(self, root: pathlib.Path) -> None:
         """A second `Spool` on the same root waits for the first to release,
         then succeeds -- this is a real OS-level lock, not merely advisory
-        within one instance."""
+        within one instance.
+
+        The s1-before-s2 handoff is proven deterministically via `acquired`
+        (Codex round 3 follow-up, PR #214 P2, comment 3927153842's sibling
+        finding on this test): a fixed `time.sleep(0.05)` before starting s2
+        only made it *likely* s1 had the lock first, not certain -- a slow
+        enough scheduler could still let s2 attempt before s1's thread even
+        started running. Waiting on `acquired`, set from INSIDE s1's
+        critical section, proves s1 already holds the lock before s2 ever
+        calls `exclusive()`.
+        """
         s1 = Spool(root)
         s2 = Spool(root)
+        acquired = threading.Event()
         released = threading.Event()
         acquired_order: list[str] = []
 
         def hold_then_release() -> None:
             with s1.exclusive(timeout=1.0):
                 acquired_order.append("s1")
+                acquired.set()
                 time.sleep(0.2)
             released.set()
 
         t = threading.Thread(target=hold_then_release)
         t.start()
-        time.sleep(0.05)  # let s1 grab the lock first
+        assert acquired.wait(timeout=2.0)  # s1 provably holds the lock now
 
         with s2.exclusive(timeout=2.0):
             acquired_order.append("s2")

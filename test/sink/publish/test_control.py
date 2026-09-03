@@ -644,6 +644,26 @@ class TestPersistStreamsManifestHandling:
 
         assert manifest_path.read_text() == original_text
 
+    def test_invalid_utf8_existing_manifest_raises_without_clobbering(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`Path.read_text()` raises `UnicodeDecodeError` on invalid UTF-8
+        bytes -- BEFORE `yaml.safe_load` ever runs -- so the never-clobber
+        guard's original `except yaml.YAMLError` alone let it escape
+        uncaught (Codex round 3 follow-up, PR #214 P2, comment
+        3927023413's sibling finding): a manifest a human corrupted at the
+        byte level crashed `_read_manifest_doc` instead of refusing typed,
+        exactly like the already-guarded unparsable-YAML case."""
+        manifest_path = tmp_path / "manifest.yaml"
+        original_bytes = b"subscriptions: []\n\xff\xfe not valid utf-8"
+        manifest_path.write_bytes(original_bytes)
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+
+        with pytest.raises(StreamConfigError, match="manifest"):
+            control._persist_streams({"channels": [], "events": []})
+
+        assert manifest_path.read_bytes() == original_bytes
+
     def test_missing_manifest_file_persists_from_empty(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

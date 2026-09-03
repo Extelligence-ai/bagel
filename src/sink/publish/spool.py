@@ -282,7 +282,7 @@ class Spool:
 
         Safe to call while holding `self._lock`: no other `Spool` instance
         can be mid-write to this segment concurrently, so the only reason
-        the tail could be untermianted/unparsable is a stale unclean-
+        the tail could be unterminated/unparsable is a stale unclean-
         shutdown remnant. Unlike the tail-content parsing below, THIS
         function does not repair that itself -- it only reports it (see
         `terminated` below); `_current_last_seq` is what reseals.
@@ -477,16 +477,24 @@ class Spool:
             reentrant counter) on exit.
 
         Raises:
+            ValueError: `timeout` is negative -- `filelock.FileLock.acquire`
+                treats a negative timeout as "wait forever" (Codex round 3
+                follow-up, PR #214 P2, comment 3927023413's sibling
+                finding), silently breaking this method's own documented
+                bounded-wait contract. Checked here, before `filelock` is
+                ever called, so this refusal never depends on `filelock`'s
+                own (undocumented) handling of negative values.
             SpoolLockedError: the lock is held elsewhere and was not
                 released within `timeout` seconds.
 
         """
+        if timeout < 0:
+            raise ValueError(f"exclusive(): timeout must be >= 0, got {timeout!r}")
         try:
             return self._lock.acquire(timeout=timeout)
         except filelock.Timeout as exc:
             raise SpoolLockedError(
-                f"spool at {self._root} is locked by another writer "
-                f"(timed out after {timeout}s)"
+                f"spool at {self._root} is locked by another writer (timed out after {timeout}s)"
             ) from exc
 
     def next_seq(self, lane: str) -> int:
