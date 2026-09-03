@@ -1,42 +1,56 @@
 # One-click Codex review re-request: add the `codex-rerequest` label to a PR
-# and this workflow (1) posts a fresh `@codex review` comment for the current
-# head, (2) re-runs the PR's most recent failed codex-review-gate run so the
-# check goes green as soon as the review lands, and (3) removes the label so
-# it can be used again. Built for connector-outage recovery: after a
-# reconnect, one label click replaces the manual comment-plus-rerun dance.
+# and this workflow posts a fresh `@codex review` comment for the current
+# head, then removes the label so it can be used again. Built for
+# connector-outage recovery: after a reconnect, one label click replaces the
+# manual comment.
+#
+# Identity matters: the Codex connector ignores bot-authored triggers (see
+# codex-gate.yaml), so the comment MUST be posted with a human-owned token.
+# Set the `CODEX_TRIGGER_TOKEN` repo secret to a fine-grained PAT (this repo,
+# Pull requests: write) owned by a maintainer with a Codex account. Without
+# it the workflow falls back to GITHUB_TOKEN and logs loudly that the
+# trigger will likely be ignored.
+#
+# `pull_request_target` (not `pull_request`): fork PRs get a read-only
+# GITHUB_TOKEN under `pull_request`, which breaks commenting and label
+# removal. Safe here because this workflow never checks out or executes any
+# PR code -- it is pure API calls from the trusted base context.
+#
+# No gate re-run step: the gate re-runs itself via pull_request_review the
+# moment the review lands, and re-running it before the asynchronous review
+# exists just produces another red run.
 name: codex-rerequest
 on:
-  pull_request:
+  pull_request_target:
     types: [labeled]
 
 permissions:
   pull-requests: write
   issues: write
-  actions: write
 
 jobs:
   rerequest:
     if: github.event.label.name == 'codex-rerequest'
     runs-on: ubuntu-latest
     steps:
-      - name: Re-request the review and re-run the stale gate
+      - name: Post the review request as a human-owned identity
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.CODEX_TRIGGER_TOKEN || secrets.GITHUB_TOKEN }}
+          HAVE_PAT: ${{ secrets.CODEX_TRIGGER_TOKEN != '' }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          if [ "$HAVE_PAT" != "true" ]; then
+            echo "::warning::CODEX_TRIGGER_TOKEN is not set; posting as github-actions[bot], which the Codex connector likely ignores. Add the secret (fine-grained PAT, this repo, Pull requests: write) to make this workflow effective."
+          fi
           gh api -X POST "repos/$REPO/issues/$PR/comments" \
             -f body="$(printf '@codex review\n\n<!-- codex-rerequest:%s:%s -->' "$HEAD_SHA" "$GITHUB_RUN_ID")" >/dev/null
           echo "Requested a Codex review of $HEAD_SHA."
-          # Re-run the newest failed codex-gate run for this head, if any.
-          run_id=$(gh api "repos/$REPO/actions/workflows/codex-gate.yaml/runs?head_sha=$HEAD_SHA&status=failure&per_page=1" \
-            --jq '.workflow_runs[0].id // empty')
-          if [ -n "$run_id" ]; then
-            gh api -X POST "repos/$REPO/actions/runs/$run_id/rerun-failed-jobs" >/dev/null \
-              && echo "Re-ran failed gate run $run_id." \
-              || echo "Gate rerun not started (may already be running)."
-          else
-            echo "No failed gate run for $HEAD_SHA; nothing to re-run."
-          fi
-          gh api -X DELETE "repos/$REPO/issues/$PR/labels/codex-rerequest" >/dev/null || true
+      - name: Remove the label for reuse
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh api -X DELETE "repos/$REPO/issues/$PR/labels/codex-rerequest" >/dev/null || true
