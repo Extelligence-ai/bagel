@@ -211,8 +211,8 @@ class Spool:
         floor = _first_seq_of(last_segment) - 1
         return max(last, floor, self._watermark(lane))
 
-    def _tail_last_seq(self, lane: str) -> int | None:
-        """Peek the highest seq already on disk in O(tail), not O(whole active segment).
+    def _tail_last_seq(self, lane: str) -> tuple[int | None, bool]:
+        r"""Peek the highest seq already on disk in O(tail), not O(whole active segment).
 
         Appends only ever land at the end of the active segment, so the
         highest already-written seq for the lane is always in that
@@ -224,9 +224,34 @@ class Spool:
 
         Safe to call while holding `self._lock`: no other `Spool` instance
         can be mid-write to this segment concurrently, so the only reason
-        the tail could be unparsable is a stale unclean-shutdown remnant --
-        already handled by `_scan_last_seq`'s truncate-on-first-touch path,
-        not something this cheap peek needs to repair itself.
+        the tail could be untermianted/unparsable is a stale unclean-
+        shutdown remnant. Unlike the tail-content parsing below, THIS
+        function does not repair that itself -- it only reports it (see
+        `terminated` below); `_current_last_seq` is what reseals.
+
+        Terminatedness is checked explicitly (Codex round 3 follow-up, PR
+        #214 P1 on comment 3923824688), not inferred from whether the tail
+        parses: a write is `line = json.dumps(...) + "\n"`, one `write()`
+        call, but a crash can still land the file's true end anywhere
+        inside or after that write. Two prior failure modes both left a
+        write, in "a" (append) mode, land directly onto an unterminated
+        tail with no separating newline -- corrupting the file into one
+        unparsable line, discovered only much later when `pending()` raises
+        `SpoolCorruptError`:
+          - The crash lands exactly after a COMPLETE JSON payload but
+            before its trailing `\n`. The old code parsed that tail as a
+            legitimately committed record (it parses fine without the
+            newline) and reported its seq as trustworthy.
+          - The crash lands mid-payload (a genuinely partial JSON tail).
+            The old code's `json.loads` failed as expected, but nothing
+            then TRUNCATED the partial bytes before the next `append()`
+            wrote onto them.
+        Checking the segment's LAST BYTE (`O(1)`, a single `seek(-1,
+        SEEK_END)` + one-byte read) sidesteps both: if it isn't `b"\n"`,
+        the tail is torn regardless of what it parses as, full stop --
+        `_current_last_seq` reseals (truncates) before anything else
+        happens, so this function doesn't even attempt to parse a tail it
+        already knows is untrustworthy.
 
         The window grows GEOMETRICALLY (doubling each retry: 8KiB, 16KiB,
         32KiB, ...), not by a fixed 8KiB step (Codex round 3 follow-up, PR
@@ -238,21 +263,28 @@ class Spool:
         size), since a geometric series sums to about 2x its last term.
 
         Returns:
-            The last complete line's `seq`, or `None` if there is no active
-            segment, it's empty, or its tail doesn't parse (the caller falls
-            back to the watermark / full scan in that case).
+            `(seq, terminated)`. `terminated` is `True` iff the active
+            segment is empty/absent, or its true last byte is `b"\n"` -- a
+            properly durable record boundary. `seq` is the last complete
+            line's `seq`, or `None` if there is no active segment, it's
+            empty, the tail isn't terminated (in which case `seq` is always
+            `None` -- see above, it's never even parsed), or it doesn't
+            parse (the caller falls back to the watermark / full scan).
 
         """
         segments = self._segments(lane, create=False)
         if not segments:
-            return None
+            return None, True
         path = segments[-1]
         size = path.stat().st_size
         if size == 0:
-            return None
+            return None, True
         window = min(size, 8192)
         data = b""
         with open(path, "rb") as handle:
+            handle.seek(-1, os.SEEK_END)
+            if handle.read(1) != b"\n":
+                return None, False
             while True:
                 handle.seek(size - window)
                 data = handle.read(window)
@@ -261,13 +293,13 @@ class Spool:
                 window = min(size, window * 2)
         last_line = data.rstrip(b"\n").rsplit(b"\n", 1)[-1]
         if not last_line:
-            return None
+            return None, True
         try:
             record = json.loads(last_line.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
-            return None
+            return None, True
         seq = record.get("seq")
-        return seq if isinstance(seq, int) else None
+        return (seq if isinstance(seq, int) else None), True
 
     def _current_last_seq(self, lane: str) -> int:
         """Disk-authoritative last-written seq for `lane` -- cheap on the common path.
@@ -292,11 +324,29 @@ class Spool:
         tail-only peek, maxed against the cache purely as a floor (never a
         source of truth) so this can never regress below what THIS instance
         itself already wrote.
+
+        Design choice (comment 3923824688): the O(1) unterminated-tail
+        check is folded INTO `_tail_last_seq` (returning a `(seq,
+        terminated)` pair) rather than duplicated as a separate check in
+        `append()`'s write path. This is the single place both `next_seq()`
+        and `append()` funnel through, so a warm cache gets resealed by
+        either call, not just `append()` -- and there's exactly one piece
+        of code that knows how to interpret "is this segment's tail
+        trustworthy", not two copies that could drift apart. When
+        `_tail_last_seq` reports `terminated=False`, this reseals via the
+        same crash-tail-tolerant `_scan_last_seq` first touch already uses
+        (it truncates the untrustworthy bytes -- correct: no trailing
+        newline means the record was never durably committed -- and
+        recomputes the floor from what's left, with the watermark still
+        guarding against ever regressing below an already-acked seq).
         """
         if lane not in self._last_seq:
             self._last_seq[lane] = self._scan_last_seq(lane)
             return self._last_seq[lane]
-        tail = self._tail_last_seq(lane)
+        tail, terminated = self._tail_last_seq(lane)
+        if not terminated:
+            self._last_seq[lane] = self._scan_last_seq(lane)
+            return self._last_seq[lane]
         disk_floor = self._watermark(lane) if tail is None else tail
         disk_floor = max(disk_floor, self._watermark(lane))
         return max(disk_floor, self._last_seq[lane])

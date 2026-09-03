@@ -714,7 +714,7 @@ class TestTailLastSeqWindowGrowth:
         # separates it from record 1.
         s.append("channels", 2, {"pad": "x" * 100_000})
 
-        assert s._tail_last_seq("channels") == 2
+        assert s._tail_last_seq("channels") == (2, True)
 
     def test_read_call_count_is_geometric_not_linear(
         self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
@@ -753,12 +753,100 @@ class TestTailLastSeqWindowGrowth:
 
         result = s._tail_last_seq("channels")
 
-        assert result == 2
-        # Geometric doubling from 8KiB needs ~5 reads to cover ~100KiB
-        # (8, 16, 32, 64, then the size-capped final read); a fixed 8KiB
-        # linear step would need ~13+. 8 is a robust dividing line between
-        # the two.
-        assert len(read_calls) <= 8, f"expected geometric (<=8) reads, got {len(read_calls)}"
+        assert result == (2, True)
+        # +1 read for the O(1) last-byte terminator check, then geometric
+        # doubling from 8KiB needs ~5 reads to cover ~100KiB (8, 16, 32, 64,
+        # then the size-capped final read); a fixed 8KiB linear step would
+        # need ~13+ on top of that. 9 is a robust dividing line between the
+        # two.
+        assert len(read_calls) <= 9, f"expected geometric (<=9) reads, got {len(read_calls)}"
+
+
+class TestUnterminatedTailReseal:
+    """Codex round 3 follow-up (PR #214, P1, comment 3923824688): a torn
+    (non-newline-terminated) active-segment tail must be sealed (truncated)
+    BEFORE the next append, on a WARM cache too -- not just on a lane's
+    first touch. Before this fix, `_tail_last_seq` inferred terminatedness
+    from whether the tail happened to parse, which is wrong two ways: (a) a
+    crash landing right after a complete JSON payload but before its
+    trailing newline parses FINE without the newline, so it was reported as
+    a trustworthy seq; (b) a genuinely partial/mid-write tail failed to
+    parse, but nothing then truncated it before the next write landed
+    directly on top of it. Either way, `append()`'s next `write()` (append
+    mode) grafted new bytes onto the untermianted tail with no separating
+    newline -- permanent mid-file corruption, discovered only later when
+    `pending()` raises `SpoolCorruptError`.
+    """
+
+    def _active_segment(self, root: pathlib.Path, lane: str) -> pathlib.Path:
+        return sorted((root / lane).glob("segment-*.jsonl"))[-1]
+
+    def test_complete_json_without_trailing_newline_is_resealed_before_append(
+        self, root: pathlib.Path
+    ) -> None:
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})  # warms this instance's cache
+
+        # Simulate a crash landing exactly after a COMPLETE JSON payload but
+        # before its trailing newline -- parses fine on its own, which is
+        # exactly what made the old parse-based check trust it.
+        segment = self._active_segment(root, "channels")
+        with open(segment, "ab") as handle:
+            handle.write(json.dumps({"seq": 2, "payload": {"n": "never-committed"}}).encode())
+        assert not segment.read_bytes().endswith(b"\n")
+
+        # The cache is warm (this instance already appended once) -- the
+        # torn tail must still be caught here, not just on first touch.
+        seq = s.next_seq("channels")
+        assert seq == 2  # the torn seq=2 bytes were never durably committed
+        s.append("channels", seq, {"n": 2})
+
+        assert segment.read_bytes().endswith(b"\n")  # resealed to a clean boundary
+        replayed = list(s.pending("channels"))  # must not raise SpoolCorruptError
+        assert [seq for seq, _ in replayed] == [1, 2]
+        assert replayed[1][1] == {"n": 2}
+
+    def test_partial_json_tail_is_resealed_before_append(self, root: pathlib.Path) -> None:
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})  # warms this instance's cache
+
+        # Simulate a crash mid-write: not even valid JSON, no newline.
+        segment = self._active_segment(root, "channels")
+        with open(segment, "ab") as handle:
+            handle.write(b'{"seq": 2, "payload": {"n": ')
+        assert not segment.read_bytes().endswith(b"\n")
+
+        seq = s.next_seq("channels")
+        assert seq == 2
+        s.append("channels", seq, {"n": 2})
+
+        assert segment.read_bytes().endswith(b"\n")
+        replayed = list(s.pending("channels"))
+        assert [seq for seq, _ in replayed] == [1, 2]
+        assert replayed[1][1] == {"n": 2}
+
+    def test_normal_terminated_tail_never_triggers_a_reseal(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The healthy path must stay cheap: a properly newline-terminated
+        tail must never fall back to the full `_scan_last_seq` reseal --
+        the warm cache stays effective, pinned by a call-counting probe."""
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})  # first touch: its own _scan_last_seq call
+
+        calls: list[str] = []
+        original = spool_mod.Spool._scan_last_seq
+
+        def spy(self: Spool, lane: str) -> int:
+            calls.append(lane)
+            return original(self, lane)
+
+        monkeypatch.setattr(spool_mod.Spool, "_scan_last_seq", spy)
+
+        for i in range(2, 6):
+            s.append("channels", i, {"n": i})
+
+        assert calls == []  # no reseal once every tail stays properly terminated
 
 
 class TestExclusiveLock:
