@@ -6,6 +6,7 @@ package's no-eager-import invariant; require_fleet() remains the gate.
 
 import json
 import logging
+import threading
 import time
 import weakref
 from urllib.parse import urlparse
@@ -73,7 +74,7 @@ class MqttPublisher(Publisher):
             client_id_suffix: Appended to the deterministic
                 `bagel/{tenant}/{robot}` client id (see `connect()`).
                 Defaults to `""` (the live service's id, unchanged). The
-                selftest CLI passes `"-selftest"` here (Codex round 3
+                selftest CLI passes `"/selftest"` here (Codex round 3
                 follow-up, PR #214 P2 on comment 3925391258): the live
                 service's `MqttPublisher` and the selftest's both derive the
                 SAME client id from the same `(tenant, robot)` pair, and
@@ -90,7 +91,15 @@ class MqttPublisher(Publisher):
                 semantics the id's own determinism exists for (see
                 `connect()`'s comment) -- it just puts the selftest in its
                 own, separate client-id namespace instead of the live
-                service's.
+                service's. `"/"`, not `"-"` (Codex round 3 follow-up, PR
+                #214 P2 on comment 3927231074): a hyphen suffix
+                reintroduces exactly the hyphen-injectivity ambiguity the
+                `"/"` delimiter between tenant/robot was already fixed for
+                (see `connect()`'s comment) -- robot `"r7"` suffixed
+                `"-selftest"` would collide with a robot actually NAMED
+                `"r7-selftest"`. `"/"` is outside both id charsets (robot
+                ids match `^[a-z0-9][a-z0-9_-]{0,62}$`), so it's provably
+                collision-free the same way.
             retain_messages: When `False`, forces `retain=False` on every
                 publish (schema, heartbeat, and `close()`'s clean-stop
                 beat) and skips arming a last-will entirely (see
@@ -304,6 +313,97 @@ class MqttPublisher(Publisher):
             raise PublishError(f"{topic}: not acknowledged within {timeout_s}s: {exc}") from exc
         if info.rc != 0 or not info.is_published():
             raise PublishError(f"{topic}: publish failed (rc={info.rc})")
+
+    def wait_for_retained_heartbeat(self, timeout_s: float = 1.5) -> dict | None:
+        """Subscribe to this robot's own heartbeat topic; return a RETAINED payload, if any.
+
+        A selftest-only probe (Codex round 3 follow-up, PR #214 P1, comment
+        3927287968), NOT part of the `Publisher` ABC -- it's a `MqttPublisher`-
+        specific capability, called via `getattr(publisher,
+        "wait_for_retained_heartbeat", None)` from `selftest.run_selftest`
+        (see its `_check_no_live_session`), so any `Publisher` implementation
+        that doesn't offer it (including most test doubles) simply skips the
+        check rather than needing to grow the ABC or stub out a method it has
+        no use for. Design choice: keeping this as a small, direct-paho,
+        selftest-scoped helper on `MqttPublisher` was cleaner than adding a
+        new abstract method every `Publisher` implementation would have to
+        carry, most of which (the live service's own usage) never need it.
+
+        Subscribes at QoS 1, waits up to `timeout_s` for the FIRST message
+        with its `retain` flag set (a broker delivers any existing retained
+        message on that topic immediately upon subscribing -- before any
+        live traffic), then unsubscribes and restores the client's prior
+        `on_message` handler either way. A non-retained message (live
+        traffic arriving in the same window) is ignored; it does not
+        satisfy or extend the wait.
+
+        Returns:
+            The retained heartbeat's parsed JSON payload, or `None` if
+            nothing retained arrived within `timeout_s` (a fresh
+            robot/broker with nothing retained yet) or the retained
+            payload failed to parse (treated the same as "unknown" --
+            never raises here; the caller decides what "unknown" means).
+
+        Raises:
+            PublishError: not connected.
+
+        """
+        if self._client is None:
+            raise PublishError("publisher is not connected")
+        topic = wire_topic(self._tenant, self._robot, "heartbeat")
+        result: dict[str, object] = {}
+        done = threading.Event()
+
+        def _on_retained_message(_client: object, _userdata: object, message: object) -> None:
+            if done.is_set() or not message.retain:  # type: ignore[attr-defined]
+                return
+            try:
+                result["payload"] = json.loads(message.payload.decode("utf-8"))  # type: ignore[attr-defined]
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                result["payload"] = None
+            done.set()
+
+        previous_on_message = self._client.on_message
+        self._client.on_message = _on_retained_message
+        self._client.subscribe(topic, qos=1)
+        try:
+            done.wait(timeout=timeout_s)
+        finally:
+            self._client.unsubscribe(topic)
+            self._client.on_message = previous_on_message
+        return result.get("payload")  # type: ignore[return-value]
+
+    def disconnect_without_publishing(self) -> None:
+        """Tear down the connection WITHOUT publishing a clean-stop heartbeat.
+
+        A selftest-only cleanup helper (Codex round 3 follow-up, PR #214
+        P1, comment 3927287968), used when `run_selftest`'s live-session
+        refusal (`wait_for_retained_heartbeat` found a connected live
+        session) needs to release THIS session's deterministic client id
+        before raising -- otherwise it lingers until this `MqttPublisher`
+        is eventually garbage-collected, which is neither prompt nor
+        reliable enough to guarantee a follow-up run can immediately
+        reclaim the same client id cleanly.
+
+        Deliberately NOT `close()`: a live session was just detected as
+        connected, and even `close()`'s non-retained clean-stop beat (with
+        `retain_messages=False`) would still deliver a misleading momentary
+        `online: false` to whoever is watching THAT live session's own
+        heartbeat topic -- exactly the class of problem this whole
+        precondition exists to prevent. This tears the connection down
+        silently: no publish of any kind.
+
+        Idempotent and safe when never connected, same as `close()`.
+        """
+        client, self._client = self._client, None
+        if client is None:
+            return
+        self._closing = True
+        try:
+            client.loop_stop()
+            client.disconnect()
+        finally:
+            self._closing = False
 
     def close(self, reason: str = "stopped") -> None:
         """Publish a clean-stop heartbeat (best-effort) then stop and disconnect.

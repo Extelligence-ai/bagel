@@ -311,7 +311,11 @@ expected failure prints to stderr and exits 1). It requires both spool lanes
 (`channels`, `events`) to be fully drained (no pending unacked entries)
 before it will start -- it allocates and acks real seqs on those lanes, so
 pending backlog would otherwise be silently advanced past; run it with fleet
-streaming paused or stopped.
+streaming paused or stopped. It also refuses outright, before publishing
+anything, if the robot's live fleet session is already connected (detected
+via a bounded subscribe-probe for a retained `online: true` heartbeat) --
+retention and a distinct client id alone don't stop this run's fixture
+schema from reaching a connected live subscriber as a schema update.
 
 All of the selftest's own publishes -- schema, heartbeat, and its final
 close() beat -- are deliberately NOT retained (unlike a real robot's own

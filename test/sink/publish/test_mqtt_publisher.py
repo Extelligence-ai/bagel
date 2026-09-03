@@ -29,6 +29,15 @@ class FakeMsgInfo:
         return self._published
 
 
+class FakeMqttMessage:
+    """Minimal stand-in for paho's `MQTTMessage`: `topic`/`payload`/`retain`."""
+
+    def __init__(self, topic: str, payload: bytes, retain: bool) -> None:
+        self.topic = topic
+        self.payload = payload
+        self.retain = retain
+
+
 class FakeFleetPaho:
     MQTT_ERR_SUCCESS = 0
 
@@ -40,6 +49,17 @@ class FakeFleetPaho:
         self.userpass: tuple[str, str | None] | None = None
         self._connected = False
         self.next_info = FakeMsgInfo()
+        # Codex round 3 follow-up (PR #214, P1, comment 3927287968):
+        # subscribe/unsubscribe/on_message support for
+        # `wait_for_retained_heartbeat`'s own unit tests. `queued_message`,
+        # if set, is delivered synchronously (via `on_message`) the instant
+        # `subscribe()` is called -- mirroring a real broker replaying a
+        # retained message immediately upon subscribing, before any live
+        # traffic.
+        self.on_message: object = None
+        self.subscribed_topics: list[str] = []
+        self.unsubscribed_topics: list[str] = []
+        self.queued_message: FakeMqttMessage | None = None
 
     def will_set(self, topic: str, payload: str, qos: int = 0, retain: bool = False) -> None:
         self.will = (topic, payload, qos, retain)
@@ -70,6 +90,16 @@ class FakeFleetPaho:
     def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = False) -> FakeMsgInfo:
         self.calls.append(("publish", topic, payload, qos, retain))
         return self.next_info
+
+    def subscribe(self, topic: str, qos: int = 0) -> None:
+        self.calls.append(("subscribe", topic, qos))
+        self.subscribed_topics.append(topic)
+        if self.queued_message is not None and self.on_message is not None:
+            self.on_message(self, None, self.queued_message)
+
+    def unsubscribe(self, topic: str) -> None:
+        self.calls.append(("unsubscribe", topic))
+        self.unsubscribed_topics.append(topic)
 
 
 @pytest.fixture()
@@ -171,13 +201,38 @@ class TestConnect:
 
     def test_client_id_suffix_is_appended(self, fake: dict[str, FakeFleetPaho]) -> None:
         """Codex round 3 follow-up (PR #214, P2, comment 3925391258): the
-        selftest CLI passes `client_id_suffix="-selftest"` so its
+        selftest CLI passes `client_id_suffix="/selftest"` so its
         MqttPublisher never derives the SAME client id as the live
         service's own (same tenant/robot) -- a broker kicks the existing
         session when a new connection claims an already-connected client
         id, so without this the selftest would displace live streaming."""
-        _publisher(client_id_suffix="-selftest").connect()
-        assert fake["client"].kwargs["client_id"] == "bagel/acme/r7-selftest"
+        _publisher(client_id_suffix="/selftest").connect()
+        assert fake["client"].kwargs["client_id"] == "bagel/acme/r7/selftest"
+
+    def test_client_id_suffix_uses_a_provably_collision_free_delimiter(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        """Codex round 3 follow-up (PR #214, P2, comment 3927231074): a
+        hyphen suffix ("-selftest") reintroduces exactly the
+        hyphen-injectivity ambiguity the "/" delimiter between
+        tenant/robot was already fixed for -- robot "r7" with a "-selftest"
+        suffix and a robot actually NAMED "r7-selftest" would collide on
+        the same client id. "/" is outside both id charsets (robot ids
+        match ^[a-z0-9][a-z0-9_-]{0,62}$), so "/selftest" is provably
+        collision-free the same way the tenant/robot delimiter is."""
+        _publisher(tenant="acme", robot="r7").connect()
+        id_a = fake["client"].kwargs["client_id"]
+
+        _publisher(tenant="acme", robot="r7", client_id_suffix="/selftest").connect()
+        id_b = fake["client"].kwargs["client_id"]
+
+        _publisher(tenant="acme", robot="r7-selftest").connect()
+        id_c = fake["client"].kwargs["client_id"]
+
+        assert id_a == "bagel/acme/r7"
+        assert id_b == "bagel/acme/r7/selftest"
+        assert id_c == "bagel/acme/r7-selftest"
+        assert len({id_a, id_b, id_c}) == 3  # no collision
 
     def test_client_id_suffix_is_deterministic_across_reconnects(
         self, fake: dict[str, FakeFleetPaho]
@@ -185,12 +240,12 @@ class TestConnect:
         """Same determinism guarantee as the unsuffixed id: a suffixed
         client id must still be identical on every reconnect, not merely
         different from the live service's."""
-        p = _publisher(client_id_suffix="-selftest")
+        p = _publisher(client_id_suffix="/selftest")
         p.connect()
         first_id = fake["client"].kwargs["client_id"]
         p.connect()
         second_id = fake["client"].kwargs["client_id"]
-        assert first_id == second_id == "bagel/acme/r7-selftest"
+        assert first_id == second_id == "bagel/acme/r7/selftest"
 
     def test_connect_raises_when_fleet_disabled_before_touching_paho(
         self, fake: dict[str, FakeFleetPaho], monkeypatch: pytest.MonkeyPatch
@@ -291,6 +346,108 @@ class TestClose:
         p.close(reason=reason)
         stop = [c for c in fake["client"].calls if c[0] == "publish"][-1]
         assert json.loads(stop[2])["reason"] == reason
+
+
+class TestWaitForRetainedHeartbeat:
+    """Codex round 3 follow-up (PR #214, P1, comment 3927287968): the
+    selftest-only probe `run_selftest` uses (via `_check_no_live_session`)
+    to detect a live session before publishing anything.
+    """
+
+    def test_retained_message_is_returned(self, fake: dict[str, FakeFleetPaho]) -> None:
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+        client.queued_message = FakeMqttMessage(
+            topic="bagel/v1/acme/r7/heartbeat",
+            payload=json.dumps({"v": 1, "online": True}).encode(),
+            retain=True,
+        )
+
+        result = p.wait_for_retained_heartbeat(timeout_s=0.05)
+
+        assert result == {"v": 1, "online": True}
+        assert client.subscribed_topics == ["bagel/v1/acme/r7/heartbeat"]
+        assert client.unsubscribed_topics == ["bagel/v1/acme/r7/heartbeat"]
+
+    def test_non_retained_message_is_ignored(self, fake: dict[str, FakeFleetPaho]) -> None:
+        """A message arriving during the probe window without its `retain`
+        flag set (live traffic, not a replayed retained message) must not
+        satisfy the wait."""
+        p = _publisher()
+        p.connect()
+        fake["client"].queued_message = FakeMqttMessage(
+            topic="bagel/v1/acme/r7/heartbeat",
+            payload=json.dumps({"v": 1, "online": True}).encode(),
+            retain=False,
+        )
+
+        result = p.wait_for_retained_heartbeat(timeout_s=0.05)
+
+        assert result is None
+
+    def test_no_message_returns_none_within_timeout(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        """A fresh robot/broker with nothing retained: times out, returns
+        `None` (not an error -- `None` means "proceed" to the caller)."""
+        p = _publisher()
+        p.connect()
+
+        result = p.wait_for_retained_heartbeat(timeout_s=0.05)
+
+        assert result is None
+
+    def test_unsubscribes_and_restores_prior_handler_even_on_timeout(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+
+        def _prior_handler(*_args: object) -> None:
+            pass
+
+        client.on_message = _prior_handler
+
+        p.wait_for_retained_heartbeat(timeout_s=0.05)
+
+        assert client.unsubscribed_topics == ["bagel/v1/acme/r7/heartbeat"]
+        assert client.on_message is _prior_handler
+
+    def test_raises_when_not_connected(self, fake: dict[str, FakeFleetPaho]) -> None:
+        p = _publisher()
+        with pytest.raises(PublishError):
+            p.wait_for_retained_heartbeat()
+
+
+class TestDisconnectWithoutPublishing:
+    """Codex round 3 follow-up (PR #214, P1, comment 3927287968): the
+    silent-teardown helper `_check_no_live_session` uses on refusal --
+    releases this session's deterministic client id promptly, WITHOUT
+    publishing a clean-stop beat that could itself mislead a live watcher.
+    """
+
+    def test_tears_down_without_publishing_anything(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        client = fake["client"]
+
+        p.disconnect_without_publishing()
+
+        assert ("loop_stop",) in client.calls
+        assert ("disconnect",) in client.calls
+        assert not any(c[0] == "publish" for c in client.calls)
+        assert p.connected is False
+
+    def test_idempotent_and_safe_when_never_connected(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.disconnect_without_publishing()  # must not raise
+        p.disconnect_without_publishing()  # a second call must not raise either
 
 
 class TestRetainMessages:

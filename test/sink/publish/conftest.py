@@ -89,16 +89,32 @@ class FakePublisher(Publisher):
     force a mid-run failure without a real broker.
 
     `calls` is a single ordered log of every method invocation (`"connect"`,
+    `"live_session_probe"` from `wait_for_retained_heartbeat()`,
     `"schema"`/`"channels"`/`"heartbeat"`/`"events"` from `publish()`, and
     `"close"`) -- Task 7's selftest call-order test asserts against this
     rather than trying to interleave the separate per-kind lists.
+
+    `live_session_beat` (Codex round 3 follow-up, PR #214 P1, comment
+    3927287968) simulates what `wait_for_retained_heartbeat()` would
+    return on a real `MqttPublisher`: `None` (default -- no retained
+    heartbeat, matching a fresh robot/broker), or a payload dict such as
+    `{"online": True}` (a live session connected) / `{"online": False}`
+    (paused/stopped/lwt). `disconnect_without_publishing_calls` counts
+    calls to the matching silent-teardown helper `_check_no_live_session`
+    uses on refusal (comment 3927287968) -- distinct from `close_calls`,
+    since that path must NEVER publish a clean-stop beat.
     """
 
     def __init__(
-        self, *, connect_should_fail: bool = False, fail_at_channel_call: int | None = None
+        self,
+        *,
+        connect_should_fail: bool = False,
+        fail_at_channel_call: int | None = None,
+        live_session_beat: dict | None = None,
     ) -> None:
         self.connect_should_fail = connect_should_fail
         self.fail_at_channel_call = fail_at_channel_call
+        self.live_session_beat = live_session_beat
         self.connect_calls = 0
         self.schema_calls: list[dict] = []
         self.channel_calls: list[dict] = []
@@ -108,6 +124,8 @@ class FakePublisher(Publisher):
         self.close_reasons: list[str] = []
         self.reconnects = 0
         self.calls: list[str] = []
+        self.live_session_probe_calls = 0
+        self.disconnect_without_publishing_calls = 0
         self._connected = False
 
     def connect(self) -> None:
@@ -116,6 +134,16 @@ class FakePublisher(Publisher):
         if self.connect_should_fail:
             raise PublishError("connect failed")
         self._connected = True
+
+    def wait_for_retained_heartbeat(self, timeout_s: float = 1.5) -> dict | None:
+        self.calls.append("live_session_probe")
+        self.live_session_probe_calls += 1
+        return self.live_session_beat
+
+    def disconnect_without_publishing(self) -> None:
+        self.calls.append("disconnect_without_publishing")
+        self.disconnect_without_publishing_calls += 1
+        self._connected = False
 
     def publish(
         self, kind: str, payload: dict, *, retain: bool = False, timeout_s: float = 10.0

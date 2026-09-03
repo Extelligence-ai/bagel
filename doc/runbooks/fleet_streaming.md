@@ -138,6 +138,13 @@ nothing touched -- since it would otherwise ack its way past that backlog and
 silently drop it; let the service drain the backlog, or discard it first via
 `pause_fleet_streaming(discard=True)`.
 
+And it refuses outright, before publishing anything, if the robot's live
+fleet session is currently **connected** (not merely paused) -- pausing or
+stopping the service first is required here, not just recommended, since
+this run's fixture schema would otherwise reach that connected live
+subscriber as a schema update, remapping live channel batches to the
+fixture's `selftest.*` channels until the live service's next reconnect.
+
 ## Dev rigs
 
 `FLEET_DEV_INSECURE=1` permits a plaintext `mqtt://` broker **only** when its

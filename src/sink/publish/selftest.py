@@ -153,6 +153,72 @@ def _check_no_pending_backlog(spool: Spool) -> None:
             )
 
 
+DEFAULT_LIVE_SESSION_PROBE_TIMEOUT_S = 1.5
+
+
+def _check_no_live_session(
+    publisher: Publisher, *, timeout_s: float = DEFAULT_LIVE_SESSION_PROBE_TIMEOUT_S
+) -> None:
+    """Refuse to run while the robot's live fleet session is connected.
+
+    Codex round 3 P1, comment 3927287968.
+
+    Investigation for the earlier rounds this round follows up on
+    (`client_id_suffix`, `retain_messages=False`) established that neither
+    fix protects a CONNECTED live subscriber: the selftest's fixture schema
+    still reaches a live ingestor as a schema update the instant it's
+    published, remapping live channel batches to the fixture's four
+    `selftest.*` channels until the live service's next reconnect --
+    non-retention only protects a LATE subscriber, and a distinct client id
+    only stops the broker from displacing the live session, not from
+    delivering this session's publishes to it. The only structural fix is
+    to never publish at all while a live session exists.
+
+    Detection uses the wire itself, since nothing else (spool state,
+    process state) tells this process whether some OTHER process/robot
+    already holds a live session on this broker: subscribes to the robot's
+    own heartbeat topic (`Publisher.wait_for_retained_heartbeat`, if the
+    publisher offers it -- see `MqttPublisher`'s implementation) and waits a
+    short bounded window for a RETAINED message. A live service keeps its
+    heartbeat retained with `online: true` for as long as it's connected; a
+    paused/stopped service (or an unclean disconnect's last-will) retains
+    `online: false`; a fresh robot/broker has nothing retained at all.
+    Refuses ONLY on the first case.
+
+    Called AFTER `publisher.connect()` (the probe needs a live connection to
+    subscribe) but BEFORE any publish (see `run_selftest`'s call site) --
+    a refusal here leaves nothing published. Combined with
+    `retain_messages=False` and no last-will (round 8's fix), even the
+    aborted connection attempt leaves no RETAINED residue on the broker.
+    The connection itself is torn down silently (`Publisher.
+    disconnect_without_publishing`, if offered -- see `MqttPublisher`'s
+    implementation) before raising, releasing this session's deterministic
+    client id promptly rather than leaving it to eventually be
+    garbage-collected -- deliberately NOT `publisher.close()`, which would
+    publish a non-retained clean-stop beat that could itself deliver a
+    misleading momentary `online: false` to whoever is watching the live
+    session's own heartbeat topic.
+
+    If `publisher` doesn't offer `wait_for_retained_heartbeat` (most test
+    doubles, and any future non-MQTT `Publisher` implementation), this is a
+    no-op: the check simply can't be performed, and `run_selftest` proceeds
+    as it always did before this round -- see `wait_for_retained_heartbeat`'s
+    own docstring for why this isn't grown into the `Publisher` ABC instead.
+    """
+    probe = getattr(publisher, "wait_for_retained_heartbeat", None)
+    if probe is None:
+        return
+    beat = probe(timeout_s=timeout_s)
+    if beat is not None and beat.get("online") is True:
+        disconnect_silently = getattr(publisher, "disconnect_without_publishing", None)
+        if disconnect_silently is not None:
+            disconnect_silently()
+        raise SelftestPreconditionError(
+            "selftest refused: a live fleet session is connected for this "
+            "robot; pause or stop the fleet service first"
+        )
+
+
 def run_selftest(  # noqa: PLR0913
     publisher: Publisher,
     spool: Spool,
@@ -182,6 +248,14 @@ def run_selftest(  # noqa: PLR0913
     otherwise this run's own first ack would advance the watermark past
     that pre-existing backlog and silently drop it.
 
+    Immediately after connecting, but before any publish: refuses to
+    proceed if the robot's live fleet session is already connected (Codex
+    round 3 P1, comment 3927287968 -- see `_check_no_live_session`). Even
+    non-retained and even under a distinct client id, this run's fixture
+    schema would otherwise still reach a connected live subscriber as a
+    schema update, remapping live channel batches to the fixture's
+    `selftest.*` channels until the live service's next reconnect.
+
     The entire run -- the backlog check and every `append_next`/`ack` call
     that follows -- holds `spool.exclusive()` (Codex round 3, P1b): a
     concurrently running `FleetService`/`StreamRouter` writing this same
@@ -210,9 +284,11 @@ def run_selftest(  # noqa: PLR0913
         "channels_seq": [first, last], "events_seq": <seq>}`.
 
     Raises:
-        SelftestPreconditionError: a spool lane has pending unacked backlog,
-            or another writer already holds the spool's lock -- both checked
-            before any connect/append side effect.
+        SelftestPreconditionError: a spool lane has pending unacked backlog
+            or another writer already holds the spool's lock (both checked
+            before any connect/append side effect), or the robot's live
+            fleet session is already connected (checked right after
+            connecting, before any publish).
         Whatever `publisher`/`spool` raise thereafter (typically
         `PublishError` or a spool `ValueError`/`SpoolError`) -- always
         re-raised after the cleanup below.
@@ -236,6 +312,7 @@ def run_selftest(  # noqa: PLR0913
 
         try:
             publisher.connect()
+            _check_no_live_session(publisher)
             publisher.publish_schema({"v": 1, "channels": SELFTEST_CHANNELS})
 
             for i in range(batches):
@@ -360,9 +437,10 @@ def main(argv: list[str] | None = None) -> int:
     Returns 0 and prints the `run_selftest` summary as one line of JSON on
     success. On any expected failure state (fleet disabled/not installed,
     unenrolled with no `--broker` override, bad broker config, a publish
-    failure, a spool lane with pending backlog, or another writer already
-    holding the spool's lock), prints the typed error's message to stderr
-    (no traceback) and returns 1.
+    failure, a spool lane with pending backlog, another writer already
+    holding the spool's lock, or the robot's live fleet session already
+    being connected), prints the typed error's message to stderr (no
+    traceback) and returns 1.
     """
     args = _build_arg_parser().parse_args(argv)
     try:
@@ -370,17 +448,24 @@ def main(argv: list[str] | None = None) -> int:
         directory = pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY)
         identity = _load_identity_or_none(directory)
         kwargs = resolve_publisher_kwargs(StreamsConfig(broker=args.broker), identity)
-        # "-selftest" (Codex round 3 follow-up, PR #214 P2 on comment
-        # 3925391258): without this, the selftest's MqttPublisher would
+        # "/selftest" (Codex round 3 follow-up, PR #214 P2 on comment
+        # 3925391258; delimiter fixed to "/" in a later follow-up, comment
+        # 3927231074): without this, the selftest's MqttPublisher would
         # derive the SAME deterministic client id as the live service's own
         # (same tenant/robot), and the broker kicks the existing session
         # when a new connection claims an already-connected client id --
         # running the selftest against an enrolled robot's broker while
         # that robot's real streaming service is connected would silently
         # DISPLACE the live session. Cloud confirmed ACLs key on the cert
-        # CN, not the client id, so this is free. See
-        # `MqttPublisher.__init__`'s docstring for the full reasoning.
-        kwargs["client_id_suffix"] = "-selftest"
+        # CN, not the client id, so this is free. "/" (not "-") because a
+        # hyphen reintroduces exactly the hyphen-injectivity ambiguity the
+        # tenant/robot delimiter itself was already fixed for: robot "r7"
+        # suffixed "-selftest" would collide with a robot actually NAMED
+        # "r7-selftest". "/" is outside both id charsets (robot ids match
+        # ^[a-z0-9][a-z0-9_-]{0,62}$), so it's provably collision-free the
+        # same way. See `MqttPublisher.__init__`'s docstring for the full
+        # reasoning.
+        kwargs["client_id_suffix"] = "/selftest"
         # retain_messages=False (Codex round 3 follow-up, PR #214 P1 on
         # comment 3927023413): the selftest keeps publishing AS the robot
         # (client-id suffix aside, cert-CN ACLs make an isolated identity a
