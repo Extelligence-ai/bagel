@@ -2,11 +2,13 @@
 
 import json
 import pathlib
+import threading
+import time
 
 import pytest
 
 from src.sink.publish import spool as spool_mod
-from src.sink.publish.spool import Spool, SpoolCorruptError
+from src.sink.publish.spool import Spool, SpoolCorruptError, SpoolLockedError
 
 
 @pytest.fixture()
@@ -286,6 +288,38 @@ class TestOversizedRecord:
         assert [seq for seq, _ in s.pending("heartbeat")] == [1]
         assert s.stats()["heartbeat"].evicted == 0
 
+    def test_oversized_drop_on_a_never_touched_lane_survives_a_rescan(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex round 3 follow-up (PR #214, P2, comment 3925663134): an
+        oversized-drop consumes its seq in the cache ONLY -- no segment is
+        ever written for a dropped record, so when a lane's FIRST-EVER
+        record is oversized, disk shows nothing for it at all (no
+        directory). A later call on the SAME (now warm-cached) instance
+        that forces a rescan (`_current_last_seq`'s reseal branch, hit
+        because the lane has no segments -- a `None` tail) must not
+        REGRESS the cache back down to the watermark (0): the
+        already-consumed seq must survive, or the next oversized record
+        would reuse it instead of advancing past it."""
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 200)
+        s = Spool(root)
+        giant = {"pad": "x" * 1000}
+
+        first_seq = s.append_next("channels", lambda seq: giant)  # oversized: dropped, no write
+        assert first_seq == 1
+        assert list((root / "channels").glob("segment-*.jsonl")) == []  # nothing on disk
+        assert s.stats()["channels"].evicted == 1
+
+        # Force the rescan path: stats()'s last_seq (itself disk-
+        # authoritative, Codex round 3 P2 comment 3925391258) routes
+        # through _current_last_seq, whose reseal branch is exactly what
+        # regressed the cache before this fix.
+        assert s.stats()["channels"].last_seq == 1  # must NOT regress to 0
+
+        second_seq = s.append_next("channels", lambda seq: giant)  # another oversized drop
+        assert second_seq == 2  # consumes seq 2 -- never reuses the already-consumed 1
+        assert s.stats()["channels"].evicted == 2
+
 
 class TestPendingToleratesConcurrentEviction:
     def test_segment_evicted_mid_iteration_is_skipped_not_raised(
@@ -462,8 +496,16 @@ class TestEvictionAndCaps:
         s = Spool(root)
         s.append("events", 1, {"n": 1})
 
-        def boom(*a: object, **k: object) -> object:
-            raise OSError(28, "No space left on device")
+        real_open = open
+
+        def boom(file: object, mode: str = "r", *a: object, **k: object) -> object:
+            # A real "disk full" only breaks writes -- reads (including the
+            # disk-authoritative tail peek append() now does on every call,
+            # Codex round 3 follow-up) keep working. Only fail append/write
+            # modes, so this stays a faithful simulation.
+            if "a" in mode or "w" in mode:
+                raise OSError(28, "No space left on device")
+            return real_open(file, mode, *a, **k)
 
         monkeypatch.setattr("builtins.open", boom)
         with pytest.raises(spool_mod.SpoolFullError, match="events"):
@@ -481,6 +523,30 @@ class TestStats:
         assert st.last_seq == 4
         assert st.acked_seq == 1
         assert st.bytes > 0
+
+    def test_stats_last_seq_is_disk_authoritative_on_a_warm_cache(self, root: pathlib.Path) -> None:
+        """Codex round 3 follow-up (PR #214, P2, comment 3925391258):
+        `stats()`'s `last_seq` must reflect disk, not this instance's own
+        possibly-stale cache -- `acked_seq` (`_watermarks()`) and `pending`
+        (`self.pending()`) already re-read fresh from disk on every call;
+        `last_seq` must too, or a heartbeat calling `stats()` on a warm
+        instance reports a `last_seq` (and the backlog-depth picture that
+        implies) that lags behind what another writer already put on disk."""
+        a = Spool(root)
+        a.append_next("channels", lambda seq: {"n": seq})  # seq=1
+        a.ack("channels", 1)
+
+        b = Spool(root)
+        assert b.next_seq("channels") == 2  # warms b's cache at the OLD value (1)
+
+        a.append_next("channels", lambda seq: {"n": seq})  # seq=2, on disk now
+        a.ack("channels", 2)
+
+        # b never performs any mutator itself -- stats() alone must catch up.
+        st = b.stats()["channels"]
+        assert st.last_seq == 2
+        assert st.acked_seq == 2
+        assert st.pending == 0
 
 
 class TestNeverCappedLanes:
@@ -600,6 +666,603 @@ class TestForRobot:
     def test_for_robot_rejects_dot_segment(self) -> None:
         with pytest.raises(ValueError, match="must be non-empty and not"):
             Spool.for_robot(".")
+
+
+class TestDiskAuthoritativeMonotonicity:
+    """Codex round 3 follow-up (PR #214, P1): `append()`'s monotonicity check
+    must be disk-authoritative ACROSS `Spool` instances, not just within one.
+
+    `exclusive()` (P1b) only serializes concurrent DISK ACCESS -- it does
+    nothing to refresh a DIFFERENT already-open `Spool` instance's
+    in-process `_last_seq` cache. A long-lived instance (e.g. a
+    `FleetService`) whose cache predates an intervening writer on the same
+    real spool (e.g. a selftest run, or another process entirely) must not
+    accept/allocate a seq that collides with what's already on disk -- that
+    would silently duplicate a seq instead of raising the clean `ValueError`
+    the single-writer invariant promises.
+    """
+
+    def test_stale_cached_writer_raises_instead_of_duplicating(self, root: pathlib.Path) -> None:
+        a = Spool(root)
+        a.append("channels", 1, {"n": 1})
+        a.append("channels", 2, {"n": 2})
+        a.append("channels", 3, {"n": 3})
+
+        # B is a fresh instance on the same root: first touch, scans disk,
+        # continues the sequence correctly.
+        b = Spool(root)
+        b.append("channels", 4, {"n": 4})
+        before = list(b.pending("channels"))
+
+        # A's in-process cache still says last_seq=3 -- it never saw B's
+        # write. A disk-authoritative check must catch this collision.
+        with pytest.raises(ValueError, match="monotonic"):
+            a.append("channels", 4, {"n": "duplicate-attempt"})
+
+        # Nothing was written by the rejected call -- disk state intact.
+        after = list(b.pending("channels"))
+        assert after == before
+        assert [seq for seq, _ in after] == [1, 2, 3, 4]
+
+    def test_stale_cached_writer_can_still_append_the_true_next_seq(
+        self, root: pathlib.Path
+    ) -> None:
+        """After the collision above, the same stale instance must recover
+        cleanly once given the actually-correct next seq -- not get stuck."""
+        a = Spool(root)
+        a.append("channels", 1, {"n": 1})
+        b = Spool(root)
+        b.append("channels", 2, {"n": 2})
+
+        with pytest.raises(ValueError, match="monotonic"):
+            a.append("channels", 2, {"n": "stale"})
+
+        a.append("channels", 3, {"n": 3})  # the true next seq -- must succeed
+        assert [seq for seq, _ in a.pending("channels")] == [1, 2, 3]
+
+    def test_stale_next_seq_also_reflects_disk_not_the_cache(self, root: pathlib.Path) -> None:
+        """`next_seq()` must see a concurrent writer's advance too, not just
+        `append()`'s rejection path -- so next_seq() -> append() never
+        re-collides on the second try."""
+        a = Spool(root)
+        a.append("channels", 1, {"n": 1})
+        b = Spool(root)
+        b.append("channels", 2, {"n": 2})
+
+        assert a.next_seq("channels") == 3
+
+    def test_full_scan_last_seq_only_runs_on_first_touch_not_every_append(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Perf guard: the disk-authoritative check must not degrade every
+        `append()` into an O(whole active segment) full re-parse -- only the
+        lane's first touch in this instance's lifetime may call the
+        expensive `_scan_last_seq` (crash-tail recovery); every later call
+        must use the cheap tail-only read."""
+        s = Spool(root)
+        calls: list[str] = []
+        original = spool_mod.Spool._scan_last_seq
+
+        def spy(self: Spool, lane: str) -> int:
+            calls.append(lane)
+            return original(self, lane)
+
+        monkeypatch.setattr(spool_mod.Spool, "_scan_last_seq", spy)
+
+        for i in range(1, 6):
+            s.append("channels", i, {"n": i})
+
+        assert calls == ["channels"]  # only the very first append's first-touch scan
+
+
+class TestTailLastSeqWindowGrowth:
+    """Codex round 3 follow-up (PR #214, P1): `_tail_last_seq`'s backward-read
+    loop must grow its window GEOMETRICALLY (double each retry), not by a
+    fixed 8KiB step re-reading the whole (growing) window every iteration --
+    the fixed step is quadratic total bytes read for a final record bigger
+    than one chunk (worst case a segment-max ~4MB single-line record)."""
+
+    def test_correct_for_a_final_record_well_over_one_chunk(self, root: pathlib.Path) -> None:
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})
+        # ~100KiB payload -- comfortably more than one 8KiB read chunk, so
+        # the loop must retry (grow the window) to reach the newline that
+        # separates it from record 1.
+        s.append("channels", 2, {"pad": "x" * 100_000})
+
+        assert s._tail_last_seq("channels") == (2, True)
+
+    def test_read_call_count_is_geometric_not_linear(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})
+        s.append("channels", 2, {"pad": "x" * 100_000})
+
+        real_open = open
+        read_calls: list[int] = []
+
+        class _CountingHandle:
+            """Wraps a real binary file handle, counting `.read()` calls."""
+
+            def __init__(self, real: object) -> None:
+                self._real = real
+
+            def seek(self, *a: object, **k: object) -> object:
+                return self._real.seek(*a, **k)
+
+            def read(self, *a: object, **k: object) -> bytes:
+                read_calls.append(1)
+                return self._real.read(*a, **k)
+
+            def __enter__(self) -> "_CountingHandle":
+                return self
+
+            def __exit__(self, *exc: object) -> object:
+                return self._real.__exit__(*exc)
+
+        def fake_open(file: object, mode: str = "r", *a: object, **k: object) -> object:
+            handle = real_open(file, mode, *a, **k)
+            return _CountingHandle(handle) if mode == "rb" else handle
+
+        monkeypatch.setattr("builtins.open", fake_open)
+
+        result = s._tail_last_seq("channels")
+
+        assert result == (2, True)
+        # +1 read for the O(1) last-byte terminator check, then geometric
+        # doubling from 8KiB needs ~5 reads to cover ~100KiB (8, 16, 32, 64,
+        # then the size-capped final read); a fixed 8KiB linear step would
+        # need ~13+ on top of that. 9 is a robust dividing line between the
+        # two.
+        assert len(read_calls) <= 9, f"expected geometric (<=9) reads, got {len(read_calls)}"
+
+
+class TestUnterminatedTailReseal:
+    """Codex round 3 follow-up (PR #214, P1, comment 3923824688): a torn
+    (non-newline-terminated) active-segment tail must be sealed (truncated)
+    BEFORE the next append, on a WARM cache too -- not just on a lane's
+    first touch. Before this fix, `_tail_last_seq` inferred terminatedness
+    from whether the tail happened to parse, which is wrong two ways: (a) a
+    crash landing right after a complete JSON payload but before its
+    trailing newline parses FINE without the newline, so it was reported as
+    a trustworthy seq; (b) a genuinely partial/mid-write tail failed to
+    parse, but nothing then truncated it before the next write landed
+    directly on top of it. Either way, `append()`'s next `write()` (append
+    mode) grafted new bytes onto the unterminated tail with no separating
+    newline -- permanent mid-file corruption, discovered only later when
+    `pending()` raises `SpoolCorruptError`.
+    """
+
+    def _active_segment(self, root: pathlib.Path, lane: str) -> pathlib.Path:
+        return sorted((root / lane).glob("segment-*.jsonl"))[-1]
+
+    def test_complete_json_without_trailing_newline_is_resealed_before_append(
+        self, root: pathlib.Path
+    ) -> None:
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})  # warms this instance's cache
+
+        # Simulate a crash landing exactly after a COMPLETE JSON payload but
+        # before its trailing newline -- parses fine on its own, which is
+        # exactly what made the old parse-based check trust it.
+        segment = self._active_segment(root, "channels")
+        with open(segment, "ab") as handle:
+            handle.write(json.dumps({"seq": 2, "payload": {"n": "never-committed"}}).encode())
+        assert not segment.read_bytes().endswith(b"\n")
+
+        # The cache is warm (this instance already appended once) -- the
+        # torn tail must still be caught here, not just on first touch.
+        seq = s.next_seq("channels")
+        assert seq == 2  # the torn seq=2 bytes were never durably committed
+        s.append("channels", seq, {"n": 2})
+
+        assert segment.read_bytes().endswith(b"\n")  # resealed to a clean boundary
+        replayed = list(s.pending("channels"))  # must not raise SpoolCorruptError
+        assert [seq for seq, _ in replayed] == [1, 2]
+        assert replayed[1][1] == {"n": 2}
+
+    def test_partial_json_tail_is_resealed_before_append(self, root: pathlib.Path) -> None:
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})  # warms this instance's cache
+
+        # Simulate a crash mid-write: not even valid JSON, no newline.
+        segment = self._active_segment(root, "channels")
+        with open(segment, "ab") as handle:
+            handle.write(b'{"seq": 2, "payload": {"n": ')
+        assert not segment.read_bytes().endswith(b"\n")
+
+        seq = s.next_seq("channels")
+        assert seq == 2
+        s.append("channels", seq, {"n": 2})
+
+        assert segment.read_bytes().endswith(b"\n")
+        replayed = list(s.pending("channels"))
+        assert [seq for seq, _ in replayed] == [1, 2]
+        assert replayed[1][1] == {"n": 2}
+
+    def test_normal_terminated_tail_never_triggers_a_reseal(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The healthy path must stay cheap: a properly newline-terminated
+        tail must never fall back to the full `_scan_last_seq` reseal --
+        the warm cache stays effective, pinned by a call-counting probe."""
+        s = Spool(root)
+        s.append("channels", 1, {"n": 1})  # first touch: its own _scan_last_seq call
+
+        calls: list[str] = []
+        original = spool_mod.Spool._scan_last_seq
+
+        def spy(self: Spool, lane: str) -> int:
+            calls.append(lane)
+            return original(self, lane)
+
+        monkeypatch.setattr(spool_mod.Spool, "_scan_last_seq", spy)
+
+        for i in range(2, 6):
+            s.append("channels", i, {"n": i})
+
+        assert calls == []  # no reseal once every tail stays properly terminated
+
+
+class TestEmptyOrUnparsableActiveSegmentFloorsAtFilename:
+    """Codex round 3 follow-up (PR #214, P1/P2, comment 3924387659).
+
+    P1: a `None` tail on an EXISTING active segment (empty -- a roll that
+    crashed before its first record landed -- or unparsable) must be
+    treated exactly like an unterminated tail: reseal via the full
+    `_scan_last_seq` path, which derives the FILENAME floor
+    (`_first_seq_of(segment) - 1`). The old fast path fell back to the
+    watermark ALONE in this case, ignoring both the filename floor and any
+    earlier segments' still-live (unacked) records -- a floor REGRESSION
+    that let a warm cache's `append_next()` allocate a seq that collides
+    with data already durably on disk (not merely a stale-but-safe
+    undercount).
+
+    P2: the disk-derived floor on the NORMAL (non-reseal) read path must be
+    stored back into `self._last_seq[lane]` -- previously computed fresh
+    every call but discarded, letting the cache silently lag behind what
+    this instance's own reads had already established. Safe because it's
+    folded through `max()`, so it can only advance.
+    """
+
+    def test_empty_active_segment_on_a_warm_cache_floors_at_filename_not_watermark(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 32)
+        a = Spool(root)
+        a.append("channels", 1, {"n": 1})  # segment-1
+
+        b = Spool(root)
+        assert b.next_seq("channels") == 2  # warms b's cache at the OLD value (last=1)
+
+        a.append("channels", 2, {"n": 2})  # segment-2 (cap forces a roll every append)
+        a.append("channels", 3, {"n": 3})  # segment-3
+        segments = sorted((root / "channels").glob("segment-*.jsonl"))
+        assert len(segments) == 3
+
+        # Simulate the crashed roller: a 4th append started a roll (created
+        # the next segment, named for the seq it was about to write) but
+        # crashed before any bytes landed -- b never saw any of this, its
+        # cache still says 1.
+        next_segment = root / "channels" / spool_mod._segment_name(4)
+        next_segment.write_bytes(b"")
+
+        allocated = b.append_next("channels", lambda seq: {"n": seq})
+
+        # The filename floor (segment-4 => floor 3) plus the live records
+        # 1-3 already on disk means the correct next seq is 4 -- never
+        # watermark(0)+1 == 1, which would collide with record 1, or worse
+        # get silently written INTO segment-4 under a mismatched name.
+        assert allocated == 4
+        assert [seq for seq, _ in b.pending("channels")] == [1, 2, 3, 4]
+
+    def test_unparsable_terminated_tail_on_a_warm_cache_also_reseals(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same ruling, the other `None`-tail sub-case: a properly
+        newline-terminated segment whose content still doesn't parse as a
+        usable record (e.g. a stray newline-only segment) must reseal too --
+        not silently trust the watermark alone, which here would ignore
+        both the filename floor and an earlier segment's still-live
+        (unacked) record."""
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 32)
+        a = Spool(root)
+        a.append("channels", 1, {"n": 1})  # segment-1
+
+        b = Spool(root)
+        assert b.next_seq("channels") == 2  # warms b's cache at 1
+
+        a.append("channels", 2, {"n": 2})  # segment-2 (cap forces a roll)
+        segments = sorted((root / "channels").glob("segment-*.jsonl"))
+        assert len(segments) == 2
+
+        # A stray newline-only segment named for seq 3 -- terminated
+        # (`\n`), but nothing parses out of it: the "unparsable" sub-case
+        # of a `None` tail.
+        stray_segment = root / "channels" / spool_mod._segment_name(3)
+        stray_segment.write_bytes(b"\n")
+
+        allocated = b.append_next("channels", lambda seq: {"n": seq})
+
+        assert allocated == 3  # filename floor (segment-3 => floor 2), never watermark(0)+1 == 1
+        assert [seq for seq, _ in b.pending("channels")] == [1, 2, 3]
+
+    def test_disk_derived_floor_is_stored_back_into_the_cache(self, root: pathlib.Path) -> None:
+        """P2: a pure peek (`next_seq()`) that derives a fresher floor than
+        this instance's own stale cache must store that fresher value back,
+        not just return it and discard it."""
+        a = Spool(root)
+        a.append_next("channels", lambda seq: {"n": seq})  # a's cache: last_seq=1
+
+        b = Spool(root)
+        b.append_next("channels", lambda seq: {"n": seq})  # disk now at seq=2; a's cache still 1
+
+        peeked = a.next_seq("channels")  # a pure read -- must reflect disk (2), not stale (1)
+        assert peeked == 3
+
+        # The freshly-derived floor (2) must be stored back into a's own
+        # cache, not merely returned -- observable by reading it directly.
+        assert a._last_seq["channels"] == 2
+
+    def test_stored_back_floor_does_not_cause_extra_full_scans(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The store-back must not regress the existing cheap-path
+        guarantee: `_scan_last_seq` (the expensive full-segment parse)
+        still only ever runs on a lane's first touch, never on a repeated
+        read/peek."""
+        a = Spool(root)
+        a.append_next("channels", lambda seq: {"n": seq})  # first touch
+
+        calls: list[str] = []
+        original = spool_mod.Spool._scan_last_seq
+
+        def spy(self: Spool, lane: str) -> int:
+            calls.append(lane)
+            return original(self, lane)
+
+        monkeypatch.setattr(spool_mod.Spool, "_scan_last_seq", spy)
+
+        for _ in range(5):
+            a.next_seq("channels")
+
+        assert calls == []  # no re-derivation via the expensive path
+
+
+class TestAppendNext:
+    """Codex round 3 follow-up (PR #214, P1, comment 3924082774): `append_next()`
+    closes the allocate-then-append race structurally. The old shape --
+    `next_seq()` then a separate `append()` call -- was TWO lock
+    acquisitions with a gap between them; a competing writer (another
+    `Spool` instance's own call, or a `spool.exclusive()`-held run, e.g. the
+    selftest) could land in that gap and advance the lane first, making the
+    original caller's `append()` raise `ValueError` against a seq it
+    allocated against a now-stale floor. `append_next()` derives the floor,
+    assigns the seq, and writes all under ONE lock acquisition, so there is
+    no gap left for a competitor to land in.
+    """
+
+    def test_old_two_call_windows_collision_is_now_impossible(self, root: pathlib.Path) -> None:
+        """Directly reproduces what used to be exploitable: A peeks via the
+        (still-legitimate, read-only) `next_seq()`, then B interleaves in
+        exactly the window that peek would have left open in the old
+        `next_seq()` + `append()` shape, via an `exclusive()`-held run
+        (mirroring the selftest's own pattern). A's ACTUAL write, routed
+        through `append_next()` instead of the old `append(peeked, ...)`,
+        must succeed with a freshly re-derived (not stale) seq -- zero
+        `ValueError`."""
+        a = Spool(root)
+        b = Spool(root)
+
+        peeked = a.next_seq("channels")
+        assert peeked == 1  # what A would have (incorrectly) tried to write at, pre-fix
+
+        with b.exclusive(timeout=1.0):
+            b.append_next("channels", lambda seq: {"seq": seq, "who": "b"})
+
+        actual_seq = a.append_next("channels", lambda seq: {"seq": seq, "who": "a"})
+
+        assert actual_seq == 2  # correctly re-derived, not the stale peeked=1
+        assert [seq for seq, _ in a.pending("channels")] == [1, 2]
+
+    def test_competitor_cannot_land_between_allocation_and_write(self, root: pathlib.Path) -> None:
+        """Direct proof of atomicity: while A's `append_next` is mid-flight
+        (its `build` callable deliberately blocked, so we can observe it
+        running -- `build` runs INSIDE the lock), B's `append_next` must be
+        BLOCKED until A's single critical section completes. In the old
+        `next_seq()` + `append()` shape, the lock was already released by
+        this point (right after `next_seq()` returned), leaving exactly
+        this window open for B to land in."""
+        a = Spool(root)
+        b = Spool(root)
+        a_entered_build = threading.Event()
+        release_a = threading.Event()
+        order: list[str] = []
+
+        def slow_build(seq: int) -> dict:
+            order.append("a-build-entered")
+            a_entered_build.set()
+            release_a.wait(timeout=2.0)
+            order.append("a-build-exit")
+            return {"seq": seq}
+
+        t_a = threading.Thread(target=lambda: a.append_next("channels", slow_build))
+        t_a.start()
+        a_entered_build.wait(timeout=2.0)
+
+        def run_b() -> None:
+            b.append_next("channels", lambda seq: {"seq": seq})
+            order.append("b-append_next-done")
+
+        t_b = threading.Thread(target=run_b)
+        t_b.start()
+        time.sleep(0.1)  # give B a chance to attempt -- it must still be blocked
+        assert "b-append_next-done" not in order
+
+        release_a.set()
+        t_a.join()
+        t_b.join()
+
+        assert order.index("a-build-exit") < order.index("b-append_next-done")
+
+    def test_two_instances_stress_interleaved_yield_unique_contiguous_seqs(
+        self, root: pathlib.Path
+    ) -> None:
+        """Broader stress complement to the two directed tests above: many
+        concurrent `append_next` calls from two separate `Spool` instances,
+        zero `ValueError`, every seq 1..N allocated exactly once."""
+        a = Spool(root)
+        b = Spool(root)
+        errors: list[BaseException] = []
+        seqs: list[int] = []
+        seqs_lock = threading.Lock()
+        per_writer = 25
+
+        def writer(spool: Spool, tag: str) -> None:
+            for i in range(per_writer):
+                try:
+                    seq = spool.append_next("channels", lambda seq, i=i: {"seq": seq, "i": i})
+                except BaseException as exc:  # collected, asserted below (not swallowed)
+                    errors.append(exc)
+                else:
+                    with seqs_lock:
+                        seqs.append(seq)
+
+        t_a = threading.Thread(target=writer, args=(a, "a"))
+        t_b = threading.Thread(target=writer, args=(b, "b"))
+        t_a.start()
+        t_b.start()
+        t_a.join()
+        t_b.join()
+
+        assert errors == []
+        assert sorted(seqs) == list(range(1, 2 * per_writer + 1))
+        assert len(set(seqs)) == 2 * per_writer
+
+
+class TestExclusiveLock:
+    """`Spool.exclusive()` (Codex round 3, P1b): hold the spool's real lock
+    across a multi-call critical section, cross-process-safe, bounded wait.
+    """
+
+    def test_negative_timeout_raises_value_error_at_entry(self, root: pathlib.Path) -> None:
+        """`filelock` treats a negative `timeout` as "wait forever" (Codex
+        round 3 follow-up, PR #214 P2, comment 3927023413's sibling
+        finding): silently accepting one would break `exclusive()`'s own
+        documented bounded-wait contract (`SelftestPreconditionError` after
+        `lock_timeout_s`, never an indefinite hang). Refused up front,
+        before ever touching `filelock.FileLock.acquire`, so this can never
+        depend on `filelock`'s own undocumented behavior for negative
+        values."""
+        s = Spool(root)
+        with pytest.raises(ValueError, match="timeout"):
+            s.exclusive(timeout=-1.0)
+
+    def test_zero_timeout_is_still_accepted_not_treated_as_negative(
+        self, root: pathlib.Path
+    ) -> None:
+        """The fix must reject only `timeout < 0`, not `timeout == 0`
+        (a legitimate "don't wait at all" bounded wait)."""
+        s = Spool(root)
+        with s.exclusive(timeout=0.0):
+            pass
+
+    def test_reentrant_with_mutators_on_the_same_instance(self, root: pathlib.Path) -> None:
+        """Calls made inside the `with` block must not deadlock on their own lock."""
+        s = Spool(root)
+        with s.exclusive(timeout=1.0):
+            seq = s.next_seq("channels")
+            s.append("channels", seq, {"n": 1})
+            s.ack("channels", seq)
+            s.stats()
+        assert list(s.pending("channels")) == []
+
+    def test_second_instance_blocks_until_released_then_proceeds(self, root: pathlib.Path) -> None:
+        """A second `Spool` on the same root waits for the first to release,
+        then succeeds -- this is a real OS-level lock, not merely advisory
+        within one instance.
+
+        The s1-before-s2 handoff is proven deterministically via `acquired`
+        (Codex round 3 follow-up, PR #214 P2, comment 3927153842's sibling
+        finding on this test): a fixed `time.sleep(0.05)` before starting s2
+        only made it *likely* s1 had the lock first, not certain -- a slow
+        enough scheduler could still let s2 attempt before s1's thread even
+        started running. Waiting on `acquired`, set from INSIDE s1's
+        critical section, proves s1 already holds the lock before s2 ever
+        calls `exclusive()`.
+        """
+        s1 = Spool(root)
+        s2 = Spool(root)
+        acquired = threading.Event()
+        released = threading.Event()
+        acquired_order: list[str] = []
+
+        def hold_then_release() -> None:
+            with s1.exclusive(timeout=1.0):
+                acquired_order.append("s1")
+                acquired.set()
+                time.sleep(0.2)
+            released.set()
+
+        t = threading.Thread(target=hold_then_release)
+        t.start()
+        assert acquired.wait(timeout=2.0)  # s1 provably holds the lock now
+
+        with s2.exclusive(timeout=2.0):
+            acquired_order.append("s2")
+            assert released.is_set()  # s2 only got in after s1 let go
+
+        t.join()
+        assert acquired_order == ["s1", "s2"]
+
+    def test_second_instance_times_out_with_typed_error_while_first_holds(
+        self, root: pathlib.Path
+    ) -> None:
+        """The bounded-wait refusal: a lock held elsewhere for longer than the
+        timeout raises `SpoolLockedError`, not an indefinite hang."""
+        s1 = Spool(root)
+        s2 = Spool(root)
+        holding = threading.Event()
+        release = threading.Event()
+
+        def hold_until_told() -> None:
+            with s1.exclusive(timeout=1.0):
+                holding.set()
+                release.wait(timeout=2.0)
+
+        t = threading.Thread(target=hold_until_told)
+        t.start()
+        holding.wait(timeout=2.0)
+
+        with pytest.raises(SpoolLockedError, match="locked by another writer"):
+            s2.exclusive(timeout=0.1)
+
+        release.set()
+        t.join()
+
+    def test_a_plain_mutator_still_waits_indefinitely_not_a_typed_refusal(
+        self, root: pathlib.Path
+    ) -> None:
+        """Only `exclusive()`'s bounded wait times out -- the ordinary per-call
+        mutators keep their existing block-forever behavior (unchanged)."""
+        s1 = Spool(root)
+        s2 = Spool(root)
+        holding = threading.Event()
+
+        def hold_briefly() -> None:
+            with s1.exclusive(timeout=1.0):
+                holding.set()
+                time.sleep(0.15)
+
+        t = threading.Thread(target=hold_briefly)
+        t.start()
+        holding.wait(timeout=2.0)
+
+        # s2.next_seq blocks on the same lock but has no timeout -- it must
+        # simply wait for s1 to finish, not raise.
+        assert s2.next_seq("channels") == 1
+        t.join()
 
 
 def test_spool_module_does_not_import_paho_eagerly(monkeypatch: pytest.MonkeyPatch) -> None:

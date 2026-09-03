@@ -173,6 +173,11 @@ The on-robot event *emitter* ships in a future release; this shape is
 contractual now, and the conformance selftest (§10) already publishes one
 event (without `artifact`).
 
+Likewise, the `stream_live_topics`/`stop_live_streams` tools already accept
+and persist event *rules* (the predicate that would decide when to emit):
+on-robot evaluation ships in a later release; configuration is
+forward-compatible.
+
 ## 8. `heartbeat` payload
 
 Published retained every **30 s** (first beat immediately at session start):
@@ -300,13 +305,31 @@ uv run python -m src.sink.publish.selftest [--broker mqtt(s)://...] \
 ```
 
 It publishes, in order, using the enrolled identity (or `--broker` on a dev
-rig): one retained schema, N channel batches (default 10, default 0.5 s
-apart), one heartbeat, one event -- then prints a one-line JSON summary and
-exits 0 (any expected failure prints to stderr and exits 1). It requires both
-spool lanes (`channels`, `events`) to be fully drained (no pending unacked
-entries) before it will start -- it allocates and acks real seqs on those
-lanes, so pending backlog would otherwise be silently advanced past; run it
-with fleet streaming paused or stopped.
+rig): one schema, N channel batches (default 10, default 0.5 s apart), one
+heartbeat, one event -- then prints a one-line JSON summary and exits 0 (any
+expected failure prints to stderr and exits 1). It requires both spool lanes
+(`channels`, `events`) to be fully drained (no pending unacked entries)
+before it will start -- it allocates and acks real seqs on those lanes, so
+pending backlog would otherwise be silently advanced past; run it with fleet
+streaming paused or stopped. It also refuses outright, before publishing
+anything, if the robot's live fleet session is already connected (detected
+via a bounded subscribe-probe for a retained `online: true` heartbeat) --
+retention and a distinct client id alone don't stop this run's fixture
+schema from reaching a connected live subscriber as a schema update. That
+same check keeps running for the rest of the run, not just at the start: it
+watches for any live activity on the robot's session topics (heartbeat AND
+schema, not heartbeat alone -- a resuming service's heartbeat can be stuck
+behind a lock while its router still reconnects and republishes the schema)
+and aborts the instant any of it appears, since a service could resume
+partway through a multi-batch run just as easily as it could already be
+connected at the start.
+
+All of the selftest's own publishes -- schema, heartbeat, and its final
+close() beat -- are deliberately NOT retained (unlike a real robot's own
+schema/heartbeat) and it arms no last-will either, so a run leaves no
+retained residue on the robot's shared topics for a late subscriber to find;
+retention isn't load-bearing for conformance since a validator subscribes
+before or during the run.
 
 The fixture is fixed and deterministic. The schema is exactly these four
 channels:

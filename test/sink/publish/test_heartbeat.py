@@ -9,6 +9,7 @@ import time
 import pytest
 
 from src.sink.publish import heartbeat as heartbeat_mod
+from src.sink.publish import spool as spool_mod
 from src.sink.publish.heartbeat import HEARTBEAT_INTERVAL_S, HeartbeatThread, build_heartbeat
 from src.sink.publish.publisher import Publisher, PublishError
 from src.sink.publish.spool import Spool, SpoolFullError
@@ -338,6 +339,80 @@ class TestHeartbeatThread:
         assert pending[0][1] == payload
         assert thread.spool_failures == 0  # the spool write itself succeeded
 
+    def test_publish_failure_spool_fallback_uses_append_next(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex round 3 P1 follow-up (comment 3924082774): the never-drop
+        heartbeat-lane fallback must go through `Spool.append_next()`, never
+        a separate `next_seq()` + `append()` pair -- that shape left a gap a
+        concurrent writer could land in, and while this path's own
+        `except Exception` already prevented it from being a thread-killer
+        (unlike the router's unguarded batch-flush path), it still silently
+        dropped this beat's heartbeat from the never-drop lane on a
+        spurious collision."""
+        pub = FakePublisher()
+        pub.fail_next(1)
+        spool = Spool(tmp_path / "spool")
+        calls: list[str] = []
+        original_next_seq = spool_mod.Spool.next_seq
+        original_append = spool_mod.Spool.append
+        original_append_next = spool_mod.Spool.append_next
+
+        def spy_next_seq(self: Spool, lane: str) -> int:
+            calls.append("next_seq")
+            return original_next_seq(self, lane)
+
+        def spy_append(self: Spool, lane: str, seq: int, payload: dict) -> None:
+            calls.append("append")
+            return original_append(self, lane, seq, payload)
+
+        def spy_append_next(self: Spool, lane: str, build: object) -> int:
+            calls.append("append_next")
+            return original_append_next(self, lane, build)
+
+        monkeypatch.setattr(spool_mod.Spool, "next_seq", spy_next_seq)
+        monkeypatch.setattr(spool_mod.Spool, "append", spy_append)
+        monkeypatch.setattr(spool_mod.Spool, "append_next", spy_append_next)
+
+        payload = {"v": 1, "marker": "spooled"}
+        thread = HeartbeatThread(pub, lambda: payload, interval_s=10.0, spool=spool)
+        thread._tick()
+
+        assert calls == ["append_next"]
+        _seq, spooled_payload = next(iter(spool.pending("heartbeat")))
+        assert spooled_payload == payload
+        assert thread.spool_failures == 0
+
+    def test_a_prior_writer_on_the_lane_does_not_drop_the_beat(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Sanity coverage alongside the call-order spy test above (which is
+        what actually has RED/GREEN evidence for this fix): a competing
+        writer (e.g. a selftest run holding `spool.exclusive()`) having
+        already written to the "heartbeat" lane must not stop this beat
+        from being correctly recorded right after it, at the next seq --
+        `append_next()` re-derives the floor fresh rather than trusting any
+        earlier peek, so there's nothing for a prior writer to go stale
+        against."""
+        pub = FakePublisher()
+        pub.fail_next(1)
+        spool = Spool(tmp_path / "spool")
+        competitor = Spool(tmp_path / "spool")  # a SEPARATE instance, same root
+
+        with competitor.exclusive(timeout=1.0):
+            competitor.append_next("heartbeat", lambda seq: {"marker": "competitor", "seq": seq})
+
+        payload = {"v": 1, "marker": "spooled"}
+        thread = HeartbeatThread(pub, lambda: payload, interval_s=10.0, spool=spool)
+        thread._tick()
+
+        assert thread.spool_failures == 0  # no collision, no dropped beat
+        pending = list(spool.pending("heartbeat"))
+        assert [p for _, p in pending] == [
+            {"marker": "competitor", "seq": 1},
+            payload,
+        ]
+
     def test_publish_failure_without_spool_swallowed(self) -> None:
         pub = FakePublisher()
         pub.fail_next(1)
@@ -357,12 +432,18 @@ class TestHeartbeatThread:
         pub.fail_next(1000)  # every tick's publish fails
 
         class BoomSpool:
-            """Duck-typed Spool stand-in: next_seq works, append always fails."""
+            """Duck-typed Spool stand-in: append_next always fails.
 
-            def next_seq(self, lane: str) -> int:
-                return 1
+            Codex round 3 P1 follow-up (comment 3924082774): `_tick` now
+            calls `append_next`, not a separate `next_seq()` + `append()`
+            pair -- this stand-in must implement the method that's actually
+            called, or the failure this test is pinning (a genuine
+            `SpoolFullError` from the write itself) would silently become a
+            different exception (an `AttributeError` from the missing
+            method) that happens to still get caught by the same handler.
+            """
 
-            def append(self, lane: str, seq: int, payload: dict) -> None:
+            def append_next(self, lane: str, build: object) -> int:
                 raise SpoolFullError(f"lane '{lane}': disk full")
 
         thread = HeartbeatThread(pub, lambda: {"v": 1}, interval_s=10.0, spool=BoomSpool())

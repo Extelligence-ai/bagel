@@ -20,11 +20,10 @@ services:
       # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
       # at runtime never also requires editing this file. Unset host vars
       # resolve to Settings' own defaults inside the container (empty
-      # string is falsy for the two optional str fields; the identity
-      # directory default below matches the volume mount below).
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
       FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
       FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
-      FLEET_IDENTITY_DIRECTORY: ${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}
       FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
@@ -54,9 +53,11 @@ services:
       # `docker compose run` lives only in that one-off container's
       # writable layer: it is lost the moment the container exits, and
       # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
-      # re-enroll to replace it (Codex review). Must match
-      # FLEET_IDENTITY_DIRECTORY above. On Linux, run
+      # re-enroll to replace it (Codex review). On Linux, run
       # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
       - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
@@ -81,11 +82,10 @@ services:
       # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
       # at runtime never also requires editing this file. Unset host vars
       # resolve to Settings' own defaults inside the container (empty
-      # string is falsy for the two optional str fields; the identity
-      # directory default below matches the volume mount below).
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
       FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
       FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
-      FLEET_IDENTITY_DIRECTORY: ${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}
       FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
@@ -115,9 +115,11 @@ services:
       # `docker compose run` lives only in that one-off container's
       # writable layer: it is lost the moment the container exits, and
       # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
-      # re-enroll to replace it (Codex review). Must match
-      # FLEET_IDENTITY_DIRECTORY above. On Linux, run
+      # re-enroll to replace it (Codex review). On Linux, run
       # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
       - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
@@ -142,11 +144,10 @@ services:
       # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
       # at runtime never also requires editing this file. Unset host vars
       # resolve to Settings' own defaults inside the container (empty
-      # string is falsy for the two optional str fields; the identity
-      # directory default below matches the volume mount below).
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
       FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
       FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
-      FLEET_IDENTITY_DIRECTORY: ${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}
       FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
@@ -176,9 +177,11 @@ services:
       # `docker compose run` lives only in that one-off container's
       # writable layer: it is lost the moment the container exits, and
       # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
-      # re-enroll to replace it (Codex review). Must match
-      # FLEET_IDENTITY_DIRECTORY above. On Linux, run
+      # re-enroll to replace it (Codex review). On Linux, run
       # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
       - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
@@ -203,11 +206,10 @@ services:
       # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
       # at runtime never also requires editing this file. Unset host vars
       # resolve to Settings' own defaults inside the container (empty
-      # string is falsy for the two optional str fields; the identity
-      # directory default below matches the volume mount below).
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
       FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
       FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
-      FLEET_IDENTITY_DIRECTORY: ${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}
       FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
@@ -237,9 +239,11 @@ services:
       # `docker compose run` lives only in that one-off container's
       # writable layer: it is lost the moment the container exits, and
       # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
-      # re-enroll to replace it (Codex review). Must match
-      # FLEET_IDENTITY_DIRECTORY above. On Linux, run
+      # re-enroll to replace it (Codex review). On Linux, run
       # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
       - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
@@ -263,11 +267,10 @@ services:
       # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
       # at runtime never also requires editing this file. Unset host vars
       # resolve to Settings' own defaults inside the container (empty
-      # string is falsy for the two optional str fields; the identity
-      # directory default below matches the volume mount below).
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
       FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
       FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
-      FLEET_IDENTITY_DIRECTORY: ${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}
       FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
@@ -295,9 +298,11 @@ services:
       # `docker compose run` lives only in that one-off container's
       # writable layer: it is lost the moment the container exits, and
       # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
-      # re-enroll to replace it (Codex review). Must match
-      # FLEET_IDENTITY_DIRECTORY above. On Linux, run
+      # re-enroll to replace it (Codex review). On Linux, run
       # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
       - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
@@ -321,11 +326,10 @@ services:
       # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
       # at runtime never also requires editing this file. Unset host vars
       # resolve to Settings' own defaults inside the container (empty
-      # string is falsy for the two optional str fields; the identity
-      # directory default below matches the volume mount below).
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
       FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
       FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
-      FLEET_IDENTITY_DIRECTORY: ${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}
       FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
@@ -353,9 +357,11 @@ services:
       # `docker compose run` lives only in that one-off container's
       # writable layer: it is lost the moment the container exits, and
       # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
-      # re-enroll to replace it (Codex review). Must match
-      # FLEET_IDENTITY_DIRECTORY above. On Linux, run
+      # re-enroll to replace it (Codex review). On Linux, run
       # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
       - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
@@ -378,11 +384,10 @@ services:
       # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
       # at runtime never also requires editing this file. Unset host vars
       # resolve to Settings' own defaults inside the container (empty
-      # string is falsy for the two optional str fields; the identity
-      # directory default below matches the volume mount below).
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
       FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
       FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
-      FLEET_IDENTITY_DIRECTORY: ${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}
       FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
@@ -410,9 +415,11 @@ services:
       # `docker compose run` lives only in that one-off container's
       # writable layer: it is lost the moment the container exits, and
       # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
-      # re-enroll to replace it (Codex review). Must match
-      # FLEET_IDENTITY_DIRECTORY above. On Linux, run
+      # re-enroll to replace it (Codex review). On Linux, run
       # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
       - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
@@ -435,11 +442,10 @@ services:
       # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
       # at runtime never also requires editing this file. Unset host vars
       # resolve to Settings' own defaults inside the container (empty
-      # string is falsy for the two optional str fields; the identity
-      # directory default below matches the volume mount below).
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
       FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
       FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
-      FLEET_IDENTITY_DIRECTORY: ${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}
       FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
@@ -467,9 +473,11 @@ services:
       # `docker compose run` lives only in that one-off container's
       # writable layer: it is lost the moment the container exits, and
       # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
-      # re-enroll to replace it (Codex review). Must match
-      # FLEET_IDENTITY_DIRECTORY above. On Linux, run
+      # re-enroll to replace it (Codex review). On Linux, run
       # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
       - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
@@ -492,11 +500,10 @@ services:
       # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
       # at runtime never also requires editing this file. Unset host vars
       # resolve to Settings' own defaults inside the container (empty
-      # string is falsy for the two optional str fields; the identity
-      # directory default below matches the volume mount below).
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
       FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
       FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
-      FLEET_IDENTITY_DIRECTORY: ${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}
       FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
@@ -524,9 +531,11 @@ services:
       # `docker compose run` lives only in that one-off container's
       # writable layer: it is lost the moment the container exits, and
       # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
-      # re-enroll to replace it (Codex review). Must match
-      # FLEET_IDENTITY_DIRECTORY above. On Linux, run
+      # re-enroll to replace it (Codex review). On Linux, run
       # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
       - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
@@ -549,11 +558,10 @@ services:
       # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
       # at runtime never also requires editing this file. Unset host vars
       # resolve to Settings' own defaults inside the container (empty
-      # string is falsy for the two optional str fields; the identity
-      # directory default below matches the volume mount below).
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
       FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
       FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
-      FLEET_IDENTITY_DIRECTORY: ${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}
       FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
@@ -581,9 +589,11 @@ services:
       # `docker compose run` lives only in that one-off container's
       # writable layer: it is lost the moment the container exits, and
       # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
-      # re-enroll to replace it (Codex review). Must match
-      # FLEET_IDENTITY_DIRECTORY above. On Linux, run
+      # re-enroll to replace it (Codex review). On Linux, run
       # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
       - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
@@ -607,11 +617,10 @@ services:
       # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
       # at runtime never also requires editing this file. Unset host vars
       # resolve to Settings' own defaults inside the container (empty
-      # string is falsy for the two optional str fields; the identity
-      # directory default below matches the volume mount below).
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
       FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
       FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
-      FLEET_IDENTITY_DIRECTORY: ${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}
       FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
@@ -641,9 +650,11 @@ services:
       # `docker compose run` lives only in that one-off container's
       # writable layer: it is lost the moment the container exits, and
       # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
-      # re-enroll to replace it (Codex review). Must match
-      # FLEET_IDENTITY_DIRECTORY above. On Linux, run
+      # re-enroll to replace it (Codex review). On Linux, run
       # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
       - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 

@@ -1797,6 +1797,27 @@ class TestDeleteIdentity:
     ) -> None:
         assert identity_mod.delete_identity(tmp_path / "never-enrolled") == []
 
+    def test_missing_identity_yaml_still_sweeps_orphaned_key_material(
+        self, tmp_path: object
+    ) -> None:
+        """P2 (Codex round 3): an enroll that crashed between writing key
+        material and writing identity.yaml itself must still be cleanable --
+        the pattern sweep must run even with no identity.yaml to key off of."""
+        directory = tmp_path / "identity"
+        directory.mkdir()
+        (directory / "robot.key").write_bytes(b"orphan-key")
+        (directory / "robot.crt").write_bytes(b"orphan-crt")
+        (directory / "ca.crt").write_bytes(b"orphan-ca")
+        assert not (directory / "identity.yaml").exists()
+
+        deleted = identity_mod.delete_identity(directory)
+
+        assert deleted == sorted(["robot.key", "robot.crt", "ca.crt"])
+        assert "identity.yaml" not in deleted
+        assert not directory.exists()
+        # Idempotent: nothing left, second call is a clean no-op.
+        assert identity_mod.delete_identity(directory) == []
+
     def test_missing_identity_yaml_is_idempotent_on_repeat_calls(
         self, fake_server: str, tmp_path: object
     ) -> None:

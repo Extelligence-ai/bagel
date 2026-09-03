@@ -83,6 +83,12 @@ reconnects briefly to republish the schema, then re-pauses -- it never
 silently comes back online. Rules applied this way are persisted to the
 startup manifest's `streams:` section, so they survive container restarts.
 
+Event rules are accepted, validated, merged, and persisted the same way
+channel rules are, and `stream_live_topics`/`stop_live_streams` report them
+back as `events_configured` -- but on-robot evaluation ships in a later
+release; configuration is forward-compatible, not yet active
+(`events_active` is always `False`).
+
 `pause_fleet_streaming` / `resume_fleet_streaming` take the connection
 offline and back without touching identity or rules -- a paused robot leaves
 a retained `reason: "paused"` heartbeat on the broker, so fleet-side
@@ -111,18 +117,41 @@ uv run python -m src.sink.publish.selftest --broker mqtt://localhost:1883  # dev
 
 It publishes a fixed four-channel schema, ten deterministic batches, a
 heartbeat and an event (exact expected values are in the contract doc's
-Conformance section), prints a one-line JSON summary, and exits 0.
+Conformance section), prints a one-line JSON summary, and exits 0. It keeps
+publishing AS the enrolled robot on that robot's real topics, but none of its
+own messages are retained and it arms no last-will, so it leaves no residue
+behind once it's done -- a real robot's own retained schema/heartbeat, and
+the live service's own last-will, are left completely untouched.
 
 Run it with fleet streaming **paused or stopped**: it shares the robot's real
-spool lanes, and a concurrently running streaming service makes one side fail
-a sequence check. That failure is clean and harmless -- a typed error, exit
-code 1, nothing corrupted -- but the run doesn't count; pause and rerun.
+spool lanes and holds the spool lock for its entire run, so a concurrently
+running service's ingestion blocks until the selftest finishes -- sequence
+integrity is preserved either way, but on a high-rate robot the paused
+ingestion can surface as counted queue drops (`queue.dropped` in the next
+heartbeat). Pausing first avoids both the wait and the drops. If another
+writer already holds the lock, the selftest refuses with a typed error
+rather than waiting indefinitely.
 
 The selftest also refuses outright if either spool lane already has pending
 unacked backlog (e.g. a paused service's queued-but-unsent data) -- exit 1,
 nothing touched -- since it would otherwise ack its way past that backlog and
 silently drop it; let the service drain the backlog, or discard it first via
 `pause_fleet_streaming(discard=True)`.
+
+And it refuses outright, before publishing anything, if the robot's live
+fleet session is currently **connected** (not merely paused) -- pausing or
+stopping the service first is required here, not just recommended, since
+this run's fixture schema would otherwise reach that connected live
+subscriber as a schema update, remapping live channel batches to the
+fixture's `selftest.*` channels until the live service's next reconnect.
+That check isn't just a start-of-run gate: it keeps watching for the rest
+of the run, and aborts (same typed error, connection torn down silently,
+no close beat) the instant it sees any live activity on the robot's
+session topics -- not the heartbeat alone. A service resuming partway
+through a run can have its heartbeat thread stuck behind the selftest's
+own spool lock while its router still reconnects and republishes the
+schema regardless, so both topics are watched, and a signal on either one
+is enough on its own to abort.
 
 ## Dev rigs
 

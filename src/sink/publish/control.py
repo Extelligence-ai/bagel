@@ -65,6 +65,63 @@ from src.sink.publish.spool import Spool
 # slow mutating call.
 _control_lock = threading.Lock()
 
+# Honest-reporting ruling (Codex round 3, P1a): event rules are accepted,
+# validated, merged, restarted against, and persisted to the manifest just
+# like channel rules -- but the on-robot runtime that would actually
+# evaluate an event predicate and fire an event ships in a later release
+# (step 8 lands before launch). Rejecting event rules now would break
+# manifest workflows that already declare them; instead `stream_topics`/
+# `stop_streams` report them honestly via `events_configured`/
+# `events_active` (see each function's Returns) and log this once whenever
+# a call leaves any event rule configured.
+EVENTS_NOT_ACTIVE_MSG = (
+    "event rules are stored and forwarded but not evaluated until the event runtime ships"
+)
+
+
+def _warn_if_events_configured(events: list) -> None:
+    if events:
+        logging.getLogger(__name__).warning(EVENTS_NOT_ACTIVE_MSG)
+
+
+def _fleet_installed() -> bool:
+    """Whether the optional `fleet` dependency group (paho-mqtt) is importable.
+
+    Uses `find_spec`, not an actual import: `fleet_status()` must answer
+    without ever eagerly importing paho (unlike `require_fleet()`, which
+    does import it, for the operations that actually need it running).
+
+    `find_spec` on a dotted name ("paho.mqtt") first resolves the PARENT
+    package ("paho") to read its `__path__`. If `paho` is present on the
+    path only as a half-installed namespace package -- no `__init__.py`, or
+    otherwise broken -- that parent-resolution step can itself raise
+    `ModuleNotFoundError` or `ValueError` instead of `find_spec` cleanly
+    returning `None` (Codex round 3, P2). `fleet_status()`'s whole contract
+    is "never raises", so either is treated as "not installed" here rather
+    than propagating.
+    """
+    try:
+        return importlib.util.find_spec("paho.mqtt") is not None
+    except (ModuleNotFoundError, ValueError):
+        return False
+
+
+def _service_status(service: FleetService | None) -> dict | None:
+    """`service.status()`, guarded: `fleet_status()` must never raise (Codex round 3, P2).
+
+    `status()` reads live spool stats (`Spool.stats()` rescans a lane's
+    active segment on first access), so a corrupt segment on disk can raise
+    `SpoolCorruptError` straight out of a call that is supposed to be a
+    read-only diagnostic. Surface the failure IN the report instead of
+    letting it blow up the report itself.
+    """
+    if service is None:
+        return None
+    try:
+        return service.status()
+    except Exception as exc:  # fleet_status() must never raise, by design (Codex round 3)
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
 
 def fleet_status() -> dict:
     """Report this robot's fleet-streaming state -- the local source of truth (spec §7).
@@ -83,7 +140,10 @@ def fleet_status() -> dict:
                        "renew_url"} | None,  # never key material, never paths
           "service": "running" | "paused" | "stopped",
           "channels": list[dict],  # resolved channel descriptors, [] if no service
-          "status": dict | None,   # FleetService.status()'s §4 counters block, verbatim
+          "status": dict | None,   # FleetService.status()'s §4 counters block, verbatim,
+                                    # {"error": "<class>: <msg>"} if status() itself raised
+                                    # (e.g. a corrupt spool segment -- Codex round 3, P2),
+                                    # None if no service is running
         }
         ```
 
@@ -118,12 +178,12 @@ def fleet_status() -> dict:
 
     return {
         "enabled": bool(settings.FLEET_ENABLED),
-        "installed": importlib.util.find_spec("paho.mqtt") is not None,
+        "installed": _fleet_installed(),
         "enrolled": loaded is not None,
         "identity": identity_summary,
         "service": service_state,
         "channels": service.channels if service is not None else [],
-        "status": service.status() if service is not None else None,
+        "status": _service_status(service),
     }
 
 
@@ -266,11 +326,29 @@ def stream_topics(channels: list[dict] | None, events: list[dict] | None) -> dic
     configured.
 
     Returns:
-        `{"service": "running" | "paused", "channels": list[dict], "events":
-        list[str], "persisted": bool}`. `"paused"` when the service this
-        replaced was paused: `_restart_service` preserves paused-ness across
-        the rule-change restart (I1 ruling) -- a brief reconnect blip to
-        republish the schema, then straight back to paused.
+        `{"service": "running" | "paused", "channels": list[dict],
+        "events_configured": list[str], "events_active": False, "persisted":
+        bool}`, plus `"persist_error": str` ONLY when persisting after an
+        otherwise-successful restart failed (see below). `"paused"` when the
+        service this replaced was paused: `_restart_service` preserves
+        paused-ness across the rule-change restart (I1 ruling) -- a brief
+        reconnect blip to republish the schema, then straight back to
+        paused. `events_configured` lists every event rule name now stored
+        and forwarded; `events_active` is always `False` -- event rules are
+        accepted, merged, and persisted, but nothing on-robot evaluates them
+        yet (honest-reporting ruling, Codex round 3: the event runtime ships
+        in a later release). A WARNING is logged once whenever
+        `events_configured` is non-empty.
+
+        Live-vs-persisted atomicity (Codex round 3, P2; widened P2 follow-up
+        on PR #214 to also cover `OSError`): the restart above has ALREADY
+        happened by the time persistence is attempted, so a persist failure
+        here (an unparsable manifest, or an `OSError` from a read-only
+        manifest directory, a full disk, etc) does NOT raise -- raising
+        would misreport a live change that genuinely succeeded as a total
+        failure. Instead `persisted` is `False` and `persist_error` carries
+        the problem, so the caller sees the true state: the robot IS running
+        the new rules; the manifest just doesn't reflect it yet.
 
     Raises:
         FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
@@ -309,14 +387,20 @@ def stream_topics(channels: list[dict] | None, events: list[dict] | None) -> dic
         )
 
         _restart_service(merged)
-        persisted = _persist_streams(merged.to_manifest())
+        persisted, persist_error = _persist_or_report(merged.to_manifest())
         service = startup.fleet_service()
-        return {
+        event_names = [rule.name for rule in merged.events]
+        _warn_if_events_configured(event_names)
+        result = {
             "service": "paused" if service.paused else "running",
             "channels": service.channels,
-            "events": [rule.name for rule in merged.events],
+            "events_configured": event_names,
+            "events_active": False,
             "persisted": persisted,
         }
+        if persist_error is not None:
+            result["persist_error"] = persist_error
+        return result
 
 
 def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
@@ -343,11 +427,39 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
 
     Returns:
         `{"service": "running" | "paused" | "stopped", "channels":
-        list[dict], "events": list[str], "changed": bool, "persisted":
-        bool}`. `"paused"` when a restart happened and the service it
-        replaced was paused: `_restart_service` preserves paused-ness across
-        the restart (I1 ruling) -- a brief reconnect blip to republish the
-        schema, then straight back to paused.
+        list[dict], "events_configured": list[str], "events_active": False,
+        "changed": bool, "persisted": bool}`, plus `"persist_error": str`
+        ONLY when persisting after an actual, RESTARTED (`changed` AND a
+        live service) change failed (see below). `"paused"` when a restart
+        happened and the service it replaced was paused: `_restart_service`
+        preserves paused-ness across the restart (I1 ruling) -- a brief
+        reconnect blip to republish the schema, then straight back to
+        paused. `events_configured` lists the event rule names still stored
+        and forwarded after this call; `events_active` is always `False` --
+        nothing on-robot evaluates them yet (honest-reporting ruling, Codex
+        round 3: the event runtime ships in a later release). A WARNING is
+        logged once whenever `events_configured` is non-empty.
+
+        Live-vs-persisted atomicity (Codex round 3, P2; widened P2 follow-up
+        on PR #214 to also cover `OSError`) -- ONLY for the restarted case:
+        when `changed` is True AND a live service was running, the restart
+        has ALREADY happened (and, per `_restart_service`'s own
+        failure-outcome contract, already SUCCEEDED) by the time
+        persistence is attempted, so a persist failure there (an unparsable
+        manifest, or an `OSError` from a read-only manifest directory, a
+        full disk, etc) does NOT raise; `persisted` is `False` and
+        `persist_error` carries the problem instead, so a genuinely
+        successful live change is never misreported as a failure.
+
+        Persist-ONLY failure-outcome contract (Codex round 3 follow-up, PR
+        #214 P2 on comment 3924387659): when `changed` is True but NO live
+        service was running, this call's ENTIRE effect is the manifest
+        write -- there is no successful restart for a swallowed persist
+        failure to protect. A persist failure there PROPAGATES typed
+        (`StreamConfigError` or `OSError`) instead of being folded into
+        `persist_error`: the call did nothing, so it says so, rather than
+        reporting a misleadingly benign-looking `persisted: False` for what
+        is actually a total failure.
 
     Raises:
         FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
@@ -356,6 +468,10 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
             something changed and a service is running; per its failure-
             outcome contract, such a failure leaves the OLD service running
             untouched (see `_restart_service`'s docstring).
+        StreamConfigError | OSError: from `_persist_streams` itself, ONLY
+            when `changed` is True and NO live service was running (the
+            persist-only path above) -- an unparsable manifest, or a
+            read-only manifest directory / full disk / other write failure.
 
     """
     require_fleet()
@@ -384,20 +500,45 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
         # A pure no-op must not touch the manifest at all (not even a rewrite
         # with identical content) -- a manifest with no `streams:` section
         # stays byte-identical, and `persisted` truthfully reports `False`.
-        persisted = _persist_streams(remaining.to_manifest()) if changed else False
+        persist_error = None
+        if changed and service is not None:
+            # A restart already happened here (and, per `_restart_service`'s
+            # own failure-outcome contract, already SUCCEEDED -- a failing
+            # restart would have raised before this line was ever reached).
+            # `_persist_or_report`'s swallow-and-report ruling exists
+            # precisely to avoid masking that success (Codex round 3, P2,
+            # widened in the PR #214 follow-up).
+            persisted, persist_error = _persist_or_report(remaining.to_manifest())
+        elif changed:
+            # No live service, so nothing was restarted -- the manifest
+            # write IS this call's entire effect (Codex round 3 follow-up,
+            # PR #214 P2 on comment 3924387659). There is no successful
+            # restart here for a swallowed failure to protect, so a persist
+            # failure propagates typed instead: the call did nothing, and
+            # says so, rather than reporting a misleadingly benign-looking
+            # `persisted: False` for what is actually a total failure.
+            persisted = _persist_streams(remaining.to_manifest())
+        else:
+            persisted = False
         if service is None:
             service_state = "stopped"
         elif service.paused:
             service_state = "paused"
         else:
             service_state = "running"
-        return {
+        remaining_event_names = [rule.name for rule in remaining.events]
+        _warn_if_events_configured(remaining_event_names)
+        result = {
             "service": service_state,
             "channels": service.channels if service is not None else [],
-            "events": [rule.name for rule in remaining.events],
+            "events_configured": remaining_event_names,
+            "events_active": False,
             "changed": changed,
             "persisted": persisted,
         }
+        if persist_error is not None:
+            result["persist_error"] = persist_error
+        return result
 
 
 def _merge_by_key(current: list, new: list, *, key: Callable[[object], object]) -> list:
@@ -573,10 +714,15 @@ def _read_manifest_doc() -> dict:
     """Read the startup manifest into a dict; `{}` when unset, unwritten, or empty.
 
     Raises:
-        StreamConfigError: the file exists but fails to parse as YAML, or
-            parses to something other than a mapping -- so a corrupt
-            manifest is never silently treated as empty and then clobbered
-            by a subsequent `_persist_streams` write.
+        StreamConfigError: the file exists but fails to parse as YAML,
+            fails to even decode as UTF-8 (`Path.read_text()` raises
+            `UnicodeDecodeError` on invalid bytes -- before `yaml.safe_load`
+            ever runs, so this must be caught alongside `yaml.YAMLError`,
+            not just it; Codex round 3 follow-up, PR #214 P2, comment
+            3927023413's sibling finding), or parses to something other
+            than a mapping -- so a corrupt manifest is never silently
+            treated as empty and then clobbered by a subsequent
+            `_persist_streams` write.
 
     """
     path = _manifest_path()
@@ -584,7 +730,7 @@ def _read_manifest_doc() -> dict:
         return {}
     try:
         doc = yaml.safe_load(path.read_text())
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, UnicodeDecodeError) as exc:
         raise StreamConfigError("manifest", f"unparsable manifest at {path}: {exc}") from exc
     if doc is None:
         return {}
@@ -633,3 +779,36 @@ def _persist_streams(streams_manifest: dict | None) -> bool:
     finally:
         tmp.unlink(missing_ok=True)
     return True
+
+
+def _persist_or_report(streams_manifest: dict | None) -> tuple[bool, str | None]:
+    """`_persist_streams`, guarded so persist failure never masks an already-successful live change.
+
+    By the time `stream_topics`/`stop_streams` call this, `_restart_service`
+    has ALREADY succeeded -- the robot is really running the new rules. If
+    persisting that to disk fails, letting the exception propagate here
+    would surface as a raised exception from `stream_topics`/`stop_streams`,
+    which reads to a caller as "nothing happened" when actually the live
+    change DID happen and only the manifest write failed. So: catch it here,
+    and let the caller report `persisted=False` plus the error message
+    alongside its otherwise-successful result, instead of raising
+    post-restart.
+
+    Two failure modes are caught (Codex round 3, PR #214 P2 follow-up):
+    `StreamConfigError` (`_read_manifest_doc` refusing to clobber an
+    unparsable manifest it can't safely read first) and `OSError` (a
+    read-only manifest directory, a full disk, or any other failure from
+    `_persist_streams`'s `mkdir`/`mkstemp`/`fchmod`/write/`os.replace`
+    calls) -- both are equally "the live change succeeded, only the disk
+    write failed", so both get the same non-raising treatment.
+
+    Returns:
+        `(persisted, persist_error)`: `persist_error` is `None` on success
+        (including the "no manifest configured" `False` case, which is not
+        an error).
+
+    """
+    try:
+        return _persist_streams(streams_manifest), None
+    except (StreamConfigError, OSError) as exc:
+        return False, str(exc)

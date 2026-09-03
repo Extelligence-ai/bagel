@@ -85,13 +85,18 @@ def test_every_fleet_enabled_service_forwards_enrollment_settings() -> None:
     FLEET_ENROLL_TOKEN/FLEET_ENROLL_URL, so `maybe_enroll_on_first_boot()`
     silently no-ops even when an operator exports both on the host --
     production mqtts:// startup fails with no obvious cause. Also requires
-    FLEET_IDENTITY_DIRECTORY and FLEET_DEV_INSECURE passthrough, matching
-    FLEET_ENABLED's own ``${VAR:-default}`` style.
+    FLEET_DEV_INSECURE passthrough, matching FLEET_ENABLED's own
+    ``${VAR:-default}`` style.
+
+    FLEET_IDENTITY_DIRECTORY is deliberately excluded (Codex round 3): the
+    volume mount already fixes the container-side path, and forwarding a
+    host-set override would let the container write identity material
+    off-volume where it's lost on recreation. See
+    test_fleet_identity_directory_is_not_forwarded below.
     """
     required = {
         "FLEET_ENROLL_TOKEN": "${FLEET_ENROLL_TOKEN:-}",
         "FLEET_ENROLL_URL": "${FLEET_ENROLL_URL:-}",
-        "FLEET_IDENTITY_DIRECTORY": "${FLEET_IDENTITY_DIRECTORY:-/home/ubuntu/.bagel/identity}",
         "FLEET_DEV_INSECURE": "${FLEET_DEV_INSECURE:-false}",
     }
     offenders = []
@@ -105,6 +110,25 @@ def test_every_fleet_enabled_service_forwards_enrollment_settings() -> None:
     assert not offenders, f"FLEET_ENABLED services missing enrollment passthrough: {offenders}"
 
 
+def test_fleet_identity_directory_is_not_forwarded() -> None:
+    """FLEET_IDENTITY_DIRECTORY must never be forwarded into the container.
+
+    Codex review (round 3): forwarding this var let an operator override the
+    in-container identity path independently of the bind mount below,
+    silently steering enrollment writes off the persisted volume where a
+    container recreation would lose them. The bind mount is the only thing
+    that defines the container-side identity path now.
+    """
+    offenders = []
+    for name, service in _services().items():
+        env = service.get("environment", {}) or {}
+        if "FLEET_ENABLED" not in env:
+            continue
+        if "FLEET_IDENTITY_DIRECTORY" in env:
+            offenders.append(name)
+    assert not offenders, f"must not forward FLEET_IDENTITY_DIRECTORY: {offenders}"
+
+
 def test_every_fleet_enabled_service_persists_identity_directory() -> None:
     """The identity directory must be mounted from the host, not left in the container layer.
 
@@ -112,8 +136,9 @@ def test_every_fleet_enabled_service_persists_identity_directory() -> None:
     workflow, an unmounted identity directory lives only in the one-off
     container's writable layer and is lost on exit; because
     FLEET_ENROLL_TOKEN is single-use, a later run can't re-enroll to replace
-    it. The host-side mount must match FLEET_IDENTITY_DIRECTORY's
-    container-side default (/home/ubuntu/.bagel/identity) set above.
+    it. The bind mount's container-side path (/home/ubuntu/.bagel/identity)
+    is now the sole definition of where identity material lives -- see
+    test_fleet_identity_directory_is_not_forwarded (Codex round 3).
     """
     expected = "${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity"
     offenders = []
