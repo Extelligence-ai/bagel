@@ -161,6 +161,37 @@ class TestConnect:
         assert id_a == "bagel/acme-west/r7"
         assert id_b == "bagel/acme/west-r7"
 
+    def test_client_id_suffix_defaults_to_empty_unchanged_live_id(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        """The live service's own publisher never passes `client_id_suffix`
+        -- its id must stay exactly what it always was."""
+        _publisher().connect()
+        assert fake["client"].kwargs["client_id"] == "bagel/acme/r7"
+
+    def test_client_id_suffix_is_appended(self, fake: dict[str, FakeFleetPaho]) -> None:
+        """Codex round 3 follow-up (PR #214, P2, comment 3925391258): the
+        selftest CLI passes `client_id_suffix="-selftest"` so its
+        MqttPublisher never derives the SAME client id as the live
+        service's own (same tenant/robot) -- a broker kicks the existing
+        session when a new connection claims an already-connected client
+        id, so without this the selftest would displace live streaming."""
+        _publisher(client_id_suffix="-selftest").connect()
+        assert fake["client"].kwargs["client_id"] == "bagel/acme/r7-selftest"
+
+    def test_client_id_suffix_is_deterministic_across_reconnects(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        """Same determinism guarantee as the unsuffixed id: a suffixed
+        client id must still be identical on every reconnect, not merely
+        different from the live service's."""
+        p = _publisher(client_id_suffix="-selftest")
+        p.connect()
+        first_id = fake["client"].kwargs["client_id"]
+        p.connect()
+        second_id = fake["client"].kwargs["client_id"]
+        assert first_id == second_id == "bagel/acme/r7-selftest"
+
     def test_connect_raises_when_fleet_disabled_before_touching_paho(
         self, fake: dict[str, FakeFleetPaho], monkeypatch: pytest.MonkeyPatch
     ) -> None:

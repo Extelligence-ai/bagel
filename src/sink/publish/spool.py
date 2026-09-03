@@ -693,6 +693,22 @@ class Spool:
     def stats(self) -> dict[str, LaneStats]:
         """Get per-lane statistics (bytes, pending, seqs, evicted count).
 
+        Disk-authoritative `last_seq` (Codex round 3 follow-up, PR #214 P2
+        on comment 3925391258): previously `self._last_seq.get(lane) or
+        self._scan_last_seq(lane)` trusted this instance's own cache
+        WHENEVER it was already warm (non-zero) -- unlike `acked`
+        (`_watermarks()`) and `pending` (`self.pending()`), both of which
+        already re-read fresh from disk on every call. A warm cache left
+        stale by another writer advancing the same real lane (e.g. a live
+        `FleetService` whose heartbeat calls `stats()` while a selftest run
+        on a separate instance appends past where this instance last
+        looked) meant a heartbeat's reported `last_seq` -- and by extension
+        an operator's read of how far behind that lane's backlog actually
+        is -- silently lagged reality. Routed through `_current_last_seq`
+        instead: the same disk-authoritative derivation `next_seq()`/
+        `append()` use, cheap on the common path and storing the fresher
+        value back through the cache as a never-regress floor.
+
         Returns:
             Dict mapping lane name to LaneStats.
 
@@ -709,7 +725,7 @@ class Spool:
             for lane in sorted(lanes):
                 segments = self._segments(lane, create=False)
                 acked = marks.get(lane, 0)
-                last = self._last_seq.get(lane) or self._scan_last_seq(lane)
+                last = self._current_last_seq(lane)
                 pending = sum(1 for _ in self.pending(lane))
                 out[lane] = LaneStats(
                     bytes=sum(p.stat().st_size for p in segments),

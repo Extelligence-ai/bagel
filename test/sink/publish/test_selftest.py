@@ -377,6 +377,49 @@ class TestMain:
         assert captured["kwargs"]["batches"] == 3
         assert captured["kwargs"]["interval_s"] == 0.0
 
+    def test_publisher_gets_the_selftest_client_id_suffix(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Codex round 3 follow-up (PR #214, P2, comment 3925391258):
+        without a distinct client id, the selftest's MqttPublisher would
+        derive the SAME deterministic client id as the live service's own
+        (same tenant/robot) -- the broker kicks the existing session when a
+        new connection claims an already-connected client id, so running
+        the selftest against an enrolled robot's broker while its real
+        streaming service is connected would silently displace it."""
+        import src.sink.publish.selftest as selftest_mod
+
+        monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+        monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+        monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+        monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+        captured: dict = {}
+
+        def fake_mqtt_publisher(*args: object, **kwargs: object) -> object:
+            captured["kwargs"] = kwargs
+            return object()
+
+        monkeypatch.setattr(selftest_mod, "MqttPublisher", fake_mqtt_publisher)
+        monkeypatch.setattr(
+            selftest_mod,
+            "run_selftest",
+            lambda publisher, spool, **kwargs: {
+                "channels": 4,
+                "batches": 1,
+                "samples": 4,
+                "heartbeat": 1,
+                "events": 1,
+            },
+        )
+
+        rc = selftest_mod.main(
+            ["--broker", "mqtt://localhost:1883", "--batches", "1", "--interval-s", "0"]
+        )
+
+        assert rc == 0
+        assert captured["kwargs"]["client_id_suffix"] == "-selftest"
+
     def test_load_identity_or_none_is_a_single_load_not_check_then_load(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

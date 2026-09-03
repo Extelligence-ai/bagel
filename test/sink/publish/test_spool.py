@@ -492,6 +492,32 @@ class TestStats:
         assert st.acked_seq == 1
         assert st.bytes > 0
 
+    def test_stats_last_seq_is_disk_authoritative_on_a_warm_cache(
+        self, root: pathlib.Path
+    ) -> None:
+        """Codex round 3 follow-up (PR #214, P2, comment 3925391258):
+        `stats()`'s `last_seq` must reflect disk, not this instance's own
+        possibly-stale cache -- `acked_seq` (`_watermarks()`) and `pending`
+        (`self.pending()`) already re-read fresh from disk on every call;
+        `last_seq` must too, or a heartbeat calling `stats()` on a warm
+        instance reports a `last_seq` (and the backlog-depth picture that
+        implies) that lags behind what another writer already put on disk."""
+        a = Spool(root)
+        a.append_next("channels", lambda seq: {"n": seq})  # seq=1
+        a.ack("channels", 1)
+
+        b = Spool(root)
+        assert b.next_seq("channels") == 2  # warms b's cache at the OLD value (1)
+
+        a.append_next("channels", lambda seq: {"n": seq})  # seq=2, on disk now
+        a.ack("channels", 2)
+
+        # b never performs any mutator itself -- stats() alone must catch up.
+        st = b.stats()["channels"]
+        assert st.last_seq == 2
+        assert st.acked_seq == 2
+        assert st.pending == 0
+
 
 class TestNeverCappedLanes:
     def test_init_rejects_heartbeat_in_capped_lanes(self, root: pathlib.Path) -> None:

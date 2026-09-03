@@ -54,6 +54,7 @@ class MqttPublisher(Publisher):
         username: str | None = None,
         password: str | None = None,
         keepalive_s: int = 30,
+        client_id_suffix: str = "",
     ) -> None:
         """Parse `broker_url` and stash connection options; does not connect.
 
@@ -68,6 +69,27 @@ class MqttPublisher(Publisher):
             username: Broker username, if auth is required.
             password: Broker password, if auth is required.
             keepalive_s: MQTT keepalive interval in seconds.
+            client_id_suffix: Appended to the deterministic
+                `bagel/{tenant}/{robot}` client id (see `connect()`).
+                Defaults to `""` (the live service's id, unchanged). The
+                selftest CLI passes `"-selftest"` here (Codex round 3
+                follow-up, PR #214 P2 on comment 3925391258): the live
+                service's `MqttPublisher` and the selftest's both derive the
+                SAME client id from the same `(tenant, robot)` pair, and
+                MQTT brokers kick the existing session when a NEW connection
+                claims an already-connected client id -- so running the
+                selftest against an enrolled robot's `mqtts://` broker,
+                while that robot's real streaming service is also
+                connected, would silently DISPLACE (disconnect) the live
+                session. Cloud confirmed ACLs key on the cert CN, not the
+                client id, so appending a suffix here is free -- it doesn't
+                touch authorization. Still fully deterministic (no
+                randomness): the same `(tenant, robot, suffix)` always
+                produces the same id, preserving the reconnect-displacement
+                semantics the id's own determinism exists for (see
+                `connect()`'s comment) -- it just puts the selftest in its
+                own, separate client-id namespace instead of the live
+                service's.
 
         Raises:
             ValueError: If `broker_url`'s scheme is not `mqtt` or `mqtts`, or it has
@@ -84,6 +106,7 @@ class MqttPublisher(Publisher):
         self._use_tls = parsed.scheme == "mqtts" or any((tls_ca_certs, tls_certfile, tls_keyfile))
         self._tenant = tenant
         self._robot = robot
+        self._client_id_suffix = client_id_suffix
         self._tls = {"ca_certs": tls_ca_certs, "certfile": tls_certfile, "keyfile": tls_keyfile}
         self._username = username
         self._password = password
@@ -156,9 +179,13 @@ class MqttPublisher(Publisher):
             # unlike the old "bagel-{tenant}-{robot}" hyphen join, where
             # ("acme-west", "r7") and ("acme", "west-r7") both produced
             # "bagel-acme-west-r7" (Codex review). Mirrors the cert CN's
-            # delimiter. Must stay deterministic per (tenant, robot):
-            # reconnect displacement semantics depend on it.
-            client_id=f"bagel/{self._tenant}/{self._robot}",
+            # delimiter. Must stay deterministic per (tenant, robot,
+            # client_id_suffix): reconnect displacement semantics depend on
+            # it. `client_id_suffix` defaults to "" (unchanged live-service
+            # id); the selftest CLI passes "-selftest" so it never displaces
+            # the live service's own session on the same broker (see
+            # `__init__`'s docstring).
+            client_id=f"bagel/{self._tenant}/{self._robot}{self._client_id_suffix}",
             protocol=paho.MQTTv5,
         )
         client.will_set(

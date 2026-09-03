@@ -370,6 +370,17 @@ def main(argv: list[str] | None = None) -> int:
         directory = pathlib.Path(settings.FLEET_IDENTITY_DIRECTORY)
         identity = _load_identity_or_none(directory)
         kwargs = resolve_publisher_kwargs(StreamsConfig(broker=args.broker), identity)
+        # "-selftest" (Codex round 3 follow-up, PR #214 P2 on comment
+        # 3925391258): without this, the selftest's MqttPublisher would
+        # derive the SAME deterministic client id as the live service's own
+        # (same tenant/robot), and the broker kicks the existing session
+        # when a new connection claims an already-connected client id --
+        # running the selftest against an enrolled robot's broker while
+        # that robot's real streaming service is connected would silently
+        # DISPLACE the live session. Cloud confirmed ACLs key on the cert
+        # CN, not the client id, so this is free. See
+        # `MqttPublisher.__init__`'s docstring for the full reasoning.
+        kwargs["client_id_suffix"] = "-selftest"
         publisher = MqttPublisher(**kwargs)
         spool = Spool.for_robot(identity.robot if identity is not None else "dev/robot")
         result = run_selftest(publisher, spool, batches=args.batches, interval_s=args.interval_s)
