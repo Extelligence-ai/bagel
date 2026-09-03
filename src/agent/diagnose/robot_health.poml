@@ -50,8 +50,12 @@
                             (IMU) live on the `I` and `P` frame topics, which
                             `describe_data_source` exposes as SEPARATE topics (`I` =
                             keyframes at a lower rate, `P` = delta frames) - query each
-                            with its own `query_messages` call, and don't infer a data
-                            gap from either topic alone. `describe_topic` gives no
+                            with its own `query_messages` call. For LAG/interval work
+                            (data gaps, latency) use the `P` topic alone - it's the
+                            dense series; `I` keyframes are sparse by design, so
+                            intervals computed on `I`, or on either topic as if it
+                            were the whole stream, mis-measure. Use `I` only for
+                            values that need keyframes. `describe_topic` gives no
                             unit or scale for `vbatLatest` (it's a raw int); report it as
                             the raw value with an explicit units-unknown caveat, never
                             asserting volts or applying an unconfirmed conversion. Treat
