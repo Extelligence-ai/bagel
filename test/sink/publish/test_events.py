@@ -684,7 +684,7 @@ class TestEmitterStopAndFailures:
         def boom(*args: object, **kwargs: object) -> None:
             raise SpoolFullError("disk full")
 
-        monkeypatch.setattr(spool, "append", boom)
+        monkeypatch.setattr(spool, "append_next", boom)
         emitter.start()
         try:
             queue.put(("imu", 1.0, {"accel_x": -12.0}))

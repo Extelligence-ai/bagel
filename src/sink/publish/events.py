@@ -471,7 +471,16 @@ class EventEmitter(threading.Thread):
         self._last_report_at = now
 
     def _append_to_events_lane(self, build: Callable[[int], dict]) -> None:
-        """Allocate a seq, build the payload with it, and append to the never-drop lane.
+        """Atomically allocate a seq, build the payload with it, and append -- never-drop lane.
+
+        Goes through `Spool.append_next()` (post-#214 fusion), never a
+        separate `next_seq()` + `append()` pair: the payload embeds its own
+        seq, and the two-call shape leaves a gap where a competing writer
+        (the router's batch flush, a selftest's `exclusive()`-held run) can
+        allocate a colliding seq or stale the floor between the calls --
+        see `Spool.append_next`'s docstring. `build(seq)` runs inside the
+        spool lock, so it must stay small and non-blocking (both callers
+        only stamp an already-computed dict).
 
         Append-only -- the router pumps and acks (Task 3). A failure
         (`SpoolFullError` -- disk full on a never-drop lane -- or anything
@@ -480,8 +489,7 @@ class EventEmitter(threading.Thread):
         metrics), mirroring `HeartbeatThread._tick`'s posture.
         """
         try:
-            seq = self._spool.next_seq("events")
-            self._spool.append("events", seq, build(seq))
+            self._spool.append_next("events", build)
         except Exception:
             self._spool_failures += 1
             logger.warning("events spool append failed on lane 'events'", exc_info=True)
