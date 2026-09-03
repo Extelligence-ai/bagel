@@ -154,6 +154,16 @@ class Settings(BaseSettings):
     # Set "sse" or "streamable-http" to pin a single transport.
     MCP_TRANSPORT: str = "both"
 
+    # Fleet build provenance: unique identifier for this build (image layer, CI run ID, etc.).
+    # When set, stamped into heartbeat and event payloads under a "build" key.
+    # Images may bake this in at build time; otherwise sourced from environment at runtime.
+    BAGEL_BUILD_ID: str | None = None
+
+    # Fleet build provenance: version control reference (tag, branch, commit hash, etc.).
+    # Optional; only included in provenance when BAGEL_BUILD_ID is also set.
+    # Images may bake this in at build time; otherwise sourced from environment at runtime.
+    BAGEL_VCS_REF: str | None = None
+
 
 settings = Settings()
 

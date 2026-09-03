@@ -42,6 +42,7 @@ from src.sink.publish.connect import resolve_publisher_kwargs
 from src.sink.publish.heartbeat import build_heartbeat, disk_free
 from src.sink.publish.identity import Identity, load_identity
 from src.sink.publish.mqtt import MqttPublisher
+from src.sink.publish.provenance import build_provenance
 from src.sink.publish.publisher import Publisher, PublishError
 from src.sink.publish.spool import Spool, SpoolLockedError
 
@@ -245,6 +246,10 @@ def run_selftest(  # noqa: PLR0913
             publisher.publish_heartbeat(heartbeat_payload)
 
             events_seq = spool.next_seq("events")
+            summary = {"kind": "selftest", "batches": batches}
+            build = build_provenance()
+            if build is not None:
+                summary["build"] = build
             event_payload = {
                 "v": 1,
                 "seq": events_seq,
@@ -253,7 +258,7 @@ def run_selftest(  # noqa: PLR0913
                 "t_start": t0,
                 "t_end": now(),
                 "source_topic": "selftest",
-                "summary": {"kind": "selftest", "batches": batches},
+                "summary": summary,
             }
             spool.append("events", events_seq, event_payload)
             last_events_seq = events_seq

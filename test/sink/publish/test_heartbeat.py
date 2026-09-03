@@ -544,3 +544,64 @@ class TestRenewalCheckHook:
         finally:
             thread.stop()
         assert len(calls) >= 3
+
+
+class TestBuildHeartbeatWithProvenance:
+    def test_build_provenance_included_when_build_id_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from settings import settings
+
+        monkeypatch.setattr(settings, "BAGEL_BUILD_ID", "abc123")
+        monkeypatch.setattr(settings, "BAGEL_VCS_REF", "v2.2.3-4-gdeadbeef")
+        payload = build_heartbeat(
+            started_at=100.0,
+            subscriptions=[],
+            channels_active=0,
+            queue_depth=0,
+            queue_dropped=0,
+            spool_stats={},
+            disk_free_bytes=0,
+            reconnects=0,
+            now=130.0,
+        )
+        assert "build" in payload
+        assert payload["build"] == {"build_id": "abc123", "vcs_ref": "v2.2.3-4-gdeadbeef"}
+
+    def test_build_provenance_absent_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from settings import settings
+
+        monkeypatch.setattr(settings, "BAGEL_BUILD_ID", None)
+        monkeypatch.setattr(settings, "BAGEL_VCS_REF", None)
+        payload = build_heartbeat(
+            started_at=100.0,
+            subscriptions=[],
+            channels_active=0,
+            queue_depth=0,
+            queue_dropped=0,
+            spool_stats={},
+            disk_free_bytes=0,
+            reconnects=0,
+            now=130.0,
+        )
+        assert "build" not in payload
+
+    def test_build_provenance_with_build_id_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from settings import settings
+
+        monkeypatch.setattr(settings, "BAGEL_BUILD_ID", "abc123")
+        monkeypatch.setattr(settings, "BAGEL_VCS_REF", None)
+        payload = build_heartbeat(
+            started_at=100.0,
+            subscriptions=[],
+            channels_active=0,
+            queue_depth=0,
+            queue_dropped=0,
+            spool_stats={},
+            disk_free_bytes=0,
+            reconnects=0,
+            now=130.0,
+        )
+        assert "build" in payload
+        assert payload["build"] == {"build_id": "abc123"}
+        assert "vcs_ref" not in payload["build"]
