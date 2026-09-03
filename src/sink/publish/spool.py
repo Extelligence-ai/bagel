@@ -348,23 +348,55 @@ class Spool:
         either call, not just `append()` -- and there's exactly one piece
         of code that knows how to interpret "is this segment's tail
         trustworthy", not two copies that could drift apart. When
-        `_tail_last_seq` reports `terminated=False`, this reseals via the
-        same crash-tail-tolerant `_scan_last_seq` first touch already uses
-        (it truncates the untrustworthy bytes -- correct: no trailing
-        newline means the record was never durably committed -- and
-        recomputes the floor from what's left, with the watermark still
+        `_tail_last_seq` reports `terminated=False` -- OR reports `seq is
+        None` while a segment file DOES exist (empty or unparsable; Codex
+        round 3 follow-up, PR #214 P1 on comment 3924387659 -- see below),
+        this reseals via the same crash-tail-tolerant `_scan_last_seq` first
+        touch already uses (it truncates any untrustworthy bytes -- correct:
+        no trailing newline means the record was never durably committed --
+        and recomputes the floor from what's left, with the watermark still
         guarding against ever regressing below an already-acked seq).
+
+        Why a `None` tail on an EXISTING segment must reseal too, not just
+        fall back to the watermark: a `None` tail means "no active-segment
+        record was found" (the segment is empty -- e.g. a roll that created
+        the file but crashed before writing its first record -- or its tail
+        line doesn't parse). The watermark alone is NOT a safe floor there:
+        the segment's own FILENAME encodes a floor (`_first_seq_of(segment)
+        - 1`, exactly what `_scan_last_seq` derives), and EARLIER segments
+        can hold live, still-unacked records with seqs above the watermark.
+        Falling back to the watermark alone would ignore both, letting a
+        warm cache allocate a seq that collides with data already on disk
+        (a floor REGRESSION, not merely a stale-but-safe undercount) -- so
+        this is folded into the very same reseal branch as an unterminated
+        tail, not treated as a separate "safe to just use the watermark"
+        case. Only the genuine "no segment file exists at all" case (a lane
+        truly never touched) has no filename to derive a floor from --
+        `_scan_last_seq` handles that identically anyway (`if not segments:
+        return self._watermark(lane)`), so resealing unconditionally
+        whenever `tail is None` is both correct and just as cheap in that
+        case (a directory glob, no file I/O).
+
+        The disk-derived floor on the normal (non-reseal) path is stored
+        back into `self._last_seq[lane]` too (Codex round 3 follow-up, PR
+        #214 P2 on comment 3924387659): previously it was computed fresh on
+        every call but discarded instead of cached, so the cache could
+        silently lag behind what this instance's OWN reads had already
+        established on disk. Storing it is always safe -- it's folded
+        through `max()` with the existing cache, so it can only advance,
+        never regress, and it costs nothing extra to write.
         """
         if lane not in self._last_seq:
             self._last_seq[lane] = self._scan_last_seq(lane)
             return self._last_seq[lane]
         tail, terminated = self._tail_last_seq(lane)
-        if not terminated:
+        if not terminated or tail is None:
             self._last_seq[lane] = self._scan_last_seq(lane)
             return self._last_seq[lane]
-        disk_floor = self._watermark(lane) if tail is None else tail
-        disk_floor = max(disk_floor, self._watermark(lane))
-        return max(disk_floor, self._last_seq[lane])
+        disk_floor = max(tail, self._watermark(lane))
+        current = max(disk_floor, self._last_seq[lane])
+        self._last_seq[lane] = current
+        return current
 
     def exclusive(self, timeout: float = 5.0) -> filelock.AcquireReturnProxy:
         """Hold this spool's lock across an extended, multi-call critical section.

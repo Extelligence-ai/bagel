@@ -1235,6 +1235,79 @@ class TestStopStreams:
         assert "unparsable manifest" in result["persist_error"]
         assert manifest_path.read_text() == original_text
 
+    def test_no_service_persist_failure_stream_config_error_propagates(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """P2 follow-up (Codex round 3, PR #214, comment 3924387659): the
+        persist-only path (no live service) has no successful restart for a
+        swallowed persist failure to protect -- this call's ENTIRE effect
+        IS the manifest write, so a `StreamConfigError` from it must
+        propagate typed, not be folded into `persisted: False` /
+        `persist_error` the way the restarted case's failure is (see
+        `test_unparsable_manifest_does_not_undo_a_successful_restart`
+        above -- that's the WITH-a-live-service path, deliberately
+        unaffected by this ruling)."""
+        manifest_path = tmp_path / "manifest.yaml"
+        manifest_path.write_text(
+            yaml.safe_dump(
+                {
+                    "subscriptions": [],
+                    "streams": {
+                        "channels": [{"topic": "/imu", "fields": ["x"], "rate_hz": 50}],
+                        "events": [],
+                    },
+                }
+            )
+        )
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+        startup.set_fleet_service(None)
+
+        def boom(_streams_manifest: dict | None) -> bool:
+            raise StreamConfigError("manifest", "boom: simulated persist failure")
+
+        monkeypatch.setattr(control, "_persist_streams", boom)
+
+        with pytest.raises(StreamConfigError, match="boom"):
+            control.stop_streams(channels=["imu.x"], events=None)
+
+        assert startup.fleet_service() is None
+
+    @pytest.mark.skipif(
+        hasattr(os, "geteuid") and os.geteuid() == 0,
+        reason="root bypasses directory permission checks",
+    )
+    def test_no_service_persist_failure_os_error_propagates(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same ruling, the other exception `_persist_or_report` normally
+        swallows for the restarted case: an `OSError` (read-only manifest
+        directory, full disk, etc) from the persist-only path must also
+        propagate, not be folded into `persisted: False` / `persist_error`."""
+        manifest_dir = tmp_path / "readonly"
+        manifest_dir.mkdir()
+        manifest_path = manifest_dir / "manifest.yaml"
+        manifest_path.write_text(
+            yaml.safe_dump(
+                {
+                    "subscriptions": [],
+                    "streams": {
+                        "channels": [{"topic": "/imu", "fields": ["x"], "rate_hz": 50}],
+                        "events": [],
+                    },
+                }
+            )
+        )
+        manifest_dir.chmod(0o555)  # read-only AFTER writing: reads still work, writes fail
+        monkeypatch.setattr(settings, "STARTUP_PIPELINES_FILE", str(manifest_path))
+        startup.set_fleet_service(None)
+
+        try:
+            with pytest.raises(OSError):
+                control.stop_streams(channels=["imu.x"], events=None)
+            assert startup.fleet_service() is None
+        finally:
+            manifest_dir.chmod(0o755)  # restore write access so tmp_path cleanup can proceed
+
     def test_no_service_persist_only_reports_stopped(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

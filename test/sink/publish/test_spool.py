@@ -849,6 +849,131 @@ class TestUnterminatedTailReseal:
         assert calls == []  # no reseal once every tail stays properly terminated
 
 
+class TestEmptyOrUnparsableActiveSegmentFloorsAtFilename:
+    """Codex round 3 follow-up (PR #214, P1/P2, comment 3924387659).
+
+    P1: a `None` tail on an EXISTING active segment (empty -- a roll that
+    crashed before its first record landed -- or unparsable) must be
+    treated exactly like an unterminated tail: reseal via the full
+    `_scan_last_seq` path, which derives the FILENAME floor
+    (`_first_seq_of(segment) - 1`). The old fast path fell back to the
+    watermark ALONE in this case, ignoring both the filename floor and any
+    earlier segments' still-live (unacked) records -- a floor REGRESSION
+    that let a warm cache's `append_next()` allocate a seq that collides
+    with data already durably on disk (not merely a stale-but-safe
+    undercount).
+
+    P2: the disk-derived floor on the NORMAL (non-reseal) read path must be
+    stored back into `self._last_seq[lane]` -- previously computed fresh
+    every call but discarded, letting the cache silently lag behind what
+    this instance's own reads had already established. Safe because it's
+    folded through `max()`, so it can only advance.
+    """
+
+    def test_empty_active_segment_on_a_warm_cache_floors_at_filename_not_watermark(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 32)
+        a = Spool(root)
+        a.append("channels", 1, {"n": 1})  # segment-1
+
+        b = Spool(root)
+        assert b.next_seq("channels") == 2  # warms b's cache at the OLD value (last=1)
+
+        a.append("channels", 2, {"n": 2})  # segment-2 (cap forces a roll every append)
+        a.append("channels", 3, {"n": 3})  # segment-3
+        segments = sorted((root / "channels").glob("segment-*.jsonl"))
+        assert len(segments) == 3
+
+        # Simulate the crashed roller: a 4th append started a roll (created
+        # the next segment, named for the seq it was about to write) but
+        # crashed before any bytes landed -- b never saw any of this, its
+        # cache still says 1.
+        next_segment = root / "channels" / spool_mod._segment_name(4)
+        next_segment.write_bytes(b"")
+
+        allocated = b.append_next("channels", lambda seq: {"n": seq})
+
+        # The filename floor (segment-4 => floor 3) plus the live records
+        # 1-3 already on disk means the correct next seq is 4 -- never
+        # watermark(0)+1 == 1, which would collide with record 1, or worse
+        # get silently written INTO segment-4 under a mismatched name.
+        assert allocated == 4
+        assert [seq for seq, _ in b.pending("channels")] == [1, 2, 3, 4]
+
+    def test_unparsable_terminated_tail_on_a_warm_cache_also_reseals(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same ruling, the other `None`-tail sub-case: a properly
+        newline-terminated segment whose content still doesn't parse as a
+        usable record (e.g. a stray newline-only segment) must reseal too --
+        not silently trust the watermark alone, which here would ignore
+        both the filename floor and an earlier segment's still-live
+        (unacked) record."""
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 32)
+        a = Spool(root)
+        a.append("channels", 1, {"n": 1})  # segment-1
+
+        b = Spool(root)
+        assert b.next_seq("channels") == 2  # warms b's cache at 1
+
+        a.append("channels", 2, {"n": 2})  # segment-2 (cap forces a roll)
+        segments = sorted((root / "channels").glob("segment-*.jsonl"))
+        assert len(segments) == 2
+
+        # A stray newline-only segment named for seq 3 -- terminated
+        # (`\n`), but nothing parses out of it: the "unparsable" sub-case
+        # of a `None` tail.
+        stray_segment = root / "channels" / spool_mod._segment_name(3)
+        stray_segment.write_bytes(b"\n")
+
+        allocated = b.append_next("channels", lambda seq: {"n": seq})
+
+        assert allocated == 3  # filename floor (segment-3 => floor 2), never watermark(0)+1 == 1
+        assert [seq for seq, _ in b.pending("channels")] == [1, 2, 3]
+
+    def test_disk_derived_floor_is_stored_back_into_the_cache(self, root: pathlib.Path) -> None:
+        """P2: a pure peek (`next_seq()`) that derives a fresher floor than
+        this instance's own stale cache must store that fresher value back,
+        not just return it and discard it."""
+        a = Spool(root)
+        a.append_next("channels", lambda seq: {"n": seq})  # a's cache: last_seq=1
+
+        b = Spool(root)
+        b.append_next("channels", lambda seq: {"n": seq})  # disk now at seq=2; a's cache still 1
+
+        peeked = a.next_seq("channels")  # a pure read -- must reflect disk (2), not stale (1)
+        assert peeked == 3
+
+        # The freshly-derived floor (2) must be stored back into a's own
+        # cache, not merely returned -- observable by reading it directly.
+        assert a._last_seq["channels"] == 2
+
+    def test_stored_back_floor_does_not_cause_extra_full_scans(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The store-back must not regress the existing cheap-path
+        guarantee: `_scan_last_seq` (the expensive full-segment parse)
+        still only ever runs on a lane's first touch, never on a repeated
+        read/peek."""
+        a = Spool(root)
+        a.append_next("channels", lambda seq: {"n": seq})  # first touch
+
+        calls: list[str] = []
+        original = spool_mod.Spool._scan_last_seq
+
+        def spy(self: Spool, lane: str) -> int:
+            calls.append(lane)
+            return original(self, lane)
+
+        monkeypatch.setattr(spool_mod.Spool, "_scan_last_seq", spy)
+
+        for _ in range(5):
+            a.next_seq("channels")
+
+        assert calls == []  # no re-derivation via the expensive path
+
+
 class TestAppendNext:
     """Codex round 3 follow-up (PR #214, P1, comment 3924082774): `append_next()`
     closes the allocate-then-append race structurally. The old shape --
