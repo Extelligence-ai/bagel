@@ -381,6 +381,19 @@ def main(argv: list[str] | None = None) -> int:
         # CN, not the client id, so this is free. See
         # `MqttPublisher.__init__`'s docstring for the full reasoning.
         kwargs["client_id_suffix"] = "-selftest"
+        # retain_messages=False (Codex round 3 follow-up, PR #214 P1 on
+        # comment 3927023413): the selftest keeps publishing AS the robot
+        # (client-id suffix aside, cert-CN ACLs make an isolated identity a
+        # non-starter), so its retained publishes would otherwise linger on
+        # the SAME shared robot topics with nothing to overwrite them once
+        # the run ends -- its fixture schema staying retained until the
+        # live service's next reconnect (a late subscriber decodes live
+        # batches against the WRONG schema meanwhile), and its close() beat
+        # leaving a retained online:false (the robot looks dead until the
+        # next live beat). Retention isn't load-bearing for conformance --
+        # the validator subscribes before/during the run. See
+        # `MqttPublisher.__init__`'s docstring for the full reasoning.
+        kwargs["retain_messages"] = False
         publisher = MqttPublisher(**kwargs)
         spool = Spool.for_robot(identity.robot if identity is not None else "dev/robot")
         result = run_selftest(publisher, spool, batches=args.batches, interval_s=args.interval_s)

@@ -420,6 +420,50 @@ class TestMain:
         assert rc == 0
         assert captured["kwargs"]["client_id_suffix"] == "-selftest"
 
+    def test_publisher_gets_retain_messages_false(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Codex round 3 follow-up (PR #214, P1, comment 3927023413): the
+        selftest keeps publishing AS the robot on the SAME shared topics,
+        so its retained publishes would otherwise linger with nothing to
+        overwrite them once the run ends -- its fixture schema staying
+        retained (a late subscriber decodes live batches against the WRONG
+        schema until the live service's next reconnect) and its close()
+        beat leaving a retained online:false (the robot looks dead until
+        the next live beat)."""
+        import src.sink.publish.selftest as selftest_mod
+
+        monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+        monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+        monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+        monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+        captured: dict = {}
+
+        def fake_mqtt_publisher(*args: object, **kwargs: object) -> object:
+            captured["kwargs"] = kwargs
+            return object()
+
+        monkeypatch.setattr(selftest_mod, "MqttPublisher", fake_mqtt_publisher)
+        monkeypatch.setattr(
+            selftest_mod,
+            "run_selftest",
+            lambda publisher, spool, **kwargs: {
+                "channels": 4,
+                "batches": 1,
+                "samples": 4,
+                "heartbeat": 1,
+                "events": 1,
+            },
+        )
+
+        rc = selftest_mod.main(
+            ["--broker", "mqtt://localhost:1883", "--batches", "1", "--interval-s", "0"]
+        )
+
+        assert rc == 0
+        assert captured["kwargs"]["retain_messages"] is False
+
     def test_load_identity_or_none_is_a_single_load_not_check_then_load(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -502,6 +546,65 @@ def test_selftest_e2e_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_path: path
             "online": False,
             "reason": "stopped",
         }
+
+        # Codex round 3 follow-up (PR #214, P1, comment 3927023413): every
+        # schema/heartbeat publish this run made -- including the final
+        # close() beat, captured above -- must be non-retained.
+        assert all(retain is False for _, retain in got[schema_topic])
+        assert all(retain is False for _, retain in got[heartbeat_topic])
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+
+@pytest.mark.skipif(not BROKER, reason="MQTT_TEST_BROKER not set")
+def test_selftest_e2e_leaves_no_retained_residue(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Codex round 3 follow-up (PR #214, P1, comment 3927023413): after a
+    selftest run, a subscriber that only subscribes AFTER the run has
+    finished (never watching live) must receive NOTHING retained on the
+    schema/heartbeat topics -- `retain_messages=False` must leave no
+    residue for a late subscriber to find, not merely avoid delivering
+    retained flags to a subscriber that was already watching."""
+    import paho.mqtt.client as paho
+
+    import src.sink.publish.selftest as selftest_mod
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+    monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+    rc = selftest_mod.main(["--broker", BROKER, "--batches", "1", "--interval-s", "0"])
+    assert rc == 0
+
+    inbox: queue.Queue[tuple[str, bytes, bool]] = queue.Queue()
+    client = paho.Client(
+        callback_api_version=paho.CallbackAPIVersion.VERSION2,
+        client_id=f"fresh-sub-{uuid.uuid4().hex[:8]}",
+        protocol=paho.MQTTv5,
+    )
+    client.on_message = lambda cl, ud, msg: inbox.put((msg.topic, msg.payload, msg.retain))
+    parsed = urlparse(BROKER)
+    client.connect(parsed.hostname, parsed.port or 1883)
+    client.loop_start()
+    # Subscribed only now, well after main() (and its close()) returned --
+    # any retained message on these topics would be replayed immediately.
+    client.subscribe("bagel/v1/dev/robot/#", qos=1)
+    time.sleep(0.5)
+
+    try:
+        retained_topics: list[str] = []
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            try:
+                topic, _payload, retain = inbox.get(timeout=max(0.0, deadline - time.time()))
+            except queue.Empty:
+                break
+            if retain:
+                retained_topics.append(topic)
+        assert retained_topics == []
     finally:
         client.loop_stop()
         client.disconnect()

@@ -55,6 +55,7 @@ class MqttPublisher(Publisher):
         password: str | None = None,
         keepalive_s: int = 30,
         client_id_suffix: str = "",
+        retain_messages: bool = True,
     ) -> None:
         """Parse `broker_url` and stash connection options; does not connect.
 
@@ -90,6 +91,30 @@ class MqttPublisher(Publisher):
                 `connect()`'s comment) -- it just puts the selftest in its
                 own, separate client-id namespace instead of the live
                 service's.
+            retain_messages: When `False`, forces `retain=False` on every
+                publish (schema, heartbeat, and `close()`'s clean-stop
+                beat) and skips arming a last-will entirely (see
+                `connect()`). Defaults to `True` (the live service's
+                behavior, unchanged -- retained schema/heartbeat/LWT are
+                load-bearing there: a
+                late subscriber must be able to decode live batches and
+                see current liveness without waiting for the next publish).
+                The selftest CLI passes `False` (Codex round 3 follow-up,
+                PR #214 P1 on comment 3927023413): it keeps publishing AS
+                the robot (client-id suffix aside, cert-CN ACLs make an
+                isolated identity a non-starter -- see `client_id_suffix`
+                above), so its retained publishes would otherwise linger
+                on the SAME shared robot topics with nothing to overwrite
+                them once the run ends -- its fixture schema staying
+                retained until the live service's next reconnect (a late
+                subscriber decodes live batches against the WRONG schema
+                in the meantime), and its `close()` beat leaving a
+                retained `online: false` (the robot looks dead until the
+                next live beat). Retention is not load-bearing for
+                conformance -- the validator subscribes before/during the
+                run, and the wire contract's §10 sequence is about
+                ordering and shape, not retention -- so going fully
+                non-retained costs the selftest nothing.
 
         Raises:
             ValueError: If `broker_url`'s scheme is not `mqtt` or `mqtts`, or it has
@@ -107,6 +132,7 @@ class MqttPublisher(Publisher):
         self._tenant = tenant
         self._robot = robot
         self._client_id_suffix = client_id_suffix
+        self._retain_messages = retain_messages
         self._tls = {"ca_certs": tls_ca_certs, "certfile": tls_certfile, "keyfile": tls_keyfile}
         self._username = username
         self._password = password
@@ -188,12 +214,24 @@ class MqttPublisher(Publisher):
             client_id=f"bagel/{self._tenant}/{self._robot}{self._client_id_suffix}",
             protocol=paho.MQTTv5,
         )
-        client.will_set(
-            wire_topic(self._tenant, self._robot, "heartbeat"),
-            _dump(LWT_PAYLOAD),
-            qos=1,
-            retain=True,
-        )
+        # No LWT at all when `retain_messages` is False (Codex round 3
+        # follow-up, PR #214 P1 on comment 3927023413): `will_set` exists to
+        # tell subscribers the ROBOT went offline unexpectedly, RETAINED so
+        # a late subscriber still sees it -- neither half of that applies to
+        # an ephemeral, non-retained session like the selftest's. It isn't
+        # "the robot" going offline, just a diagnostic run ending, and
+        # arming even a non-retained will would still momentarily publish a
+        # confusing "offline" blip on the SHARED robot heartbeat topic to
+        # anyone watching live if this session ever dropped uncleanly.
+        # Simplest and safest: skip arming a will at all for this mode,
+        # rather than merely un-retaining it.
+        if self._retain_messages:
+            client.will_set(
+                wire_topic(self._tenant, self._robot, "heartbeat"),
+                _dump(LWT_PAYLOAD),
+                qos=1,
+                retain=True,
+            )
         if self._use_tls:
             client.tls_set(**self._tls)
         if self._username is not None:
@@ -247,11 +285,19 @@ class MqttPublisher(Publisher):
     def publish(
         self, kind: str, payload: dict, *, retain: bool = False, timeout_s: float = 10.0
     ) -> None:
-        """Publish `payload` as JSON at QoS 1 on the wire topic for `kind`."""
+        """Publish `payload` as JSON at QoS 1 on the wire topic for `kind`.
+
+        `retain` is forced to `False` when `self._retain_messages` is
+        `False` regardless of what the caller (e.g. `Publisher.
+        publish_schema`/`publish_heartbeat`, which always call with
+        `retain=True`) requested -- see `__init__`'s `retain_messages`
+        docstring for why the selftest needs this.
+        """
         if self._client is None:
             raise PublishError("publisher is not connected")
         topic = wire_topic(self._tenant, self._robot, kind)
-        info = self._client.publish(topic, _dump(payload), qos=1, retain=retain)
+        effective_retain = retain and self._retain_messages
+        info = self._client.publish(topic, _dump(payload), qos=1, retain=effective_retain)
         try:
             info.wait_for_publish(timeout=timeout_s)
         except Exception as exc:
@@ -269,7 +315,13 @@ class MqttPublisher(Publisher):
                 field (spec §3). `FleetService.stop()` uses the default
                 `"stopped"`; `FleetService.pause()` passes `"paused"` so a
                 paused robot's last retained heartbeat reads distinctly from
-                a genuinely stopped one.
+                a genuinely stopped one. Retained only when
+                `self._retain_messages` is `True` (the live service default)
+                -- the selftest's clean-stop beat must not leave a retained
+                `online: false` corpse on the shared robot's heartbeat
+                topic (Codex round 3 follow-up, PR #214 P1 on comment
+                3927023413), or the robot would look dead until its live
+                service's next beat.
 
         """
         client, self._client = self._client, None
@@ -284,7 +336,7 @@ class MqttPublisher(Publisher):
                         wire_topic(self._tenant, self._robot, "heartbeat"),
                         _dump(stopped),
                         qos=1,
-                        retain=True,
+                        retain=self._retain_messages,
                     )
                     info.wait_for_publish(timeout=5.0)
                 except Exception:

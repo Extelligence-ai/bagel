@@ -305,13 +305,20 @@ uv run python -m src.sink.publish.selftest [--broker mqtt(s)://...] \
 ```
 
 It publishes, in order, using the enrolled identity (or `--broker` on a dev
-rig): one retained schema, N channel batches (default 10, default 0.5 s
-apart), one heartbeat, one event -- then prints a one-line JSON summary and
-exits 0 (any expected failure prints to stderr and exits 1). It requires both
-spool lanes (`channels`, `events`) to be fully drained (no pending unacked
-entries) before it will start -- it allocates and acks real seqs on those
-lanes, so pending backlog would otherwise be silently advanced past; run it
-with fleet streaming paused or stopped.
+rig): one schema, N channel batches (default 10, default 0.5 s apart), one
+heartbeat, one event -- then prints a one-line JSON summary and exits 0 (any
+expected failure prints to stderr and exits 1). It requires both spool lanes
+(`channels`, `events`) to be fully drained (no pending unacked entries)
+before it will start -- it allocates and acks real seqs on those lanes, so
+pending backlog would otherwise be silently advanced past; run it with fleet
+streaming paused or stopped.
+
+All of the selftest's own publishes -- schema, heartbeat, and its final
+close() beat -- are deliberately NOT retained (unlike a real robot's own
+schema/heartbeat) and it arms no last-will either, so a run leaves no
+retained residue on the robot's shared topics for a late subscriber to find;
+retention isn't load-bearing for conformance since a validator subscribes
+before or during the run.
 
 The fixture is fixed and deterministic. The schema is exactly these four
 channels:

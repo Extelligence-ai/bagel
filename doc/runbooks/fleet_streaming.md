@@ -117,7 +117,11 @@ uv run python -m src.sink.publish.selftest --broker mqtt://localhost:1883  # dev
 
 It publishes a fixed four-channel schema, ten deterministic batches, a
 heartbeat and an event (exact expected values are in the contract doc's
-Conformance section), prints a one-line JSON summary, and exits 0.
+Conformance section), prints a one-line JSON summary, and exits 0. It keeps
+publishing AS the enrolled robot on that robot's real topics, but none of its
+own messages are retained and it arms no last-will, so it leaves no residue
+behind once it's done -- a real robot's own retained schema/heartbeat, and
+the live service's own last-will, are left completely untouched.
 
 Run it with fleet streaming **paused or stopped**: it shares the robot's real
 spool lanes and holds the spool lock for its entire run, so a concurrently

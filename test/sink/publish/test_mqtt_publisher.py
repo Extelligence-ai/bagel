@@ -293,6 +293,92 @@ class TestClose:
         assert json.loads(stop[2])["reason"] == reason
 
 
+class TestRetainMessages:
+    """Codex round 3 follow-up (PR #214, P1, comment 3927023413):
+    `retain_messages=False` (the selftest) must leave no retained residue
+    on the SAME shared robot topics the live service publishes to -- its
+    fixture schema staying retained would make a late subscriber decode
+    live batches against the wrong schema until the live service's next
+    reconnect, and its close() beat leaving a retained `online: false`
+    would make the robot look dead until the next live beat.
+    """
+
+    def test_selftest_publisher_forces_schema_unretained(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher(retain_messages=False)
+        p.connect()
+        p.publish_schema({"v": 1, "channels": []})
+        call = [c for c in fake["client"].calls if c[0] == "publish"][-1]
+        assert call[1].endswith("/schema")
+        assert call[4] is False  # retain
+
+    def test_selftest_publisher_forces_heartbeat_unretained(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher(retain_messages=False)
+        p.connect()
+        p.publish_heartbeat({"v": 1, "online": True})
+        call = [c for c in fake["client"].calls if c[0] == "publish"][-1]
+        assert call[1].endswith("/heartbeat")
+        assert call[4] is False  # retain
+
+    def test_selftest_publisher_forces_close_beat_unretained(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher(retain_messages=False)
+        p.connect()
+        p.close()
+        stop = [c for c in fake["client"].calls if c[0] == "publish"][-1]
+        assert json.loads(stop[2])["online"] is False
+        assert stop[4] is False  # retain
+
+    def test_selftest_publisher_arms_no_last_will(self, fake: dict[str, FakeFleetPaho]) -> None:
+        p = _publisher(retain_messages=False)
+        p.connect()
+        assert fake["client"].will is None
+
+    def test_live_default_publisher_schema_still_retained(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        """Re-pin (retain_messages defaults to True, unchanged for the live
+        service): a retained schema is load-bearing there -- a late
+        subscriber must be able to decode live batches without waiting."""
+        p = _publisher()
+        p.connect()
+        p.publish_schema({"v": 1, "channels": []})
+        call = [c for c in fake["client"].calls if c[0] == "publish"][-1]
+        assert call[1].endswith("/schema")
+        assert call[4] is True  # retain
+
+    def test_live_default_publisher_heartbeat_still_retained(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        p.publish_heartbeat({"v": 1, "online": True})
+        call = [c for c in fake["client"].calls if c[0] == "publish"][-1]
+        assert call[1].endswith("/heartbeat")
+        assert call[4] is True  # retain
+
+    def test_live_default_publisher_close_beat_still_retained(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        p.close()
+        stop = [c for c in fake["client"].calls if c[0] == "publish"][-1]
+        assert stop[4] is True  # retain
+
+    def test_live_default_publisher_still_arms_a_retained_last_will(
+        self, fake: dict[str, FakeFleetPaho]
+    ) -> None:
+        p = _publisher()
+        p.connect()
+        _topic, _payload, _qos, retain = fake["client"].will
+        assert retain is True
+
+
 class TestSetTls:
     """CRITICAL fix: a post-renewal reconnect must pick up the NEW cert/key paths.
 
