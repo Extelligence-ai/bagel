@@ -103,6 +103,22 @@ class Settings(BaseSettings):
     # room for the newest; the queue never blocks the tap.
     FLEET_QUEUE_MAX_SAMPLES: int = 10_000
 
+    # Suppression cap for the fleet event engine: at most this many firings
+    # per rule in any trailing 60s window; the rest are counted and reported
+    # as `suppressed` on the next firing that passes the gate. See
+    # src/sink/publish/events.py.
+    FLEET_EVENTS_MAX_PER_MINUTE: int = 6
+
+    # Per-topic ring buffer sample cap for the fleet event engine (rules
+    # sharing a topic share one ring). Oldest samples are dropped first when
+    # over budget. See src/sink/publish/events.py.
+    FLEET_EVENT_RING_MAX_SAMPLES: int = 10_000
+
+    # Per-topic ring buffer byte budget for the fleet event engine, using an
+    # approximate (json.dumps-based) per-sample size. Oldest samples are
+    # dropped first when over budget. See src/sink/publish/events.py.
+    FLEET_EVENT_RING_MAX_BYTES: int = 67_108_864
+
     # Directory holding this robot's fleet enrollment identity: robot.key
     # (mode 0600), robot.crt, ca.crt, identity.yaml (tenant, robot_id,
     # broker_url, enroll_url, expires_at). See src/sink/publish/identity.py.
