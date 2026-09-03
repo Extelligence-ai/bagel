@@ -434,7 +434,12 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
             -- only reachable when something changed and a service is
             running; per its failure-outcome contract, such a failure leaves
             the OLD service running untouched (see `_restart_service`'s
-            docstring).
+            docstring). ACCEPTED GAP: the persist-only path (no running
+            service) cannot predicate-validate what it re-persists -- there
+            is no covering sink to build structs from -- so a stale invalid
+            event rule in the manifest rides along unvalidated and surfaces
+            at the next service start, where `startup._start_fleet` degrades
+            it to a `{"fleet": "failed"}` report entry rather than a crash.
 
     """
     require_fleet()
