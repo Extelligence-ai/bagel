@@ -162,7 +162,12 @@ class ArtifactStore:
                 single-segment traversal rules as ``for_robot`` -- belt and
                 braces, since config-sourced values still reach a filesystem
                 path.
-            event_id: Event identifier, used verbatim in the filename.
+            event_id: Event identifier; re-validated with the same
+                single-segment traversal rules as ``name`` -- it's always a
+                uuid4 string from our own emitter, so this should never fire
+                in practice, but a slash or ``..`` spliced unvalidated into
+                the filename is still a path-shaped value from outside this
+                function and gets the same belt-and-braces treatment.
             topic: Passed through to ``write_event_mcap``.
             struct: Passed through to ``write_event_mcap``.
             samples: Passed through to ``write_event_mcap``.
@@ -172,10 +177,11 @@ class ArtifactStore:
             tempfile's size alone exceeds ``max_bytes``.
 
         Raises:
-            ValueError: If ``name`` fails the traversal guard.
+            ValueError: If ``name`` or ``event_id`` fails the traversal guard.
 
         """
         _validate_identifier(name, max_segments=1)
+        _validate_identifier(event_id, max_segments=1)
 
         target = self._root / f"{name}-{event_id}.mcap"
         fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=self._root)
@@ -189,23 +195,29 @@ class ArtifactStore:
         finally:
             tmp_path.unlink(missing_ok=True)
 
-        self._evict()
+        self._evict(exclude=target)
         return target
 
-    def _evict(self) -> None:
+    def _evict(self, exclude: pathlib.Path) -> None:
         """Unlink the oldest artifact(s) by mtime while over budget.
 
-        Never unlinks the newest file, and never empties the store down to
-        zero files, even while over budget (matches ``Spool._evict``'s
-        drop-oldest posture). Missing-file races (a concurrent evictor or
-        collector) are tolerated via ``missing_ok=True``.
+        ``exclude`` (the file ``store()`` just wrote) is never a candidate --
+        excluded by identity, not by mtime ordering, so it can never be
+        evicted regardless of what its mtime happens to read as (a
+        same-second write racing an older file's forged/rolled-back mtime,
+        or any other mtime-luck coincidence). mtime ordering picks the
+        oldest only among the REMAINING files. Missing-file races (a
+        concurrent evictor or collector) are tolerated via
+        ``missing_ok=True``.
         """
         while True:
             stats = self.stats()
-            if stats["bytes"] <= self._max_bytes or stats["files"] <= 1:
+            if stats["bytes"] <= self._max_bytes:
                 return
-            files = list(self._root.glob("*.mcap"))
-            oldest = min(files, key=lambda p: p.stat().st_mtime)
+            candidates = [p for p in self._root.glob("*.mcap") if p != exclude]
+            if not candidates:
+                return
+            oldest = min(candidates, key=lambda p: p.stat().st_mtime)
             oldest.unlink(missing_ok=True)
 
     def stats(self) -> dict[str, int]:

@@ -121,6 +121,16 @@ class TestStore:
         assert result is None
         assert list(tiny_store._root.iterdir()) == []
 
+    def test_rejects_slash_event_id_and_writes_nothing(self, store: ArtifactStore) -> None:
+        with pytest.raises(ValueError):
+            store.store("hard_decel", "a/b", "imu", STRUCT, _samples(3))
+        assert list(store._root.iterdir()) == []
+
+    def test_rejects_dot_dot_event_id_and_writes_nothing(self, store: ArtifactStore) -> None:
+        with pytest.raises(ValueError):
+            store.store("hard_decel", "..", "imu", STRUCT, _samples(3))
+        assert list(store._root.iterdir()) == []
+
 
 class TestEviction:
     def test_cap_sized_for_two_files_evicts_two_oldest_of_four(
@@ -144,6 +154,37 @@ class TestEviction:
         assert remaining == {written[2], written[3]}
         assert store.stats()["bytes"] <= store._max_bytes
         assert store.stats()["files"] == 2
+
+    def test_just_written_file_survives_eviction_even_when_it_ties_or_loses_on_mtime(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """The just-written file must be excluded from eviction by identity.
+
+        Not by mtime: stamp the two pre-existing files with a mtime FAR in the
+        future (tied with each other), so the just-written third file's real
+        (present-day) mtime is the numerically OLDEST of the three. A plain
+        "oldest by mtime among all files" eviction would wrongly pick the
+        file that was just written; excluding it by identity must not.
+        """
+        probe = ArtifactStore(tmp_path / "probe", max_bytes=10 * 1024 * 1024)
+        probe_path = probe.store("probe", "evt-0", "imu", STRUCT, _samples(3))
+        one_file_bytes = probe_path.stat().st_size
+
+        store = ArtifactStore(tmp_path / "artifacts", max_bytes=2 * one_file_bytes)
+        far_future = 4_102_444_800.0  # year 2100
+        p1 = store.store("hard_decel", "evt-1", "imu", STRUCT, _samples(3))
+        os.utime(p1, (far_future, far_future))
+        p2 = store.store("hard_decel", "evt-2", "imu", STRUCT, _samples(3))
+        os.utime(p2, (far_future, far_future))  # tied with p1, both "newer" than p3 will be
+
+        p3 = store.store("hard_decel", "evt-3", "imu", STRUCT, _samples(3))
+
+        assert p3 is not None
+        assert p3.exists()
+        remaining = set(store._root.iterdir())
+        assert p3 in remaining
+        assert remaining <= {p1, p2, p3}
+        assert store.stats()["bytes"] <= store._max_bytes
 
 
 class TestStats:
