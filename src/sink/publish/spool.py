@@ -12,6 +12,21 @@ absorbs the replay. Concurrency: every mutator holds the spool's file
 lock (one lock per spool root, like the sink buffer's per-topic locks).
 `exclusive()` lets a caller hold that same lock across several mutating
 calls as one atomic unit (e.g. the selftest CLI, Codex round 3 P1b).
+
+Allocate-then-append MUST go through `append_next()`, never a separate
+`next_seq()` call followed by `append()` (Codex round 3 P1, comment
+3924082774): those are two separate lock acquisitions, so a competing
+writer's `exclusive()` (or its own `next_seq()`/`append()` pair) can run
+in the gap between them, and the disk-authoritative floor added earlier
+this round then makes the SECOND caller's `append()` raise `ValueError`
+against a seq it allocated against a now-stale floor -- exactly the
+router's `_tick`/`_final_flush` batch-spool path, which had that
+`ValueError` propagate uncaught out of `_tick()` and kill the whole
+`StreamRouter` thread (see `router.py`, and its own docstring update).
+`append_next()` derives the floor, allocates, and writes in ONE critical
+section, so no caller can ever be interleaved between allocation and
+write. `next_seq()` remains for genuine read-only introspection only
+(e.g. heartbeat prune-window math) -- see its docstring.
 """
 
 import dataclasses
@@ -20,7 +35,7 @@ import logging
 import os
 import pathlib
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import filelock
 
@@ -398,20 +413,38 @@ class Spool:
             ) from exc
 
     def next_seq(self, lane: str) -> int:
-        """Get the next sequence number for a lane.
+        """Peek the next sequence number for a lane -- READ-ONLY introspection.
+
+        NOT for allocate-then-append (Codex round 3 P1, comment 3924082774):
+        this returns a snapshot that is immediately stale the instant the
+        lock releases. A separate `next_seq()` call followed by a separate
+        `append()` call is TWO lock acquisitions with a gap between them in
+        which any other writer (another `Spool` instance's own
+        `next_seq()`/`append()` pair, or a `spool.exclusive()`-held run)
+        can advance the lane -- the disk-authoritative floor (this round)
+        then makes the second caller's `append()` raise `ValueError`
+        against a seq it allocated against a floor that's since moved. That
+        used to just mean a clean, if surprising, `ValueError`; it turned
+        out to also be exactly what could kill the live `StreamRouter`
+        thread (see `router.py` and its docstring) when the interleaving
+        landed on ITS `next_seq()`/`append()` pair. Every allocate-then-
+        write caller must use `append_next()` instead, which does both
+        under ONE lock acquisition. This method is for genuine read-only
+        uses that never write anything off the result -- e.g. heartbeat
+        prune-window math that only needs to know roughly where a lane is.
 
         Disk-authoritative (Codex round 3 follow-up, PR #214 P1): re-derives
         the floor from disk on every call after the lane's first touch --
         see `_current_last_seq` -- so a concurrent writer (a different
         `Spool` instance on the same root) that advanced the lane since this
-        instance last looked is reflected here too, not just in `append()`'s
-        rejection.
+        instance last looked is reflected here too.
 
         Args:
             lane: Lane name.
 
         Returns:
-            Next monotonic sequence number (1-based).
+            Next monotonic sequence number (1-based), valid only as a
+            snapshot at the moment this call returns.
 
         Raises:
             SpoolCorruptError: The lane's active segment has mid-file corruption
@@ -424,7 +457,14 @@ class Spool:
     # -- append ----------------------------------------------------------------
 
     def append(self, lane: str, seq: int, payload: dict) -> None:
-        """Append a record to a lane.
+        """Append a record to a lane at a CALLER-CHOSEN seq.
+
+        For a caller that already knows the exact seq it must use (e.g.
+        replaying/reconciling a specific record). For the far more common
+        "give me the next seq and write my payload there" pattern, use
+        `append_next()` instead -- it's the only way to do that atomically
+        (see its docstring and `next_seq()`'s for why a separate `next_seq()`
+        + `append()` pair is unsafe).
 
         Args:
             lane: Lane name.
@@ -449,45 +489,103 @@ class Spool:
             self._last_seq[lane] = current
             if seq <= current:
                 raise ValueError(f"seq must be monotonic: got {seq}, last was {current}")
-            line = json.dumps({"seq": seq, "payload": payload}) + "\n"
-            # Drop-oldest semantics extend to drop-oversized (Codex review):
-            # _evict() only ever unlinks while more than one segment exists,
-            # so a single record whose own serialized size alone exceeds
-            # SEGMENT_MAX_BYTES becomes its own sole/newest segment and can
-            # never be evicted -- unboundedly blowing past a capped lane's
-            # byte cap. Refuse to write it instead: consume the seq (so the
-            # caller's sequencing stays monotonic and no retry re-attempts
-            # the same doomed record) and count it as evicted. EXCEPTION:
-            # never drop on never-drop lanes (spec §4) -- their payloads are
-            # tiny, so this is in practice unreachable, but the never-drop
-            # ruling still applies if it somehow were.
-            if lane not in NEVER_CAPPED_LANES and len(line.encode("utf-8")) > SEGMENT_MAX_BYTES:
-                self._evicted[lane] = self._evicted.get(lane, 0) + 1
-                logging.getLogger(__name__).warning(
-                    "lane '%s': dropping oversized record seq=%d (%d bytes > SEGMENT_MAX_BYTES=%d)",
-                    lane,
-                    seq,
-                    len(line.encode("utf-8")),
-                    SEGMENT_MAX_BYTES,
-                )
-                self._last_seq[lane] = seq
-                return
-            segments = self._segments(lane)
-            active = segments[-1] if segments else None
-            rolled = False
-            if active is None or active.stat().st_size + len(line) > SEGMENT_MAX_BYTES:
-                active = self._lane_dir(lane) / _segment_name(seq)
-                rolled = True
-            try:
-                with open(active, "a", encoding="utf-8") as handle:
-                    handle.write(line)
-            except OSError as exc:
-                if lane not in self._capped:
-                    raise SpoolFullError(f"lane '{lane}': {exc}") from exc
-                raise SpoolError(f"lane '{lane}': {exc}") from exc
+            self._write_locked(lane, seq, payload)
+
+    def append_next(self, lane: str, build: Callable[[int], dict]) -> int:
+        """Atomically allocate the next seq AND append it -- ONE critical section.
+
+        The structural fix for the allocate-then-append race (Codex round 3
+        P1, comment 3924082774): deriving the floor, assigning `seq =
+        floor + 1`, and writing all happen under a SINGLE acquisition of
+        `self._lock`. No other writer -- another `Spool` instance's own
+        call, or a `spool.exclusive()`-held run -- can observe this lane's
+        state, allocate a colliding seq, or write in between; by
+        construction, there is no gap left for one to land in. This is now
+        the required path for every allocate-then-write caller (the live
+        router's batch-spool path, the selftest's channel/event appends) --
+        `next_seq()` followed by a separate `append()` call is exactly the
+        two-lock-acquisition pattern that made this race possible, and
+        remains unsafe for anything that writes off the result.
+
+        Args:
+            lane: Lane name.
+            build: Called with the allocated seq, INSIDE the lock, to
+                produce the JSON-serializable payload -- e.g.
+                ``lambda seq: {**batch, "seq": seq}`` or a small function
+                that stamps `payload["seq"] = seq` on an already-built dict
+                and returns it. This is the one point where the wire
+                payload's own embedded `seq` field (distinct from the
+                spool's own outer JSONL wrapper, which always carries `seq`
+                regardless) gets set, so it's guaranteed to match the
+                atomically-allocated value -- never a value observed,
+                computed, or raced against before the lock was held.
+
+        Returns:
+            The allocated seq.
+
+        Raises:
+            SpoolFullError: If lane is never-capped and write fails.
+            SpoolError: If lane is capped and write fails.
+            SpoolCorruptError: The lane's active segment has mid-file corruption
+                (only on the first call for this lane in this process's lifetime).
+
+        """
+        with self._lock:
+            current = self._current_last_seq(lane)
+            self._last_seq[lane] = current
+            seq = current + 1
+            payload = build(seq)
+            self._write_locked(lane, seq, payload)
+            return seq
+
+    def _write_locked(self, lane: str, seq: int, payload: dict) -> None:
+        """Write one record to `lane` at `seq` -- caller must already hold `self._lock`.
+
+        Shared by `append()` (caller-chosen seq, already floor-checked) and
+        `append_next()` (seq just allocated in the same critical section):
+        both have already established that `seq` is the correct next value
+        for this lane by the time this runs; this only does the actual
+        line-write, oversized-drop, segment-roll, and eviction bookkeeping.
+        """
+        line = json.dumps({"seq": seq, "payload": payload}) + "\n"
+        # Drop-oldest semantics extend to drop-oversized (Codex review):
+        # _evict() only ever unlinks while more than one segment exists,
+        # so a single record whose own serialized size alone exceeds
+        # SEGMENT_MAX_BYTES becomes its own sole/newest segment and can
+        # never be evicted -- unboundedly blowing past a capped lane's
+        # byte cap. Refuse to write it instead: consume the seq (so the
+        # caller's sequencing stays monotonic and no retry re-attempts
+        # the same doomed record) and count it as evicted. EXCEPTION:
+        # never drop on never-drop lanes (spec §4) -- their payloads are
+        # tiny, so this is in practice unreachable, but the never-drop
+        # ruling still applies if it somehow were.
+        if lane not in NEVER_CAPPED_LANES and len(line.encode("utf-8")) > SEGMENT_MAX_BYTES:
+            self._evicted[lane] = self._evicted.get(lane, 0) + 1
+            logging.getLogger(__name__).warning(
+                "lane '%s': dropping oversized record seq=%d (%d bytes > SEGMENT_MAX_BYTES=%d)",
+                lane,
+                seq,
+                len(line.encode("utf-8")),
+                SEGMENT_MAX_BYTES,
+            )
             self._last_seq[lane] = seq
-            if rolled:
-                self._evict(lane)
+            return
+        segments = self._segments(lane)
+        active = segments[-1] if segments else None
+        rolled = False
+        if active is None or active.stat().st_size + len(line) > SEGMENT_MAX_BYTES:
+            active = self._lane_dir(lane) / _segment_name(seq)
+            rolled = True
+        try:
+            with open(active, "a", encoding="utf-8") as handle:
+                handle.write(line)
+        except OSError as exc:
+            if lane not in self._capped:
+                raise SpoolFullError(f"lane '{lane}': {exc}") from exc
+            raise SpoolError(f"lane '{lane}': {exc}") from exc
+        self._last_seq[lane] = seq
+        if rolled:
+            self._evict(lane)
 
     # -- ack & watermark --------------------------------------------------------
 

@@ -849,6 +849,119 @@ class TestUnterminatedTailReseal:
         assert calls == []  # no reseal once every tail stays properly terminated
 
 
+class TestAppendNext:
+    """Codex round 3 follow-up (PR #214, P1, comment 3924082774): `append_next()`
+    closes the allocate-then-append race structurally. The old shape --
+    `next_seq()` then a separate `append()` call -- was TWO lock
+    acquisitions with a gap between them; a competing writer (another
+    `Spool` instance's own call, or a `spool.exclusive()`-held run, e.g. the
+    selftest) could land in that gap and advance the lane first, making the
+    original caller's `append()` raise `ValueError` against a seq it
+    allocated against a now-stale floor. `append_next()` derives the floor,
+    assigns the seq, and writes all under ONE lock acquisition, so there is
+    no gap left for a competitor to land in.
+    """
+
+    def test_old_two_call_windows_collision_is_now_impossible(self, root: pathlib.Path) -> None:
+        """Directly reproduces what used to be exploitable: A peeks via the
+        (still-legitimate, read-only) `next_seq()`, then B interleaves in
+        exactly the window that peek would have left open in the old
+        `next_seq()` + `append()` shape, via an `exclusive()`-held run
+        (mirroring the selftest's own pattern). A's ACTUAL write, routed
+        through `append_next()` instead of the old `append(peeked, ...)`,
+        must succeed with a freshly re-derived (not stale) seq -- zero
+        `ValueError`."""
+        a = Spool(root)
+        b = Spool(root)
+
+        peeked = a.next_seq("channels")
+        assert peeked == 1  # what A would have (incorrectly) tried to write at, pre-fix
+
+        with b.exclusive(timeout=1.0):
+            b.append_next("channels", lambda seq: {"seq": seq, "who": "b"})
+
+        actual_seq = a.append_next("channels", lambda seq: {"seq": seq, "who": "a"})
+
+        assert actual_seq == 2  # correctly re-derived, not the stale peeked=1
+        assert [seq for seq, _ in a.pending("channels")] == [1, 2]
+
+    def test_competitor_cannot_land_between_allocation_and_write(
+        self, root: pathlib.Path
+    ) -> None:
+        """Direct proof of atomicity: while A's `append_next` is mid-flight
+        (its `build` callable deliberately blocked, so we can observe it
+        running -- `build` runs INSIDE the lock), B's `append_next` must be
+        BLOCKED until A's single critical section completes. In the old
+        `next_seq()` + `append()` shape, the lock was already released by
+        this point (right after `next_seq()` returned), leaving exactly
+        this window open for B to land in."""
+        a = Spool(root)
+        b = Spool(root)
+        a_entered_build = threading.Event()
+        release_a = threading.Event()
+        order: list[str] = []
+
+        def slow_build(seq: int) -> dict:
+            order.append("a-build-entered")
+            a_entered_build.set()
+            release_a.wait(timeout=2.0)
+            order.append("a-build-exit")
+            return {"seq": seq}
+
+        t_a = threading.Thread(target=lambda: a.append_next("channels", slow_build))
+        t_a.start()
+        a_entered_build.wait(timeout=2.0)
+
+        def run_b() -> None:
+            b.append_next("channels", lambda seq: {"seq": seq})
+            order.append("b-append_next-done")
+
+        t_b = threading.Thread(target=run_b)
+        t_b.start()
+        time.sleep(0.1)  # give B a chance to attempt -- it must still be blocked
+        assert "b-append_next-done" not in order
+
+        release_a.set()
+        t_a.join()
+        t_b.join()
+
+        assert order.index("a-build-exit") < order.index("b-append_next-done")
+
+    def test_two_instances_stress_interleaved_yield_unique_contiguous_seqs(
+        self, root: pathlib.Path
+    ) -> None:
+        """Broader stress complement to the two directed tests above: many
+        concurrent `append_next` calls from two separate `Spool` instances,
+        zero `ValueError`, every seq 1..N allocated exactly once."""
+        a = Spool(root)
+        b = Spool(root)
+        errors: list[BaseException] = []
+        seqs: list[int] = []
+        seqs_lock = threading.Lock()
+        per_writer = 25
+
+        def writer(spool: Spool, tag: str) -> None:
+            for i in range(per_writer):
+                try:
+                    seq = spool.append_next("channels", lambda seq, i=i: {"seq": seq, "i": i})
+                except BaseException as exc:  # collected, asserted below (not swallowed)
+                    errors.append(exc)
+                else:
+                    with seqs_lock:
+                        seqs.append(seq)
+
+        t_a = threading.Thread(target=writer, args=(a, "a"))
+        t_b = threading.Thread(target=writer, args=(b, "b"))
+        t_a.start()
+        t_b.start()
+        t_a.join()
+        t_b.join()
+
+        assert errors == []
+        assert sorted(seqs) == list(range(1, 2 * per_writer + 1))
+        assert len(set(seqs)) == 2 * per_writer
+
+
 class TestExclusiveLock:
     """`Spool.exclusive()` (Codex round 3, P1b): hold the spool's real lock
     across a multi-call critical section, cross-process-safe, bounded wait.

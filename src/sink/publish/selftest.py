@@ -10,10 +10,13 @@ dev-insecure/mTLS rules a real robot would hit, not a shortcut around them.
 
 Run this with fleet streaming paused or stopped on the target robot/dev rig:
 a concurrently running `FleetService`/`StreamRouter` writes to the same real
-spool lanes this selftest uses (`Spool.for_robot`), and the spool's
-single-writer invariant means a concurrent writer fails the seq monotonicity
-check (`Spool.append`'s `ValueError`) cleanly rather than corrupting
-anything.
+spool lanes this selftest uses (`Spool.for_robot`). This is no longer
+required for correctness (Codex round 3): the whole run holds
+`spool.exclusive()` (P1b) so a concurrent writer simply waits its turn
+instead of racing for seqs, and every allocate-then-write call goes through
+`Spool.append_next()` (P1 follow-up, comment 3924082774) so allocation and
+write can never be interleaved by a DIFFERENT writer even without the lock.
+Pausing first remains good practice -- it avoids the wait -- see the runbook.
 
 Invocation is `uv run python -m src.sink.publish.selftest` -- there is no
 console-script entry point. This repo ships as a Docker image, not a PyPI
@@ -114,6 +117,20 @@ def _build_batch(i: int, t: float) -> dict:
     }
 
 
+def _stamp_seq(payload: dict, seq: int) -> dict:
+    """Stamp `payload["seq"] = seq` in place and return it.
+
+    A small `Spool.append_next()` `build` helper for the common case: the
+    wire payload dict already exists (e.g. `_build_batch`'s output) and just
+    needs the atomically-allocated seq written into its own embedded `seq`
+    field before it's spooled -- MUTATING in place (not returning a copy)
+    matters here, since the caller keeps its own reference to the same dict
+    to publish afterward, and both must see the identical stamped seq.
+    """
+    payload["seq"] = seq
+    return payload
+
+
 def _check_no_pending_backlog(spool: Spool) -> None:
     """Refuse to run against a spool lane with pending unacked entries (C1 ruling).
 
@@ -147,11 +164,16 @@ def run_selftest(  # noqa: PLR0913
 ) -> dict:
     """Publish the conformance fixture end to end: schema, batches, heartbeat, event.
 
-    Uses the robot's REAL spool lanes (`spool.next_seq`/`append`/`ack`), in
-    the exact append -> publish -> ack order `StreamRouter._pump` uses --
+    Uses the robot's REAL spool lanes (`spool.append_next`/`ack`), in the
+    exact append -> publish -> ack order `StreamRouter._pump` uses --
     durable before sent, acked only after the broker has QoS-1 acknowledged
-    it. On any exception once appending has begun, every lane this run wrote
-    to is acked past the last seq it appended (advance-to semantics, per
+    it. Every channel batch and the event use `Spool.append_next()`, never a
+    separate `next_seq()` + `append()` pair (Codex round 3 P1, comment
+    3924082774 -- see `Spool.append_next`'s and `next_seq`'s docstrings for
+    why that two-call shape is unsafe: it left a gap between allocation and
+    write that a concurrent writer's `exclusive()`-held run could land in).
+    On any exception once appending has begun, every lane this run wrote to
+    is acked past the last seq it appended (advance-to semantics, per
     `Spool.ack`) before the exception is re-raised, so nothing this run
     spooled lingers for the real fleet service to replay later.
 
@@ -160,18 +182,17 @@ def run_selftest(  # noqa: PLR0913
     otherwise this run's own first ack would advance the watermark past
     that pre-existing backlog and silently drop it.
 
-    The entire run -- the backlog check and every `next_seq`/`append`/`ack`
-    call that follows -- holds `spool.exclusive()` (Codex round 3, P1b): a
-    concurrently running `FleetService`/`StreamRouter` writing this same real
-    spool waits for the selftest to finish instead of racing it for seqs
-    (previously, `next_seq` then `append` released the lock in between,
-    letting a concurrent writer interleave and see the seq monotonicity
-    check fail with `ValueError` -- clean, but nondeterministic). If a
-    different writer already holds the lock for longer than `lock_timeout_s`,
-    this refuses to start at all rather than hanging. Pausing the real
-    service before running the selftest (see the runbook) remains good
-    practice -- it avoids the brief wait -- but is no longer required for
-    correctness.
+    The entire run -- the backlog check and every `append_next`/`ack` call
+    that follows -- holds `spool.exclusive()` (Codex round 3, P1b): a
+    concurrently running `FleetService`/`StreamRouter` writing this same
+    real spool waits for the selftest to finish instead of racing it for
+    seqs. If a different writer already holds the lock for longer than
+    `lock_timeout_s`, this refuses to start at all rather than hanging.
+    Pausing the real service before running the selftest (see the runbook)
+    remains good practice -- it avoids the brief wait -- but is no longer
+    required for correctness, on either count (`exclusive()` for
+    cross-instance serialization, `append_next()` for atomic allocation
+    within whichever instance is currently writing).
 
     Args:
         publisher: A connected-or-connectable `Publisher` (typically
@@ -220,9 +241,7 @@ def run_selftest(  # noqa: PLR0913
             for i in range(batches):
                 t = now()
                 batch = _build_batch(i, t)
-                seq = spool.next_seq("channels")
-                batch["seq"] = seq
-                spool.append("channels", seq, batch)
+                seq = spool.append_next("channels", lambda seq, batch=batch: _stamp_seq(batch, seq))
                 last_channels_seq = seq
                 publisher.publish_channels(batch)
                 spool.ack("channels", seq)
@@ -244,18 +263,23 @@ def run_selftest(  # noqa: PLR0913
             )
             publisher.publish_heartbeat(heartbeat_payload)
 
-            events_seq = spool.next_seq("events")
-            event_payload = {
-                "v": 1,
-                "seq": events_seq,
-                "event_id": f"selftest-{uuid.uuid4()}",
-                "name": "selftest",
-                "t_start": t0,
-                "t_end": now(),
-                "source_topic": "selftest",
-                "summary": {"kind": "selftest", "batches": batches},
-            }
-            spool.append("events", events_seq, event_payload)
+            event_payload: dict = {}
+
+            def _build_event_payload(seq: int) -> dict:
+                nonlocal event_payload
+                event_payload = {
+                    "v": 1,
+                    "seq": seq,
+                    "event_id": f"selftest-{uuid.uuid4()}",
+                    "name": "selftest",
+                    "t_start": t0,
+                    "t_end": now(),
+                    "source_topic": "selftest",
+                    "summary": {"kind": "selftest", "batches": batches},
+                }
+                return event_payload
+
+            events_seq = spool.append_next("events", _build_event_payload)
             last_events_seq = events_seq
             publisher.publish_event(event_payload)
             spool.ack("events", events_seq)
