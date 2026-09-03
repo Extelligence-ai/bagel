@@ -550,6 +550,32 @@ class TestNeverCappedLanes:
         # No eviction should have occurred
         assert s.stats()["heartbeat"].evicted == 0
 
+    def test_init_rejects_events_in_capped_lanes(self, root: pathlib.Path) -> None:
+        """Spool.__init__ must reject events in capped_lanes."""
+        with pytest.raises(ValueError, match="events") as exc_info:
+            Spool(root, capped_lanes={"events": 1024})
+        assert "never-drop" in str(exc_info.value)
+
+    def test_init_rejects_mixed_channels_and_events_in_capped_lanes(
+        self,
+        root: pathlib.Path,
+    ) -> None:
+        """Spool.__init__ must reject when events is mixed with other capped lanes."""
+        with pytest.raises(ValueError, match="events") as exc_info:
+            Spool(root, capped_lanes={"channels": 1024, "events": 1})
+        assert "never-drop" in str(exc_info.value)
+
+    def test_oversized_events_record_is_written_not_dropped(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Oversized record on events lane must be written, not dropped."""
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 200)
+        s = Spool(root)
+        giant = {"pad": "x" * 1000}
+        s.append("events", 1, giant)
+        assert [seq for seq, _ in s.pending("events")] == [1]
+        assert s.stats()["events"].evicted == 0
+
     def test_for_robot_caps_only_channels(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
