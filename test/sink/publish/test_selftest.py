@@ -806,3 +806,199 @@ def test_selftest_e2e_refuses_while_a_live_session_is_connected(
     finally:
         fake_live.loop_stop()
         fake_live.disconnect()
+
+
+# -- round-11 (Codex review, comment 3928569268): the mid-run watch must
+# trigger on any live session activity, not just an `online: true` beat, and
+# must not depend on the heartbeat topic alone (a resuming service's
+# heartbeat thread can be stuck behind this selftest's own spool lock while
+# its router still reconnects and republishes the schema regardless). ------
+
+
+@pytest.mark.skipif(not BROKER, reason="MQTT_TEST_BROKER not set")
+def test_selftest_e2e_pre_existing_retained_schema_does_not_false_abort(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Codex round 3 follow-up (PR #214, P1, comment 3928569268), proof (a):
+    a retained schema ALWAYS exists on a robot's schema topic once
+    anything has ever run there for real (the live service's own pre-pause
+    schema, if nothing else). `watch_live_session()`'s `retainHandling=2`
+    subscribe option must suppress that replay -- otherwise a content-
+    agnostic "ANY delivery = abort" watch would false-abort every single
+    run, instantly, even with no other session anywhere near the robot."""
+    import paho.mqtt.client as paho
+
+    import src.sink.publish.selftest as selftest_mod
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+    monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+    schema_topic = "bagel/v1/dev/robot/schema"
+    parsed = urlparse(BROKER)
+    injector = paho.Client(
+        callback_api_version=paho.CallbackAPIVersion.VERSION2,
+        client_id=f"pre-existing-schema-{uuid.uuid4().hex[:8]}",
+        protocol=paho.MQTTv5,
+    )
+    injector.connect(parsed.hostname, parsed.port or 1883)
+    injector.loop_start()
+
+    try:
+        # Simulate a real robot's own pre-pause retained schema, already
+        # sitting on the broker before this selftest run ever subscribes.
+        info = injector.publish(
+            schema_topic, json.dumps({"v": 1, "channels": [{"c": "imu.x"}]}), qos=1, retain=True
+        )
+        info.wait_for_publish(timeout=5.0)
+        time.sleep(0.3)  # give the broker a moment to actually retain it
+
+        rc = selftest_mod.main(["--broker", BROKER, "--batches", "2", "--interval-s", "0.1"])
+        err = capsys.readouterr().err
+        assert rc == 0, err
+    finally:
+        # Clear the retained schema -- don't leave residue for later tests.
+        info = injector.publish(schema_topic, "", qos=1, retain=True)
+        info.wait_for_publish(timeout=5.0)
+        time.sleep(0.2)
+        injector.loop_stop()
+        injector.disconnect()
+
+
+@pytest.mark.skipif(not BROKER, reason="MQTT_TEST_BROKER not set")
+def test_selftest_e2e_new_schema_publish_mid_run_aborts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Codex round 3 follow-up (PR #214, P1, comment 3928569268), proof (b)
+    -- the core fix itself, end to end: a resuming service's heartbeat
+    thread can be stuck behind this selftest run's own spool lock and
+    never emit a beat, while its router still reconnects and republishes
+    the schema regardless. A NEW (non-retained) schema publish from a
+    DIFFERENT client, injected partway through a real multi-batch run,
+    must abort it before the run completes -- proving the watch doesn't
+    depend on the heartbeat topic, or on any lock, at all."""
+    import paho.mqtt.client as paho
+
+    import src.sink.publish.selftest as selftest_mod
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+    monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+    schema_topic = "bagel/v1/dev/robot/schema"
+    parsed = urlparse(BROKER)
+    injector = paho.Client(
+        callback_api_version=paho.CallbackAPIVersion.VERSION2,
+        client_id=f"mid-run-schema-{uuid.uuid4().hex[:8]}",
+        protocol=paho.MQTTv5,
+    )
+    injector.connect(parsed.hostname, parsed.port or 1883)
+    injector.loop_start()
+
+    # The START-of-run probe (`_check_no_live_session`) has NO retained
+    # heartbeat to find here, so it blocks for the full
+    # `DEFAULT_LIVE_SESSION_PROBE_TIMEOUT_S` before the ongoing watch even
+    # opens -- the injection must land safely AFTER that fixed delay, not
+    # merely "partway through main()", or it fires before anything is
+    # subscribed and is simply never seen.
+    probe_wait_s = selftest_mod.DEFAULT_LIVE_SESSION_PROBE_TIMEOUT_S
+
+    def _inject_mid_run() -> None:
+        time.sleep(probe_wait_s + 0.2)  # land after the watch opens, mid-batch-phase
+        info = injector.publish(
+            schema_topic, json.dumps({"v": 1, "channels": [{"c": "imu.x"}]}), qos=1, retain=False
+        )
+        info.wait_for_publish(timeout=5.0)
+
+    injector_thread = threading.Thread(target=_inject_mid_run)
+    injector_thread.start()
+    try:
+        rc = selftest_mod.main(["--broker", BROKER, "--batches", "10", "--interval-s", "0.2"])
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "live fleet session" in err
+    finally:
+        injector_thread.join()
+        injector.loop_stop()
+        injector.disconnect()
+
+
+@pytest.mark.skipif(not BROKER, reason="MQTT_TEST_BROKER not set")
+def test_selftest_e2e_online_true_beat_mid_run_aborts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Codex round 3 follow-up (PR #214, P1, comment 3928569268), proof (c):
+    the pre-existing heartbeat-topic trigger, proven again specifically
+    MID-run -- `test_selftest_e2e_refuses_while_a_live_session_is_connected`
+    only proves the START-of-run case. A resumed service's own live
+    `online: true` heartbeat, injected partway through a real multi-batch
+    run, must still abort it."""
+    import paho.mqtt.client as paho
+
+    import src.sink.publish.selftest as selftest_mod
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+    monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+    heartbeat_topic = "bagel/v1/dev/robot/heartbeat"
+    parsed = urlparse(BROKER)
+    injector = paho.Client(
+        callback_api_version=paho.CallbackAPIVersion.VERSION2,
+        client_id=f"mid-run-heartbeat-{uuid.uuid4().hex[:8]}",
+        protocol=paho.MQTTv5,
+    )
+    injector.connect(parsed.hostname, parsed.port or 1883)
+    injector.loop_start()
+
+    # Same timing note as the schema-topic sibling test above: the
+    # START-of-run probe blocks for the full
+    # `DEFAULT_LIVE_SESSION_PROBE_TIMEOUT_S` before the ongoing watch opens.
+    probe_wait_s = selftest_mod.DEFAULT_LIVE_SESSION_PROBE_TIMEOUT_S
+
+    def _inject_mid_run() -> None:
+        time.sleep(probe_wait_s + 0.2)
+        info = injector.publish(
+            heartbeat_topic, json.dumps({"v": 1, "online": True}), qos=1, retain=True
+        )
+        info.wait_for_publish(timeout=5.0)
+
+    injector_thread = threading.Thread(target=_inject_mid_run)
+    injector_thread.start()
+    try:
+        rc = selftest_mod.main(["--broker", BROKER, "--batches", "10", "--interval-s", "0.2"])
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "live fleet session" in err
+    finally:
+        injector_thread.join()
+        # Clear the retained heartbeat -- don't leave residue for later tests.
+        info = injector.publish(heartbeat_topic, "", qos=1, retain=True)
+        info.wait_for_publish(timeout=5.0)
+        time.sleep(0.2)
+        injector.loop_stop()
+        injector.disconnect()
+
+
+@pytest.mark.skipif(not BROKER, reason="MQTT_TEST_BROKER not set")
+def test_selftest_e2e_clean_run_is_stable_across_repeats(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Codex round 3 follow-up (PR #214, P1, comment 3928569268), proof
+    (d): the new two-topic, `noLocal` + `retainHandling=2` watch must not
+    itself introduce flakiness into the ordinary clean-run case -- run it
+    three times back to back and require every run to succeed."""
+    import src.sink.publish.selftest as selftest_mod
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+    monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+    for attempt in range(3):
+        rc = selftest_mod.main(["--broker", BROKER, "--batches", "2", "--interval-s", "0"])
+        err = capsys.readouterr().err
+        assert rc == 0, f"attempt {attempt}: {err}"

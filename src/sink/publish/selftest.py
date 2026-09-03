@@ -234,9 +234,15 @@ def _open_live_session_watch(publisher: Publisher) -> object | None:
 
     `publisher.watch_live_session()` (see `MqttPublisher`'s implementation),
     called here right after `_check_no_live_session` has cleared the START
-    state, keeps the heartbeat subscription open for the remainder of the
-    run -- `run_selftest` polls the returned watch's `.detected` Event
-    between batches and before the heartbeat/event publishes via
+    state, keeps BOTH the heartbeat AND schema subscriptions open for the
+    remainder of the run -- not heartbeat alone (Codex round 3 follow-up,
+    PR #214 P1, comment 3928569268): a resuming `FleetService`'s heartbeat
+    thread can block indefinitely on the exclusive lock this run holds
+    (inside `spool.stats()`), so it may never emit a beat, while its
+    lock-free router still reconnects and republishes the schema regardless
+    -- watching only the heartbeat topic would miss exactly that case.
+    `run_selftest` polls the returned watch's `.detected` Event between
+    batches and before the heartbeat/event publishes via
     `_abort_if_live_session_detected`. Same optional-capability pattern as
     `_check_no_live_session`'s own probe (`getattr(...,  None)`): a
     `Publisher` that doesn't offer this (most test doubles, and any future
@@ -254,11 +260,11 @@ def _abort_if_live_session_detected(watch: object | None, publisher: Publisher) 
 
     Called between every channel batch and immediately before the
     heartbeat and event publishes (see `run_selftest`) -- checking the
-    SAME `watch.detected` Event a live beat's paho callback sets the
-    instant it arrives (Codex round 3 follow-up, PR #214 P1, comment
-    3927287968's own follow-up), so a live service resuming at any point
-    during the run is caught before this run's next publish, not just at
-    the very start.
+    SAME `watch.detected` Event a live message's paho callback sets the
+    instant ANY message arrives on either watched topic (Codex round 3
+    follow-up, PR #214 P1, comments 3927287968 and 3928569268), so a live
+    service resuming at any point during the run is caught before this
+    run's next publish, not just at the very start.
 
     Mirrors `_check_no_live_session`'s own refusal exactly: the connection
     is torn down silently via `disconnect_without_publishing` (never
@@ -326,7 +332,14 @@ def run_selftest(  # noqa: PLR0913
     live `FleetService` that RESUMES at any point DURING the run -- not
     just one that was already connected at the start -- reopens the exact
     same schema-pollution window; the ongoing watch is what closes it for
-    the run's full duration, not just its first instant.
+    the run's full duration, not just its first instant. It watches for
+    any live activity on the robot's session topics (heartbeat AND
+    schema, content-agnostic), not the heartbeat's `online: true` content
+    alone (Codex round 3 follow-up, PR #214 P1, comment 3928569268): a
+    resuming service's heartbeat thread can block on the exclusive lock
+    this run holds while its router still reconnects and republishes the
+    schema regardless, so the watch cannot depend on that lock -- or on
+    the heartbeat topic alone -- to see the pollution.
 
     The entire run -- the backlog check and every `append_next`/`ack` call
     that follows -- holds `spool.exclusive()` (Codex round 3, P1b): a

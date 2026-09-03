@@ -41,11 +41,16 @@ def _parse_heartbeat_payload(raw: bytes) -> dict:
     bare array) the same as "nothing retained" and let the selftest
     proceed. That is backwards: SOMETHING is retained on the robot's own
     heartbeat topic and this process cannot tell what it means, so the safe
-    default is to refuse, not to guess "safe". Shared by
-    `wait_for_retained_heartbeat` (the bounded START-only probe) and
-    `MqttPublisher.watch_live_session`'s ongoing callback (Codex round 3
-    follow-up, PR #214 P1, comment 3927287968's own follow-up) so both
-    apply the identical fail-closed rule.
+    default is to refuse, not to guess "safe".
+
+    Used ONLY by `wait_for_retained_heartbeat` (the bounded, one-shot,
+    START-only probe against the retained heartbeat state) -- NOT by
+    `MqttPublisher.watch_live_session`'s ongoing mid-run watch (Codex
+    round 3 follow-up, PR #214 P1, comment 3928569268): that watch is
+    content-agnostic by design (ANY message on either watched topic is,
+    by construction via `noLocal`/`retainHandling=2`, already proof of a
+    genuinely different live session -- see its own docstring), so it has
+    nothing left to parse.
 
     Raises:
         PublishError: `raw` isn't valid UTF-8 JSON, or parses to something
@@ -77,34 +82,57 @@ class LiveSessionWatch:
     close: nothing about a START check tells `run_selftest` that a session
     connected a moment ago.
 
-    `watch_live_session()` instead keeps the heartbeat subscription open
-    for as long as the caller wants (until `.stop()`), so `.detected`
-    (a `threading.Event`) can be set by ANY message arriving on the topic
-    for the life of the watch, not just the one seen at subscribe time --
-    covering exactly the "live session appears mid-run" case. `run_selftest`
-    polls `.detected.is_set()` between batches and before the
-    heartbeat/event publishes, aborting the instant it's set.
+    `watch_live_session()` instead keeps BOTH the heartbeat AND schema
+    topic subscriptions open for as long as the caller wants (until
+    `.stop()`), so `.detected` (a `threading.Event`) can be set by ANY
+    message arriving on EITHER topic for the life of the watch, not just
+    the one seen at subscribe time -- covering exactly the "live session
+    appears mid-run" case. `run_selftest` polls `.detected.is_set()`
+    between batches and before the heartbeat/event publishes, aborting the
+    instant it's set.
 
-    `.stop()` unsubscribes and restores the client's prior `on_message`
-    handler; idempotent (a second call is a no-op), mirroring `close()`'s
-    own idempotency contract.
+    Codex round 3 follow-up (PR #214, P1, comment 3928569268): watching
+    ONLY the heartbeat topic missed a real failure chain -- a resuming
+    `FleetService`'s heartbeat thread can block indefinitely in
+    `spool.stats()` on the exclusive lock this selftest run holds, so it
+    may never emit the `online: true` beat the original watch depended on,
+    while its ROUTER (a separate, lock-free pending/reconnect path)
+    reconnects and republishes the live schema regardless. Watching BOTH
+    topics -- and, per that same comment, watching for the pollution ACT
+    ITSELF rather than parsing message content (see
+    `MqttPublisher.watch_live_session`'s own docstring for the
+    `noLocal`/`retainHandling` reasoning that makes "any delivery = abort"
+    safe) -- closes that gap independent of whatever lock a resuming
+    service happens to be stuck behind.
+
+    `.stop()` unsubscribes both topics and restores the client's prior
+    `on_message` handler; idempotent (a second call is a no-op), mirroring
+    `close()`'s own idempotency contract.
     """
 
-    def __init__(self, *, client: object, topic: str, previous_on_message: object) -> None:
-        """Store the subscribed client/topic and the handler to restore on `.stop()`."""
+    def __init__(
+        self, *, client: object, topics: tuple[str, ...], previous_on_message: object
+    ) -> None:
+        """Store the subscribed client/topics and the handler to restore on `.stop()`."""
         self.detected = threading.Event()
         self._client = client
-        self._topic = topic
+        self._topics = topics
         self._previous_on_message = previous_on_message
         self._stopped = False
 
     def stop(self) -> None:
-        """Unsubscribe and restore the client's prior `on_message` handler; idempotent."""
+        """Unsubscribe both topics and restore the client's prior `on_message` handler.
+
+        Idempotent. Best-effort across both topics: an `unsubscribe`
+        failure on the first topic does not skip the second, and the
+        `on_message` handler is always restored in a `finally`.
+        """
         if self._stopped:
             return
         self._stopped = True
         try:
-            self._client.unsubscribe(self._topic)
+            for topic in self._topics:
+                self._client.unsubscribe(topic)
         finally:
             self._client.on_message = self._previous_on_message
 
@@ -462,41 +490,65 @@ class MqttPublisher(Publisher):
         return result.get("payload")  # type: ignore[return-value]
 
     def watch_live_session(self) -> LiveSessionWatch:
-        """Subscribe to this robot's heartbeat topic and keep watching it.
+        """Subscribe to this robot's heartbeat AND schema topics; keep watching both.
 
         Codex round 3 follow-up (PR #214, P1, comment 3927287968's own
-        follow-up): unlike `wait_for_retained_heartbeat` (a bounded
-        one-shot probe that unsubscribes as soon as it returns), the
-        returned `LiveSessionWatch` stays subscribed until its own
-        `.stop()` is called, so `run_selftest` can keep polling
-        `.detected` for the ENTIRE run -- catching a live service that
-        RESUMES mid-run, not just one that was already connected at the
-        moment this was called. See `LiveSessionWatch`'s own docstring for
-        the full reasoning.
+        follow-up; widened by comment 3928569268): unlike
+        `wait_for_retained_heartbeat` (a bounded one-shot probe that
+        unsubscribes as soon as it returns), the returned `LiveSessionWatch`
+        stays subscribed until its own `.stop()` is called, so `run_selftest`
+        can keep polling `.detected` for the ENTIRE run -- catching a live
+        service that RESUMES mid-run, not just one that was already
+        connected at the moment this was called. See `LiveSessionWatch`'s
+        own docstring for the full reasoning.
 
-        Every message on the topic is parsed with the same fail-closed
-        `_parse_heartbeat_payload` `wait_for_retained_heartbeat` uses: an
-        unparsable payload sets `.detected` too (can't tell what it means,
-        so don't guess "safe"), not just a payload with `online: true`.
+        Watches BOTH topics, not just heartbeat (comment 3928569268): a
+        resuming `FleetService`'s heartbeat thread can block indefinitely in
+        `spool.stats()` on the exclusive lock this selftest run holds, so it
+        may NEVER emit the `online: true` beat a heartbeat-only watch
+        depends on -- while its ROUTER (a separate, lock-free
+        pending/reconnect path) reconnects and republishes the live schema
+        regardless. Watching the schema topic too closes that gap
+        independent of whatever lock a resuming service happens to be stuck
+        behind: the schema publish itself IS the pollution.
+
+        No payload parsing any more, on EITHER topic (comment 3928569268):
+        this now watches for the pollution ACT ITSELF -- any message
+        arriving at all -- rather than trying to decide from its content
+        whether it's "dangerous". That simplification is only safe because
+        of the two subscribe options below; without them it would false-
+        abort constantly.
 
         Intended to be called right after `wait_for_retained_heartbeat` has
         already cleared the START state (see `selftest._check_no_live_session`)
         -- this method does not itself wait for or return the current
         retained state; it only arms the ongoing watch going forward.
 
-        Subscribes with MQTT5's `noLocal` option set (critical, found only
-        by the live-broker e2e suite -- `FakeFleetPaho`'s unit-test double
-        doesn't simulate broker echo, so this was invisible to the mocked
-        tests): without it, a broker delivers a client's OWN publishes back
-        to itself on any topic it's subscribed to. `run_selftest` publishes
-        its OWN `online: true` heartbeat over THIS SAME publisher partway
-        through the run, on the exact topic this watch subscribes to --
-        with `noLocal=False` (the default), that publish loops straight
-        back through this watch's own `on_message` callback and gets
-        mistaken for a genuinely different, live session appearing mid-run,
-        aborting every single run. `noLocal=True` tells the broker to never
-        deliver this client's own publishes back to it, so only an actual
-        OTHER session's beat can ever set `.detected`.
+        Subscribes both topics with TWO MQTT5 `SubscribeOptions`:
+
+        - `noLocal=True` (critical, found only by the live-broker e2e suite
+          -- `FakeFleetPaho`'s unit-test double doesn't simulate broker
+          echo, so this was invisible to the mocked tests): without it, a
+          broker delivers a client's OWN publishes back to itself on a
+          topic it's subscribed to. `run_selftest` publishes its OWN schema
+          and heartbeat over THIS SAME publisher during the run, on these
+          exact topics -- with `noLocal=False` (the default), those
+          publishes loop straight back through this watch's own
+          `on_message` callback and get mistaken for a genuinely different,
+          live session, aborting every single run. `noLocal=True` tells the
+          broker to never deliver this client's own publishes back to it,
+          so only an actual OTHER session's message can ever set
+          `.detected`.
+        - `retainHandling=2` (`RETAIN_DO_NOT_SEND`, comment 3928569268):
+          a retained schema ALWAYS exists on a robot's schema topic once
+          anything has ever run there (the live service's own pre-pause
+          schema, if nothing else) -- the MQTT5 default (`retainHandling=0`,
+          `RETAIN_SEND_ON_SUBSCRIBE`) would replay it the instant this
+          subscribes, and since content is no longer parsed, that replay
+          alone would false-abort every single run. `retainHandling=2`
+          suppresses that replay entirely: only a message actually
+          PUBLISHED after this subscribes can ever arrive, which is exactly
+          what "a NEW publish from another session" means.
 
         Raises:
             PublishError: not connected.
@@ -504,22 +556,27 @@ class MqttPublisher(Publisher):
         """
         if self._client is None:
             raise PublishError("publisher is not connected")
-        topic = wire_topic(self._tenant, self._robot, "heartbeat")
+        heartbeat_topic = wire_topic(self._tenant, self._robot, "heartbeat")
+        schema_topic = wire_topic(self._tenant, self._robot, "schema")
         watch = LiveSessionWatch(
-            client=self._client, topic=topic, previous_on_message=self._client.on_message
+            client=self._client,
+            topics=(heartbeat_topic, schema_topic),
+            previous_on_message=self._client.on_message,
         )
 
-        def _on_message(_client: object, _userdata: object, message: object) -> None:
-            try:
-                payload = _parse_heartbeat_payload(message.payload)  # type: ignore[attr-defined]
-            except PublishError:
-                watch.detected.set()
-                return
-            if payload.get("online") is True:
-                watch.detected.set()
+        def _on_message(_client: object, _userdata: object, _message: object) -> None:
+            # Content-agnostic by design (comment 3928569268): `noLocal`
+            # already rules out this session's own publishes, and
+            # `retainHandling=2` already rules out the pre-existing
+            # retained schema -- so ANY delivery that reaches here is, by
+            # construction, a NEW publish from a genuinely different
+            # session. There is nothing left to parse or decide.
+            watch.detected.set()
 
         self._client.on_message = _on_message
-        self._client.subscribe(topic, options=_paho().SubscribeOptions(qos=1, noLocal=True))
+        options = _paho().SubscribeOptions(qos=1, noLocal=True, retainHandling=2)
+        self._client.subscribe(heartbeat_topic, options=options)
+        self._client.subscribe(schema_topic, options=options)
         return watch
 
     def disconnect_without_publishing(self) -> None:

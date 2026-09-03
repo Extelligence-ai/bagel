@@ -144,6 +144,14 @@ stopping the service first is required here, not just recommended, since
 this run's fixture schema would otherwise reach that connected live
 subscriber as a schema update, remapping live channel batches to the
 fixture's `selftest.*` channels until the live service's next reconnect.
+That check isn't just a start-of-run gate: it keeps watching for the rest
+of the run, and aborts (same typed error, connection torn down silently,
+no close beat) the instant it sees any live activity on the robot's
+session topics -- not the heartbeat alone. A service resuming partway
+through a run can have its heartbeat thread stuck behind the selftest's
+own spool lock while its router still reconnects and republishes the
+schema regardless, so both topics are watched, and a signal on either one
+is enough on its own to abort.
 
 ## Dev rigs
 

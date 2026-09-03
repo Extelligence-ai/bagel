@@ -315,7 +315,14 @@ streaming paused or stopped. It also refuses outright, before publishing
 anything, if the robot's live fleet session is already connected (detected
 via a bounded subscribe-probe for a retained `online: true` heartbeat) --
 retention and a distinct client id alone don't stop this run's fixture
-schema from reaching a connected live subscriber as a schema update.
+schema from reaching a connected live subscriber as a schema update. That
+same check keeps running for the rest of the run, not just at the start: it
+watches for any live activity on the robot's session topics (heartbeat AND
+schema, not heartbeat alone -- a resuming service's heartbeat can be stuck
+behind a lock while its router still reconnects and republishes the schema)
+and aborts the instant any of it appears, since a service could resume
+partway through a multi-batch run just as easily as it could already be
+connected at the start.
 
 All of the selftest's own publishes -- schema, heartbeat, and its final
 close() beat -- are deliberately NOT retained (unlike a real robot's own
