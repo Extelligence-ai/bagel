@@ -140,6 +140,17 @@ class Settings(BaseSettings):
     # FLEET_ENROLL_TOKEN) and identity renewal. See src/sink/publish/identity.py.
     FLEET_ENROLL_URL: str | None = None
 
+    # How often the fleet health report (src/sink/publish/health.py) is built
+    # and published. 6 hours by default -- health is a slow-moving summary,
+    # not a liveness signal (that's the heartbeat's job).
+    FLEET_HEALTH_INTERVAL_S: float = 21_600.0
+
+    # Grace period after startup before the first health report is built, so
+    # transient boot-time conditions (still connecting, still enrolling)
+    # don't get reported as failures before the runtime has had a chance to
+    # settle.
+    FLEET_HEALTH_SETTLE_S: float = 60.0
+
     # Default quantization resolution in meters for cloudini lossy compression
     CLOUDINI_DEFAULT_RESOLUTION: float = 0.001
     ###############################################
