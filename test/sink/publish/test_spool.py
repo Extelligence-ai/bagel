@@ -288,6 +288,38 @@ class TestOversizedRecord:
         assert [seq for seq, _ in s.pending("heartbeat")] == [1]
         assert s.stats()["heartbeat"].evicted == 0
 
+    def test_oversized_drop_on_a_never_touched_lane_survives_a_rescan(
+        self, root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex round 3 follow-up (PR #214, P2, comment 3925663134): an
+        oversized-drop consumes its seq in the cache ONLY -- no segment is
+        ever written for a dropped record, so when a lane's FIRST-EVER
+        record is oversized, disk shows nothing for it at all (no
+        directory). A later call on the SAME (now warm-cached) instance
+        that forces a rescan (`_current_last_seq`'s reseal branch, hit
+        because the lane has no segments -- a `None` tail) must not
+        REGRESS the cache back down to the watermark (0): the
+        already-consumed seq must survive, or the next oversized record
+        would reuse it instead of advancing past it."""
+        monkeypatch.setattr(spool_mod, "SEGMENT_MAX_BYTES", 200)
+        s = Spool(root)
+        giant = {"pad": "x" * 1000}
+
+        first_seq = s.append_next("channels", lambda seq: giant)  # oversized: dropped, no write
+        assert first_seq == 1
+        assert list((root / "channels").glob("segment-*.jsonl")) == []  # nothing on disk
+        assert s.stats()["channels"].evicted == 1
+
+        # Force the rescan path: stats()'s last_seq (itself disk-
+        # authoritative, Codex round 3 P2 comment 3925391258) routes
+        # through _current_last_seq, whose reseal branch is exactly what
+        # regressed the cache before this fix.
+        assert s.stats()["channels"].last_seq == 1  # must NOT regress to 0
+
+        second_seq = s.append_next("channels", lambda seq: giant)  # another oversized drop
+        assert second_seq == 2  # consumes seq 2 -- never reuses the already-consumed 1
+        assert s.stats()["channels"].evicted == 2
+
 
 class TestPendingToleratesConcurrentEviction:
     def test_segment_evicted_mid_iteration_is_skipped_not_raised(

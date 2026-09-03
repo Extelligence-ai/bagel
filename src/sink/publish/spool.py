@@ -226,6 +226,49 @@ class Spool:
         floor = _first_seq_of(last_segment) - 1
         return max(last, floor, self._watermark(lane))
 
+    def _set_last_seq(self, lane: str, value: int) -> int:
+        """Assign `self._last_seq[lane]`, folded through `max()` against whatever's already cached.
+
+        The ONE place every assignment to `self._last_seq[lane]` in this
+        class must go through (Codex round 3 follow-up, PR #214 P2 on
+        comment 3925663134): the cache is a never-regress floor by
+        contract -- every reader of it (`_current_last_seq`'s own
+        `self._last_seq[lane]` reads, `append()`/`append_next()`'s
+        monotonicity checks) trusts that once this instance has recorded a
+        seq as consumed, it stays recorded, never reverts to something
+        lower.
+
+        That contract had exactly one violation: `_current_last_seq`'s
+        reseal branch (an unterminated or `None` tail) REPLACED the cache
+        with `_scan_last_seq(lane)`'s result outright, with no `max()`
+        against the value already there. A capped lane's oversized-drop
+        path (`_write_locked`) consumes a seq into the cache alone -- no
+        segment is ever written for a dropped record, so disk shows
+        NOTHING for that lane. If that lane's FIRST-ever record is
+        oversized, the lane has no directory at all yet; a later call on
+        the SAME (now warm-cached) instance -- `stats()`, `next_seq()`, or
+        another `append_next()` -- sees a `None` tail (no segments exist)
+        and took the reseal branch, which unconditionally replaced the
+        cache with `_scan_last_seq`'s result: `self._watermark(lane)`
+        (0, nothing acked) -- REGRESSING the cache from the already-
+        consumed seq back down to 0. The next oversized record then
+        reused that already-consumed seq instead of advancing past it.
+
+        Folding every assignment through `max()` here closes that one
+        confirmed regression and makes the invariant structural rather
+        than dependent on each call site reasoning correctly about
+        whether IT could ever regress -- audited every assignment site in
+        this class (see the round's own report for the full audit; in
+        short, several other sites were already safe by construction --
+        e.g. anything assigning a `seq` that a caller just validated as
+        strictly greater than the current authoritative floor -- but
+        routing them through here too costs nothing and removes the need
+        to keep re-proving that reasoning as the code evolves).
+        """
+        current = max(value, self._last_seq.get(lane, 0))
+        self._last_seq[lane] = current
+        return current
+
     def _tail_last_seq(self, lane: str) -> tuple[int | None, bool]:
         r"""Peek the highest seq already on disk in O(tail), not O(whole active segment).
 
@@ -387,16 +430,18 @@ class Spool:
         never regress, and it costs nothing extra to write.
         """
         if lane not in self._last_seq:
-            self._last_seq[lane] = self._scan_last_seq(lane)
-            return self._last_seq[lane]
+            return self._set_last_seq(lane, self._scan_last_seq(lane))
         tail, terminated = self._tail_last_seq(lane)
         if not terminated or tail is None:
-            self._last_seq[lane] = self._scan_last_seq(lane)
-            return self._last_seq[lane]
+            # The confirmed regression (Codex round 3 follow-up, PR #214
+            # P2, comment 3925663134): this branch used to REPLACE the
+            # cache outright with `_scan_last_seq`'s result, with no fold
+            # against what was already cached -- see `_set_last_seq`'s
+            # docstring for the exact oversized-drop-then-rescan scenario
+            # that regressed it.
+            return self._set_last_seq(lane, self._scan_last_seq(lane))
         disk_floor = max(tail, self._watermark(lane))
-        current = max(disk_floor, self._last_seq[lane])
-        self._last_seq[lane] = current
-        return current
+        return self._set_last_seq(lane, disk_floor)
 
     def exclusive(self, timeout: float = 5.0) -> filelock.AcquireReturnProxy:
         """Hold this spool's lock across an extended, multi-call critical section.
@@ -518,7 +563,7 @@ class Spool:
         """
         with self._lock:
             current = self._current_last_seq(lane)
-            self._last_seq[lane] = current
+            self._set_last_seq(lane, current)
             if seq <= current:
                 raise ValueError(f"seq must be monotonic: got {seq}, last was {current}")
             self._write_locked(lane, seq, payload)
@@ -564,7 +609,7 @@ class Spool:
         """
         with self._lock:
             current = self._current_last_seq(lane)
-            self._last_seq[lane] = current
+            self._set_last_seq(lane, current)
             seq = current + 1
             payload = build(seq)
             self._write_locked(lane, seq, payload)
@@ -600,7 +645,7 @@ class Spool:
                 len(line.encode("utf-8")),
                 SEGMENT_MAX_BYTES,
             )
-            self._last_seq[lane] = seq
+            self._set_last_seq(lane, seq)
             return
         segments = self._segments(lane)
         active = segments[-1] if segments else None
@@ -615,7 +660,7 @@ class Spool:
             if lane not in self._capped:
                 raise SpoolFullError(f"lane '{lane}': {exc}") from exc
             raise SpoolError(f"lane '{lane}': {exc}") from exc
-        self._last_seq[lane] = seq
+        self._set_last_seq(lane, seq)
         if rolled:
             self._evict(lane)
 
