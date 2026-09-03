@@ -68,6 +68,7 @@ EXPOSE ${JUPYTER_PORT}
 # Copy common source code
 COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
 COPY --chown=${USERNAME}:${USERNAME} run.py ./run.py
+COPY --chown=${USERNAME}:${USERNAME} demo.py ./demo.py
 COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
 COPY --chown=${USERNAME}:${USERNAME} src ./src
 # MCAP as a first-class format (no ROS required)
@@ -84,6 +85,7 @@ COPY --chown=${USERNAME}:${USERNAME} test/e2e ./test/e2e
 # Fail the build if the server cannot even import -- catches missing-module
 # regressions (issue #151) at build time instead of at the user's terminal.
 RUN uv run python -c "import server"
+RUN uv run python -c "import demo"
 
 # Copy sample data
 COPY --chown=${USERNAME}:${USERNAME} data/sample/ ./data/sample/
@@ -101,6 +103,11 @@ COPY --chown=${USERNAME}:${USERNAME} test/pipeline/__init__.py ./test/pipeline/_
 COPY --chown=${USERNAME}:${USERNAME} test/pipeline/integration ./test/pipeline/integration
 
 RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test; fi
+
+# `docker run <image> demo [path]` runs the 60-second hello-world instead of
+# the server; anything else (no args, or another command) is unaffected.
+COPY --chown=${USERNAME}:${USERNAME} docker/entrypoint.sh ./entrypoint.sh
+ENTRYPOINT ["./entrypoint.sh"]
 
 # By default, the Bagel MCP server will be launched
 CMD ["uv", "run", "server.py", "--transport", "sse"]
