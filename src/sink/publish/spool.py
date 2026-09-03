@@ -346,8 +346,7 @@ class Spool:
             return self._lock.acquire(timeout=timeout)
         except filelock.Timeout as exc:
             raise SpoolLockedError(
-                f"spool at {self._root} is locked by another writer "
-                f"(timed out after {timeout}s)"
+                f"spool at {self._root} is locked by another writer (timed out after {timeout}s)"
             ) from exc
 
     def next_seq(self, lane: str) -> int:

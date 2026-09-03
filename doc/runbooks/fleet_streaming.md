@@ -49,6 +49,17 @@ when you re-enable. Two tools still work regardless: `describe_stream_status`
 (so you can see *that* it's disabled) and `unenroll_fleet_identity` (which
 only makes things more inert).
 
+Don't confuse it with `BAGEL_FLEET`: that is a **build-time** Docker
+argument (it decides whether the fleet dependency group is installed into
+the image at all) and has **no runtime effect**. Setting it as a runtime
+environment variable does nothing except log this warning at startup:
+
+```
+BAGEL_FLEET is a build-time image argument and has no runtime effect; to disable fleet streaming set FLEET_ENABLED=0
+```
+
+The runtime kill switch is `FLEET_ENABLED`, nothing else.
+
 ## Certificate renewal
 
 Renewal is automatic: from 30 days before the certificate expires, the robot
@@ -84,10 +95,9 @@ silently comes back online. Rules applied this way are persisted to the
 startup manifest's `streams:` section, so they survive container restarts.
 
 Event rules are accepted, validated, merged, and persisted the same way
-channel rules are, and `stream_live_topics`/`stop_live_streams` report them
-back as `events_configured` -- but on-robot evaluation ships in a later
-release; configuration is forward-compatible, not yet active
-(`events_active` is always `False`).
+channel rules are (`stream_live_topics`/`stop_live_streams` report the live
+rule names back as `events`) -- and they are evaluated on-robot: a rule
+reported back is live, not merely configured. See "Events" below.
 
 `pause_fleet_streaming` / `resume_fleet_streaming` take the connection
 offline and back without touching identity or rules -- a paused robot leaves
@@ -104,6 +114,112 @@ and heartbeats are never dropped.
 identity file set (key, cert, CA cert, `identity.yaml`, plus any versioned
 renewal leftovers) and removes the manifest's `streams:` section -- nothing
 else in the manifest is touched. Re-enrolling needs a fresh token.
+
+## Events
+
+An event rule names a topic and a predicate, and fires when the predicate
+goes from false to true on the live stream:
+
+```yaml
+streams:
+  events:
+    - name: hard_decel
+      topic: "robot/telemetry"
+      predicate: "\"robot/telemetry\"['decel'] > 8"
+      pre_seconds: 5          # window captured before the firing
+      post_seconds: 2         # window captured after (delays the firing)
+      debounce_seconds: 30    # coalesce edges closer together than this
+      artifact: mcap          # capture the window into a robot-local MCAP
+```
+
+The predicate is SQL over the topic's own fields, referenced as
+`topic['field']` (add more `['field']` steps for nesting). Predicates are
+validated when the service starts (and when `stream_live_topics` applies a
+rule): a bad one -- broken SQL, an unknown field, an unsubscribed topic --
+is rejected up front with a typed error, never silently accepted and never
+fired.
+
+**Rate cap.** Each rule fires at most `FLEET_EVENTS_MAX_PER_MINUTE` times
+(default 6) in any trailing 60-second window. The configured windows and
+debounce are never mutated to enforce this; excess firings are counted and
+reported as `summary.suppressed` on the next firing that gets through --
+loss is visible, never silent.
+
+**Sample-drop honesty.** The sample path feeding the event engine is
+deliberately bounded (an in-memory queue plus per-topic rings capped by
+`FLEET_EVENT_RING_MAX_SAMPLES`/`FLEET_EVENT_RING_MAX_BYTES`), so under
+extreme load *samples* can drop -- the health report's `events_pipeline`
+check and `describe_stream_status` count exactly that. Emitted *events*
+never drop: once a firing is recorded it goes to the never-evicted events
+spool lane and is delivered.
+
+**Artifacts.** `artifact: mcap` captures the firing's pre/post window into
+`CACHE_DIRECTORY/publish-artifacts/{robot}/{name}-{event_id}.mcap`. The
+store is capped by `FLEET_ARTIFACTS_MAX_BYTES` (default 256 MB), oldest
+files evicted first. The event's `artifact.uri` is a `file://` URI local to
+the robot -- v1 has no upload; fetching the file (scp, a collector sidecar,
+a shared volume) is the operator's job. An artifact failure (budget
+exceeded, write error) never blocks the event: it arrives without
+`artifact`, carrying `summary.artifact_error` instead. Keep windowed
+(`pre_seconds`/`post_seconds`) rules on low-rate topics -- every sample of a
+windowed topic is evaluated and ring-buffered, so a high-rate topic (a
+camera, a dense pointcloud) belongs in a recorded bag, not an event window.
+
+**Removing a rule with no service running** updates only the persisted
+manifest -- with nothing streaming there are no live topics to re-validate
+the remaining rules against. If a stale, now-invalid event rule is left in
+the manifest this way, the next start does not crash: the boot report
+carries a `fleet: "failed"` entry whose error points at the offending
+`events[i]` entry, and streaming stays down until you fix (or remove) the
+rule and restart.
+
+## Health reports
+
+The robot publishes a scheduled self-diagnosis (`name: "health_report"`,
+`source_topic: "internal:health"`) on the events stream: once shortly after
+each streaming session starts (`FLEET_HEALTH_SETTLE_S`, default 60 s -- the
+settle delay keeps boot-time transients out of the first report), then every
+`FLEET_HEALTH_INTERVAL_S` (default 6 h). There is no on-demand trigger.
+Pausing and resuming starts a new session, so a resume restarts the settle
+clock and a fresh settle-delayed report follows.
+
+Ten checks, each `pass`/`warn`/`fail`/`skipped` with a `reason` when not
+passing:
+
+- `connection` -- fails if the router thread died; warns while
+  offline-but-retrying.
+- `queue` -- warns while the router's sample queue is actively dropping.
+- `events_pipeline` -- warns while the event emitter's queue is actively
+  dropping, or on any predicate error on live messages.
+- `spool` -- fails if the channels lane evicted (lost) batches this period;
+  warns above 80% of `FLEET_SPOOL_MAX_BYTES`.
+- `events_backlog` -- warns when more than 1000 events are spooled but not
+  yet delivered (events aren't reaching the fleet service).
+- `disk` -- fails below 512 MB free on the cache filesystem; warns below
+  2 GB.
+- `certificate` -- skipped when unenrolled; fails when expired; warns inside
+  the 30-day renewal window.
+- `topic_staleness` -- warns when a tapped topic has been silent (or never
+  seen) for 5+ minutes. Advisory: source timestamps may be sim time, so a
+  legitimately idle or replaying robot can trip it.
+- `heartbeat` -- fails if the heartbeat thread died; warns on growing
+  spool-append failures or a publish error.
+- `artifacts` -- skipped with no artifact-bearing rules; warns above 80% of
+  `FLEET_ARTIFACTS_MAX_BYTES`.
+
+Counter-based checks are *deltas* against the previous report (the report's
+`t_start`/`t_end` span exactly that period): they flag problems actively
+occurring since the last report, so a one-time historical blip does not warn
+forever.
+
+## Build provenance
+
+Set `BAGEL_BUILD_ID` (and optionally `BAGEL_VCS_REF`) to stamp every
+heartbeat and every event summary with a `build` block -- the fleet side can
+then correlate behavior with the exact software build. Bake them into the
+image at build time (e.g. Docker `ENV BAGEL_BUILD_ID=...` set from your CI's
+build metadata). Empty or unset means the block is simply absent;
+`BAGEL_VCS_REF` alone does nothing (`build_id` is the required key).
 
 ## Selftest
 
@@ -132,7 +248,13 @@ The selftest also refuses outright if either spool lane already has pending
 unacked backlog (e.g. a paused service's queued-but-unsent data) -- exit 1,
 nothing touched -- since it would otherwise ack its way past that backlog and
 silently drop it; let the service drain the backlog, or discard it first via
-`pause_fleet_streaming(discard=True)`.
+`pause_fleet_streaming(discard=True)`. Note that the events lane fills on
+its own now: event firings and scheduled health reports emitted while the
+broker is unreachable sit there as pending backlog, so a robot that has
+been offline for a while will make the selftest refuse -- that's not a
+fault. Bring the service online, let the backlog drain, then run the
+selftest. (Discarding is not an option for that backlog: `discard=True`
+only ever empties the channels lane; events are never dropped.)
 
 ## Dev rigs
 

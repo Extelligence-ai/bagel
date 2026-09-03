@@ -802,9 +802,7 @@ class TestExclusiveLock:
             s.stats()
         assert list(s.pending("channels")) == []
 
-    def test_second_instance_blocks_until_released_then_proceeds(
-        self, root: pathlib.Path
-    ) -> None:
+    def test_second_instance_blocks_until_released_then_proceeds(self, root: pathlib.Path) -> None:
         """A second `Spool` on the same root waits for the first to release,
         then succeeds -- this is a real OS-level lock, not merely advisory
         within one instance."""

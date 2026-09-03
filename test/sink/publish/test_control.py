@@ -982,9 +982,7 @@ class TestStreamTopics:
         with pytest.raises(StreamConfigError):
             control.stream_topics(
                 channels=None,
-                events=[
-                    {"name": "bad", "topic": "/imu", "predicate": "not valid sql (("}
-                ],
+                events=[{"name": "bad", "topic": "/imu", "predicate": "not valid sql (("}],
             )
 
         assert startup.fleet_service() is old_service
@@ -1030,9 +1028,7 @@ class TestStreamTopics:
         with pytest.raises(StreamConfigError):
             control.stream_topics(
                 channels=None,
-                events=[
-                    {"name": "bad", "topic": "/not/subscribed", "predicate": "true"}
-                ],
+                events=[{"name": "bad", "topic": "/not/subscribed", "predicate": "true"}],
             )
 
         assert startup.fleet_service() is old_service

@@ -66,6 +66,7 @@ from src.sink.publish.spool import Spool
 # slow mutating call.
 _control_lock = threading.Lock()
 
+
 def _fleet_installed() -> bool:
     """Whether the optional `fleet` dependency group (paho-mqtt) is importable.
 

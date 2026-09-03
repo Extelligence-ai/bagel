@@ -749,7 +749,165 @@ def test_chaos_kill_and_restart_broker_drains_spool_in_order(tmp_path: pathlib.P
         broker.cleanup()
 
 
-# -- 3. service.stop() publishes the stopped heartbeat before disconnect ----------------
+# -- 3. events live: a rule firing with an MCAP artifact + the scheduled health_report --
+
+
+def _events_streams(topic: str = "/imu") -> StreamsConfig:
+    """One artifact-bearing event rule, no channels -- the step-8 emitter path."""
+    return StreamsConfig.build(
+        {
+            "flush_interval_s": 0.2,
+            "events": [
+                {
+                    "name": "hard_decel",
+                    "topic": topic,
+                    "predicate": f"\"{topic}\"['x'] < -10",
+                    "pre_seconds": 5.0,
+                    "artifact": "mcap",
+                }
+            ],
+        }
+    )
+
+
+def _collect_named_events(
+    sub: _Subscriber, topic: str, want: set[str], timeout_s: float
+) -> dict[str, dict]:
+    """Drain the events topic until one payload per name in `want` has arrived."""
+    got: dict[str, dict] = {}
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline and set(got) != want:
+        item = _drain(sub.inbox, topic, timeout_s=1.0)
+        if item is None:
+            continue
+        body = json.loads(item[1])
+        got.setdefault(body["name"], body)
+    assert set(got) == want, f"events never arrived: missing {want - set(got)}, got {set(got)}"
+    return got
+
+
+def _assert_rule_event_and_mcap_artifact(event: dict) -> None:
+    """The binding rule-event envelope (§7) plus a parseable robot-local artifact."""
+    from mcap.reader import make_reader
+
+    assert event["v"] == 1
+    assert isinstance(event["seq"], int)
+    assert event["source_topic"] == "/imu"
+    # post_seconds=0: the firing releases on the crossing sample itself.
+    assert event["t_start"] == 103.0
+    assert event["t_end"] == 103.0
+
+    summary = event["summary"]
+    assert summary["predicate"] == "\"/imu\"['x'] < -10"
+    assert summary["pre_seconds"] == 5.0
+    assert summary["post_seconds"] == 0.0
+    assert summary["debounce_seconds"] == 0.0
+    assert summary["samples"] == 4  # 3 in-window pre samples + the crossing sample
+    assert "suppressed" not in summary  # only present when > 0
+    assert "artifact_error" not in summary
+    assert summary["build"] == {"build_id": "e2e-build-1", "vcs_ref": "cafe1234"}
+
+    artifact = event["artifact"]
+    assert artifact["kind"] == "mcap"
+    assert artifact["uri"].startswith("file://")
+    path = pathlib.Path(urlparse(artifact["uri"]).path)
+    assert path.name == f"hard_decel-{event['event_id']}.mcap"
+    assert "publish-artifacts" in path.parts
+
+    with open(path, "rb") as stream:
+        messages = [
+            (channel.topic, message.log_time, json.loads(message.data))
+            for _schema, channel, message in make_reader(stream).iter_messages()
+        ]
+    assert len(messages) == summary["samples"]
+    assert all(topic == "/imu" for topic, _lt, _msg in messages)
+    assert [msg["x"] for _t, _lt, msg in messages] == [0.0, -1.0, -2.0, -25.0]
+    assert [lt for _t, lt, _msg in messages] == [
+        int(t * 1_000_000_000) for t in (100.0, 101.0, 102.0, 103.0)
+    ]
+
+
+def _assert_health_report(report: dict) -> None:
+    """The binding health_report shape (§7.1): closed status enum, ten checks, verdict."""
+    from src.sink.publish.health import CHECK_STATUSES
+
+    assert report["v"] == 1
+    assert isinstance(report["seq"], int)
+    assert report["source_topic"] == "internal:health"
+    assert report["t_start"] <= report["t_end"]
+
+    summary = report["summary"]
+    assert summary["schema_rev"] == 1
+    assert summary["source"]["component"] == "bagel"
+    checks = summary["checks"]
+    assert len(checks) == 10
+    for check in checks:
+        assert check["status"] in CHECK_STATUSES, f"unknown status in {check}"
+        assert ("reason" in check) == (check["status"] != "pass")
+    assert isinstance(summary["verdict"], str) and summary["verdict"]
+    assert summary["build"] == {"build_id": "e2e-build-1", "vcs_ref": "cafe1234"}
+
+
+def test_event_rule_fires_with_mcap_artifact_and_health_report_arrives(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Full stack: tap -> emitter -> engine -> artifact store -> events lane -> broker.
+
+    One threshold-crossing sample stream through a started FleetService with
+    an `artifact: mcap` rule; a subscriber on the robot's events topic must
+    receive (1) the rule event whose `file://` URI parses locally as MCAP
+    with the exact captured window, and (2) a scheduled `health_report`
+    (settle patched to ~0 via the SETTING, before start() ever launches the
+    emitter) whose every check status is in the closed enum. Both carry
+    `build`, since BAGEL_BUILD_ID is set.
+    """
+    from settings import settings
+
+    # Patched BEFORE service.start() -- _launch_runtime reads these settings.
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path / "cache"))
+    monkeypatch.setattr(settings, "FLEET_HEALTH_SETTLE_S", 0.0)
+    monkeypatch.setattr(settings, "FLEET_HEALTH_INTERVAL_S", 3600.0)
+    monkeypatch.setattr(settings, "BAGEL_BUILD_ID", "e2e-build-1")
+    monkeypatch.setattr(settings, "BAGEL_VCS_REF", "cafe1234")
+
+    from src.sink.publish.mqtt import MqttPublisher
+    from src.sink.publish.service import FleetService
+
+    parsed = urlparse(BROKER)
+    tenant, robot = "events", uuid.uuid4().hex[:8]
+    events_topic = wire_topic(tenant, robot, "events")
+
+    sub = _Subscriber(parsed.hostname, parsed.port or 1883, tenant, robot)
+    sub.connect()
+    try:
+        writer = _real_writer(tmp_path)
+        service = FleetService(
+            sink=FakeSink({"/imu": writer}),
+            streams=_events_streams(),
+            publisher=MqttPublisher(BROKER, tenant, robot),
+            spool=Spool(tmp_path / "spool"),
+        )
+        service.start()
+        try:
+            # 3 samples inside the 5s pre window, then the threshold crossing.
+            writer.append({"x": 0.0, "timestamp_seconds": 100.0})
+            writer.append({"x": -1.0, "timestamp_seconds": 101.0})
+            writer.append({"x": -2.0, "timestamp_seconds": 102.0})
+            writer.append({"x": -25.0, "timestamp_seconds": 103.0})
+
+            got = _collect_named_events(
+                sub, events_topic, want={"hard_decel", "health_report"}, timeout_s=_BATCH_WAIT_S
+            )
+            _assert_rule_event_and_mcap_artifact(got["hard_decel"])
+            _assert_health_report(got["health_report"])
+            assert got["hard_decel"]["seq"] != got["health_report"]["seq"]
+        finally:
+            service.stop()
+    finally:
+        sub.close()
+
+
+# -- 4. service.stop() publishes the stopped heartbeat before disconnect ----------------
 
 
 def test_stop_publishes_stopped_heartbeat_before_disconnect(

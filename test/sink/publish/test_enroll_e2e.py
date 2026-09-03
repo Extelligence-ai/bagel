@@ -117,11 +117,15 @@ def _drain(inbox: Inbox, topic: str, timeout_s: float = 10.0) -> tuple[str, byte
 
 
 class FakeSink:
-    """Minimal TopicSink double: the `_buffers`/`subscribed_topics` seam FleetService uses.
+    """Minimal TopicSink double: the `buffer_writer`/`subscribed_topics` seam FleetService uses.
 
     Adapted from test_stream_e2e.py's double of the same name -- duplicated
     rather than imported across test modules (no existing precedent for
-    that in this package; see this module's docstring, point 3).
+    that in this package; see this module's docstring, point 3). Kept in
+    lockstep with FleetService's seam: it originally exposed the raw
+    `_buffers` attribute the service then reached into, and broke silently
+    (this file is broker-gated, so nothing ran it) when the service moved to
+    the `buffer_writer()` accessor.
     """
 
     def __init__(self, buffers: dict[str, "TopicBufferWriter"]) -> None:
@@ -130,6 +134,9 @@ class FakeSink:
     @property
     def subscribed_topics(self) -> list[str]:
         return list(self._buffers)
+
+    def buffer_writer(self, topic: str) -> "TopicBufferWriter":
+        return self._buffers[topic]
 
 
 def _real_writer(tmp_path: pathlib.Path, topic: str = "/imu") -> "TopicBufferWriter":

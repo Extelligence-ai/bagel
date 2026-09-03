@@ -304,9 +304,7 @@ class TestExclusiveLockDuringRun:
         assert pub.calls == []
         assert list(run_spool.pending("channels")) == []
 
-    def test_waits_out_a_briefly_held_lock_then_runs_normally(
-        self, tmp_path: pathlib.Path
-    ) -> None:
+    def test_waits_out_a_briefly_held_lock_then_runs_normally(self, tmp_path: pathlib.Path) -> None:
         from src.sink.publish.selftest import run_selftest
 
         root = tmp_path / "spool"
