@@ -258,6 +258,15 @@ class FleetService:
         (spec §3) on the transition itself, so the retained clean-stop
         heartbeat a broker-side subscriber sees reads distinctly from a
         genuine `stop()`.
+
+        Teardown runs in a `try`/`finally` (Codex review, rider c), mirroring
+        `stop()`'s own shape: a failure partway through (an emitter/router/
+        heartbeat thread's `stop()` raising) must not skip releasing the
+        publisher session or leave `_paused` unset -- `publisher.close(reason
+        ="paused")` and the paused-flag transition always run, so the
+        service lands in a consistent, re-enterable state even when a
+        teardown step itself raises (the exception still propagates, same as
+        `stop()`'s contract).
         """
         if not self._started:
             return
@@ -265,17 +274,19 @@ class FleetService:
             if discard:
                 self._discard_channels_backlog()
             return
-        self._clear_taps()
-        if self._heartbeat is not None:
-            self._heartbeat.stop()
-        if self._emitter is not None:
-            self._emitter.stop()
-        if self._router is not None:
-            self._router.stop()
-        self._publisher.close(reason="paused")
-        if discard:
-            self._discard_channels_backlog()
-        self._paused = True
+        try:
+            self._clear_taps()
+            if self._heartbeat is not None:
+                self._heartbeat.stop()
+            if self._emitter is not None:
+                self._emitter.stop()
+            if self._router is not None:
+                self._router.stop()
+        finally:
+            self._publisher.close(reason="paused")
+            if discard:
+                self._discard_channels_backlog()
+            self._paused = True
 
     def _discard_channels_backlog(self) -> None:
         """Ack the channels lane up to its last written seq, dropping any unacked backlog."""

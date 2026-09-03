@@ -496,9 +496,15 @@ class EventEmitter(threading.Thread):
         offers everything, then `engine.flush(now)`s so events still waiting
         on their post window fire best-effort (never-drop philosophy). No
         final health report -- a stop is not a schedule.
+
+        The join timeout (12s) matches `StreamRouter.stop`'s own bound
+        (rider d): both threads can be blocked inside the same
+        `MqttPublisher.publish`'s 10s QoS-1 `wait_for_publish` wait, so a
+        shorter join here could return before termination was actually
+        guaranteed, same as the router's own Codex-review fix.
         """
         self._stop_event.set()
-        self.join(timeout=5)
+        self.join(timeout=12)
         if self.is_alive():
             logger.warning("event emitter thread did not terminate")
             return
@@ -507,16 +513,30 @@ class EventEmitter(threading.Thread):
         self._final_flush()
 
     def _final_flush(self) -> None:
-        """Drain-then-offer-then-flush, once, after the thread loop has exited."""
-        while True:
-            samples = self._queue.drain(max_items=500, timeout_s=0.0)
-            if not samples:
-                break
-            for topic, t, msg in samples:
-                for firing in self._engine.offer(topic, t, msg):
-                    self._emit(firing)
-        for firing in self._engine.flush(self._now()):
-            self._emit(firing)
+        """Drain-then-offer-then-flush, once, after the thread loop has exited.
+
+        Wrapped in a broad try/except (Codex review, rider c): unlike a
+        mid-tick failure (caught by `run()`'s own fatal-catch and reported
+        via `alive`/`last_error`), a failure HERE would otherwise propagate
+        straight out of `stop()` -- called synchronously from
+        `FleetService.stop()`/`pause()`'s own teardown -- and could abort
+        that teardown before the publisher is released. Any exception is
+        logged at ERROR and recorded via `last_error` instead, so `stop()`
+        always completes.
+        """
+        try:
+            while True:
+                samples = self._queue.drain(max_items=500, timeout_s=0.0)
+                if not samples:
+                    break
+                for topic, t, msg in samples:
+                    for firing in self._engine.offer(topic, t, msg):
+                        self._emit(firing)
+            for firing in self._engine.flush(self._now()):
+                self._emit(firing)
+        except Exception as exc:
+            logger.error("EventEmitter final flush failed", exc_info=True)
+            self._last_error = repr(exc)
 
     def status_counters(self) -> dict:
         """Engine counters plus this thread's own queue/spool/health/liveness state."""

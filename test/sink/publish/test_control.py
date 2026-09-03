@@ -166,7 +166,29 @@ class TestFleetStatusNoGate:
         status = control.fleet_status()
         assert status["service"] == "stopped"
         assert status["channels"] == []
+        assert status["events"] == []
         assert status["status"] is None
+
+    def test_running_service_with_event_rules_lists_their_names(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        streams = config.StreamsConfig.build(
+            {
+                "channels": [{"topic": "/imu", "fields": ["x"], "rate_hz": 50}],
+                "events": [{"name": "hard_decel", "topic": "/imu", "predicate": "true"}],
+            }
+        )
+        struct = pa.struct([pa.field("x", pa.float64())])
+        sink = FakeSink({"/imu": FakeWriter(struct)})
+        service = FleetService(
+            sink=sink, streams=streams, publisher=FakePublisher(), spool=Spool(tmp_path / "spool")
+        )
+        service.start()
+        startup.set_fleet_service(service)
+
+        status = control.fleet_status()
+
+        assert status["events"] == ["hard_decel"]
 
     def test_enrolled_and_running_reports_identity_and_status(self, tmp_path: pathlib.Path) -> None:
         _write_identity(
@@ -709,8 +731,7 @@ class TestStreamTopics:
         names = {c["c"] for c in new_service.channels}
         assert {"imu.x", "odom.y"} <= names
         assert result["service"] == "running"
-        assert result["events_configured"] == []
-        assert result["events_active"] is False
+        assert result["events"] == []
 
     def test_unparsable_manifest_does_not_undo_a_successful_restart(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
@@ -946,42 +967,86 @@ class TestStreamTopics:
         assert len(new_service.streams.events) == 1
         assert new_service.streams.events[0].predicate == "\"/imu\"['x'] < -20"
         assert new_service.streams.events[0].pre_seconds == 5.0
-        assert result["events_configured"] == ["hard_decel"]
-        assert result["events_active"] is False
+        assert result["events"] == ["hard_decel"]
 
-    def test_configuring_an_event_rule_logs_a_not_active_warning(
-        self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+    def test_bad_predicate_raises_and_leaves_the_original_service_running(
+        self, tmp_path: pathlib.Path
     ) -> None:
-        """P1a (Codex round 3): honest-reporting -- event rules are stored and
-        forwarded, but nothing on-robot evaluates them yet, so every call that
-        leaves an event rule configured logs a WARNING saying so."""
-        self._running_multi_topic_service(tmp_path)
+        """Rider (a): a bad event predicate is now caught at service-(re)start
+        time, via `_restart_service`'s new `events.validate_predicates` call
+        -- BEFORE the old service is stopped, per the existing
+        failure-outcome contract. The OLD service object (identity check)
+        must still be in the holder, and still fully functional."""
+        old_service = self._running_multi_topic_service(tmp_path)
 
-        with caplog.at_level("WARNING", logger="src.sink.publish.control"):
+        with pytest.raises(StreamConfigError):
             control.stream_topics(
                 channels=None,
                 events=[
-                    {"name": "hard_decel", "topic": "/imu", "predicate": "\"/imu\"['x'] < -10"}
+                    {"name": "bad", "topic": "/imu", "predicate": "not valid sql (("}
                 ],
             )
 
-        assert any(
-            "not evaluated until the event runtime ships" in record.message
-            for record in caplog.records
-        )
+        assert startup.fleet_service() is old_service
+        assert startup.fleet_service().status() is not None
 
-    def test_no_event_rules_configured_logs_no_warning(
-        self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+    def test_stale_persisted_bad_predicate_rule_is_also_caught(
+        self, tmp_path: pathlib.Path
     ) -> None:
-        """The warning fires only when an event rule is actually configured."""
+        """Same protection when the bad rule is carried over unchanged from
+        the current config (e.g. a stale manifest-persisted rule with a
+        bare-column predicate) rather than freshly submitted -- merging in
+        an unrelated channel rule must still trip the predicate pre-check on
+        the carried-over event rule."""
         self._running_multi_topic_service(tmp_path)
+        control.stream_topics(
+            channels=None,
+            events=[{"name": "hard_decel", "topic": "/imu", "predicate": "\"/imu\"['x'] < -10"}],
+        )
+        stale_service = startup.fleet_service()
+        assert stale_service is not None
+        # Corrupt the already-merged rule in place to simulate a stale
+        # persisted rule with a bare-column (unquoted-topic) predicate that
+        # would raise inside evaluate_predicate.
+        stale_service.streams.events[0].predicate = "x < -10"
 
-        with caplog.at_level("WARNING", logger="src.sink.publish.control"):
+        with pytest.raises(StreamConfigError):
             control.stream_topics(
                 channels=[{"topic": "/odom", "fields": ["y"], "rate_hz": 2}], events=None
             )
 
-        assert caplog.records == []
+        assert startup.fleet_service() is stale_service
+        assert startup.fleet_service().status() is not None
+
+    def test_event_topic_not_covered_by_sink_raises_and_leaves_service_running(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """The coverage pre-check (`_resolve_sink`) already protects an event
+        topic the sink doesn't subscribe to -- verified explicitly here per
+        rider (a)'s instruction, not just relying on the channels-topic
+        coverage test."""
+        old_service = self._running_multi_topic_service(tmp_path)
+
+        with pytest.raises(StreamConfigError):
+            control.stream_topics(
+                channels=None,
+                events=[
+                    {"name": "bad", "topic": "/not/subscribed", "predicate": "true"}
+                ],
+            )
+
+        assert startup.fleet_service() is old_service
+        assert startup.fleet_service().status() is not None
+
+    def test_no_event_rules_configured(self, tmp_path: pathlib.Path) -> None:
+        """`events` is empty when no event rules are configured."""
+        self._running_multi_topic_service(tmp_path)
+
+        result = control.stream_topics(
+            channels=[{"topic": "/odom", "fields": ["y"], "rate_hz": 2}], events=None
+        )
+
+        assert result["events"] == []
 
     def test_disabled_raises_before_any_state_change(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
@@ -1117,14 +1182,13 @@ class TestStopStreams:
 
         assert startup.fleet_service().streams.events == []
         assert result["changed"] is True
-        assert result["events_configured"] == []
-        assert result["events_active"] is False
+        assert result["events"] == []
 
-    def test_leftover_event_rule_after_stop_streams_logs_a_not_active_warning(
-        self, tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+    def test_leftover_event_rule_after_stop_streams_reports_it_still_live(
+        self, tmp_path: pathlib.Path
     ) -> None:
-        """P1a: the same honest-reporting warning fires from stop_streams too,
-        whenever event rules remain configured after the call."""
+        """An event rule left in place after a channel removal still shows up
+        in `events` -- it's live, not merely stored."""
         streams = config.StreamsConfig.build(
             {
                 "channels": [{"topic": "/imu", "fields": ["x"], "rate_hz": 50}],
@@ -1133,13 +1197,9 @@ class TestStopStreams:
         )
         self._service_with_streams(tmp_path, streams)
 
-        with caplog.at_level("WARNING", logger="src.sink.publish.control"):
-            control.stop_streams(channels=["imu.x"], events=None)
+        result = control.stop_streams(channels=["imu.x"], events=None)
 
-        assert any(
-            "not evaluated until the event runtime ships" in record.message
-            for record in caplog.records
-        )
+        assert result["events"] == ["hard_decel"]
 
     def test_unknown_name_is_a_no_op_and_does_not_restart(self, tmp_path: pathlib.Path) -> None:
         service, _pub = _running_service(tmp_path)
@@ -1264,8 +1324,7 @@ class TestStopStreams:
         assert result == {
             "service": "stopped",
             "channels": [],
-            "events_configured": [],
-            "events_active": False,
+            "events": [],
             "changed": True,
             "persisted": True,
         }

@@ -361,6 +361,95 @@ class TestPauseResume:
             service.stop()
 
 
+class TestPauseStopHardening:
+    """Rider (c): `pause()`'s teardown is wrapped in try/finally, mirroring
+    `stop()`'s existing shape, so `publisher.close(reason="paused")` and the
+    `paused` flag always run even when a teardown step raises. The event
+    emitter's own `_final_flush` (events.py) separately gains a broad
+    try/except so an `engine.flush` failure never propagates out of
+    `emitter.stop()` at all -- both together mean `stop()`/`pause()` always
+    complete and close the publisher with the right reason."""
+
+    def test_pause_completes_and_closes_publisher_when_engine_flush_raises(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher()
+        service = FleetService(
+            sink=sink, streams=_imu_streams(), publisher=pub, spool=Spool(tmp_path / "spool")
+        )
+        service.start()
+        try:
+
+            def boom(*_a: object, **_kw: object) -> list:
+                raise RuntimeError("flush exploded")
+
+            monkeypatch.setattr(service._engine, "flush", boom)
+
+            service.pause()  # must not raise
+
+            assert pub.close_reasons == ["paused"]
+            assert service.paused is True
+        finally:
+            service.stop()
+
+    def test_stop_completes_and_closes_publisher_when_engine_flush_raises(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher()
+        service = FleetService(
+            sink=sink, streams=_imu_streams(), publisher=pub, spool=Spool(tmp_path / "spool")
+        )
+        service.start()
+
+        def boom(*_a: object, **_kw: object) -> list:
+            raise RuntimeError("flush exploded")
+
+        monkeypatch.setattr(service._engine, "flush", boom)
+
+        service.stop()  # must not raise
+
+        assert pub.close_reasons == ["stopped"]
+
+    def test_pause_closes_publisher_and_sets_paused_flag_even_if_heartbeat_stop_raises(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Independent of the events.py fix above: any OTHER teardown step
+        raising (heartbeat.stop, here) must still leave the publisher closed
+        with reason="paused" and the paused flag set, per pause()'s new
+        try/finally -- the exception itself still propagates (mirrors
+        stop()'s existing contract), but the service lands in a consistent,
+        re-enterable state."""
+        writer = FakeWriter(_imu_struct())
+        sink = FakeSink({"/imu": writer})
+        pub = FakePublisher()
+        service = FleetService(
+            sink=sink, streams=_imu_streams(), publisher=pub, spool=Spool(tmp_path / "spool")
+        )
+        service.start()
+        try:
+
+            def boom() -> None:
+                raise RuntimeError("heartbeat stop exploded")
+
+            monkeypatch.setattr(service._heartbeat, "stop", boom)
+
+            with pytest.raises(RuntimeError, match="heartbeat stop exploded"):
+                service.pause()
+
+            assert pub.close_reasons == ["paused"]
+            assert service.paused is True
+        finally:
+            # Restore the real heartbeat.stop before cleanup -- boom() never
+            # signaled the heartbeat thread's own stop event, so a real
+            # stop() call is still needed (and still safe) to join it.
+            monkeypatch.undo()
+            service.stop()
+
+
 class TestPauseReasonAndPausedProperty:
     """Task 4: `pause()`'s clean-stop heartbeat carries `reason="paused"` (spec §3);
     `stop()` keeps the default `"stopped"`. `paused` exposes `_started and _paused`

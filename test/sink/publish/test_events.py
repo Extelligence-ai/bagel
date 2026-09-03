@@ -711,6 +711,53 @@ class TestEmitterStopAndFailures:
         assert "engine exploded" in emitter.last_error
         emitter.stop()  # must not raise (no final flush after a fatal error)
 
+    def test_final_flush_engine_error_is_caught_and_recorded_as_last_error(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rider (c): `_final_flush`'s broad try/except -- a failure INSIDE
+        `engine.flush` (the final-flush-only call path, distinct from the
+        `offer` fatal-tick path above) must not propagate out of `stop()`;
+        it's logged and recorded via `last_error` instead."""
+        emitter, queue, _spool = _emitter(tmp_path, [_rule()])
+        emitter.start()
+        try:
+
+            def boom(*args: object, **kwargs: object) -> list:
+                raise RuntimeError("flush exploded")
+
+            monkeypatch.setattr(emitter._engine, "flush", boom)
+        finally:
+            emitter.stop()  # must not raise
+
+        assert emitter.last_error is not None
+        assert "flush exploded" in emitter.last_error
+
+
+class TestEmitterJoinTimeout:
+    def test_stop_joins_with_a_12s_timeout(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rider (d): aligned with `StreamRouter.stop`'s own 12s join bound
+        (Codex review, 3906982943) -- both threads can be blocked inside the
+        same `MqttPublisher.publish`'s 10s QoS-1 `wait_for_publish` wait, so
+        the join must outlast that."""
+        emitter, _queue, _spool = _emitter(tmp_path, [_rule()])
+
+        join_calls: list[float | None] = []
+        real_join = emitter.join
+
+        def spy_join(timeout: float | None = None) -> None:
+            join_calls.append(timeout)
+            real_join(timeout)
+
+        monkeypatch.setattr(emitter, "join", spy_join)
+
+        emitter.start()
+        emitter.stop()
+
+        assert join_calls
+        assert join_calls[0] is not None and join_calls[0] > 10.0
+
 
 class TestEmitterHealthSchedule:
     def test_settle_then_interval_schedule_with_an_injected_clock(
