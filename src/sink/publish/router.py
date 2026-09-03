@@ -407,6 +407,11 @@ class StreamRouter(threading.Thread):
             self._schedule_retry(now)
             return
         try:
+            # The stats->next_seq->ack sequence is three separate lock
+            # acquisitions, not one critical section: a beat appended between
+            # them either skips this prune cycle or survives it (ack never
+            # overshoots the seq it computed) -- and every spooled beat is
+            # stale by ruling, so the timing slop is inconsequential.
             if "heartbeat" in self._spool.stats():
                 last_seq = self._spool.next_seq("heartbeat") - 1
                 self._spool.ack("heartbeat", last_seq)

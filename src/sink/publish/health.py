@@ -138,7 +138,8 @@ def _check_connection(
         "reconnects_delta": snapshot.reconnects - baseline.reconnects,
     }
     if not status.get("router_alive", False):
-        return _entry("connection", "fail", metrics, reason=status.get("router_error"))
+        reason = status.get("router_error") or "router thread not alive"
+        return _entry("connection", "fail", metrics, reason=reason)
     if not status.get("online", False):
         return _entry("connection", "warn", metrics, reason="offline-retrying")
     return _entry("connection", "pass", metrics)
