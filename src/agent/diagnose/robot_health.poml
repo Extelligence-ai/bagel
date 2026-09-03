@@ -24,14 +24,31 @@
                             `vehicle_status_*`/`commander_state_*` (status).
                         </item>
                         <item>
-                            <b>ArduPilot (.bin/.log)</b>: `BAT` (power), `IMU`/`VIBE` (IMU),
-                            `GPS` (GPS), `MSG` (status text).
+                            <b>ArduPilot (.bin)</b>: `BAT` (power), `IMU`/`VIBE` (IMU),
+                            `GPS` (GPS), `MSG` (status text). Only the binary DataFlash
+                            `.bin` format is supported (detected by magic bytes, not
+                            extension); a text-format `.log` export is not recognized and
+                            will fail before any inventory - tell the user to re-export as
+                            `.bin` if that's what they have.
                         </item>
                         <item>
-                            <b>Betaflight (.bbl/.BFL)</b>: the `I`/`P` frame topics carry
-                            `vbatLatest` (power) and `gyroADC[0..2]`/`gyroUnfilt[0..2]` (IMU)
-                            in one table; treat GPS as absent unless a GPS frame type shows
-                            up in `describe_data_source`.
+                            <b>Betaflight (.bbl/.BFL)</b>: `describe_data_source` on a
+                            `.bbl` REQUIRES `args={"log_index": 1}` for the first flight
+                            log - a `.bbl` can combine several flight logs recorded to
+                            onboard flash, and there's no default, so the call fails
+                            without it. If it errors, the error names the valid index
+                            range; adapt and retry. `.BFL` files need no `log_index`.
+                            `vbatLatest` (power) and `gyroADC[0..2]`/`gyroUnfilt[0..2]`
+                            (IMU) live on the `I` and `P` frame topics, which
+                            `describe_data_source` exposes as SEPARATE topics (`I` =
+                            keyframes at a lower rate, `P` = delta frames) - query each
+                            with its own `query_messages` call, and don't infer a data
+                            gap from either topic alone. `describe_topic` gives no
+                            unit or scale for `vbatLatest` (it's a raw int); report it as
+                            the raw value with an explicit units-unknown caveat, never
+                            asserting volts or applying an unconfirmed conversion. Treat
+                            GPS as absent unless a GPS frame type shows up in
+                            `describe_data_source`.
                         </item>
                         <item>
                             <b>ROS 1/2 (.bag/.mcap/.db3)</b>: a topic typed
@@ -65,10 +82,10 @@
                             rest of the log.
                         </item>
                         <item>
-                            <b>IMU / vibration</b>: variance and max absolute value of linear
-                            acceleration (or gyro) per axis. Flag a window whose variance or
+                            <b>IMU / vibration</b>: STDDEV and max absolute value of linear
+                            acceleration (or gyro) per axis. Flag a window whose STDDEV or
                             extreme is far outside the log's own baseline (e.g. several times
-                            the overall STDDEV/AVG), and say when it happens.
+                            the overall STDDEV), and say when it happens.
                         </item>
                         <item>
                             <b>GPS</b>: the fix-quality distribution (fix type / status /
@@ -108,7 +125,7 @@
             sample.ulg - 41.5s, 2018 messages, 74 topics
 
             Power      ✅  min 22.1V, largest drop 0.3V
-            IMU        ⚠️  accel_z variance 4.2x the log baseline at t=28s
+            IMU        ⚠️  accel_z STDDEV 4.2x the log baseline at t=28s
             GPS        —  skipped: no GPS topic
             Data gaps  ✅  no gap > 3x median interval (checked battery_status_0, sensor_accel_0)
             Errors     ❌  2 ERROR messages, first at t=31s: "failsafe triggered"
