@@ -29,15 +29,19 @@ from src.source.postgres import quote_identifier
 SECOND_NS = 1_000_000_000
 
 
-def _jsonschema_type(dtype: pa.DataType) -> dict[str, Any]:
-    """Map an Arrow type to a JSON-Schema fragment (reverse of the MCAP reader's mapper)."""
+def jsonschema_type(dtype: pa.DataType) -> dict[str, Any]:
+    """Map an Arrow type to a JSON-Schema fragment (reverse of the MCAP reader's mapper).
+
+    Public: also used by the fleet artifact writer (``src/sink/publish/artifacts.py``)
+    to build the ``jsonschema``-encoded MCAP schema for an event window's struct.
+    """
     if pa.types.is_struct(dtype):
         return {
             "type": "object",
-            "properties": {field.name: _jsonschema_type(field.type) for field in dtype},
+            "properties": {field.name: jsonschema_type(field.type) for field in dtype},
         }
     if pa.types.is_list(dtype) or pa.types.is_large_list(dtype):
-        return {"type": "array", "items": _jsonschema_type(dtype.value_type)}
+        return {"type": "array", "items": jsonschema_type(dtype.value_type)}
     if pa.types.is_integer(dtype):
         return {"type": "integer"}
     if pa.types.is_floating(dtype) or pa.types.is_decimal(dtype):
@@ -78,7 +82,7 @@ def write_mcap(relation: duckdb.DuckDBPyRelation, mcap_file: pathlib.Path) -> No
             schema_id = writer.register_schema(
                 name=topic,
                 encoding="jsonschema",
-                data=json.dumps(_jsonschema_type(table.schema.field(topic).type)).encode(),
+                data=json.dumps(jsonschema_type(table.schema.field(topic).type)).encode(),
             )
             channels[topic] = writer.register_channel(
                 topic=topic, message_encoding="json", schema_id=schema_id

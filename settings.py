@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     # (~4 MB) is possible while rotating.
     FLEET_SPOOL_MAX_BYTES: int = 268_435_456
 
+    # Disk budget for the fleet event-artifact store (MCAP windows written on
+    # events, under CACHE_DIRECTORY/publish-artifacts/). Deliberately outside
+    # the spool root -- Spool.stats() lane-scans its root's subdirectories, and
+    # an artifact directory there would be misread as a lane. Oldest files are
+    # dropped first when over budget.
+    FLEET_ARTIFACTS_MAX_BYTES: int = 268_435_456
+
     # Max samples held in the router's bounded queue between the buffer tap
     # and the router thread. On overflow the oldest sample is dropped to make
     # room for the newest; the queue never blocks the tap.
