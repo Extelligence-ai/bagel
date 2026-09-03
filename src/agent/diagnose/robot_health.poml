@@ -37,11 +37,15 @@
                             <b>Betaflight (.bbl/.BFL)</b>: EVERY tool call on a `.bbl`
                             (`describe_data_source`, `describe_topic`, `query_messages`,
                             `read_loggings` alike - each reconstructs the source) REQUIRES
-                            `args={"log_index": 1}` for the first flight
-                            log - a `.bbl` can combine several flight logs recorded to
-                            onboard flash, and there's no default, so the call fails
-                            without it. If it errors, the error names the valid index
-                            range; adapt and retry. `.BFL` files need no `log_index`.
+                            `args={"log_index": N}` (1-indexed) - a `.bbl` can combine
+                            several flight logs recorded to onboard flash, and there's
+                            no default, so the call fails without it. If the user named
+                            a flight, use that index; otherwise default to 1 BUT say so
+                            in the report header ("flight log 1; the file may contain
+                            more") so a multi-log file never silently passes off the
+                            first flight as the one the user asked about. If a call
+                            errors, the error names the valid index range - adapt,
+                            retry, and mention the range to the user. `.BFL` files need no `log_index`.
                             `vbatLatest` (power) and `gyroADC[0..2]`/`gyroUnfilt[0..2]`
                             (IMU) live on the `I` and `P` frame topics, which
                             `describe_data_source` exposes as SEPARATE topics (`I` =
