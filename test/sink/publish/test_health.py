@@ -165,6 +165,7 @@ class TestHealthy:
     def test_schema_rev_and_source_shape(self) -> None:
         summary, _snapshot = build_health_report(_inputs(uptime_s=42.0), previous=None, now=NOW)
         assert summary["schema_rev"] == 1
+        assert set(summary) == {"schema_rev", "source", "checks", "verdict"}
         assert set(summary["source"]) == {"component", "bagel_version", "uptime_s"}
         assert summary["source"]["component"] == "bagel"
         assert summary["source"]["uptime_s"] == 42.0

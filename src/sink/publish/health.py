@@ -77,6 +77,11 @@ class HealthInputs:
     spool_cap_bytes: int
     artifacts: dict
     artifacts_cap_bytes: int
+    # events_counters: the CALLER's flattened merge of EventEngine.counters()
+    # + the emitter's queue stats: {queue_depth, dropped, predicate_errors,
+    # fired, suppressed} -- predicate_errors must be a SINGLE INT (sum across
+    # rules); EventEngine.counters() returns a per-rule dict, so the caller
+    # sums it. Passing the raw dict through crashes the events_pipeline check.
     events_counters: dict
     uptime_s: float
 
