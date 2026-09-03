@@ -26,14 +26,18 @@
                         <item>
                             <b>ArduPilot (.bin)</b>: `BAT` (power), `IMU`/`VIBE` (IMU),
                             `GPS` (GPS), `MSG` (status text). Only the binary DataFlash
-                            `.bin` format is supported (detected by magic bytes, not
-                            extension); a text-format `.log` export is not recognized and
-                            will fail before any inventory - tell the user to re-export as
+                            format is supported, and the file must carry a lowercase
+                            `.bin` suffix (magic bytes get it recognized, but the source
+                            factory still rejects any other extension); a text-format
+                            `.log` export is not recognized and will fail before any
+                            inventory - tell the user to re-export as
                             `.bin` if that's what they have.
                         </item>
                         <item>
-                            <b>Betaflight (.bbl/.BFL)</b>: `describe_data_source` on a
-                            `.bbl` REQUIRES `args={"log_index": 1}` for the first flight
+                            <b>Betaflight (.bbl/.BFL)</b>: EVERY tool call on a `.bbl`
+                            (`describe_data_source`, `describe_topic`, `query_messages`,
+                            `read_loggings` alike - each reconstructs the source) REQUIRES
+                            `args={"log_index": 1}` for the first flight
                             log - a `.bbl` can combine several flight logs recorded to
                             onboard flash, and there's no default, so the call fails
                             without it. If it errors, the error names the valid index
