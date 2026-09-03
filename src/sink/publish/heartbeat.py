@@ -223,8 +223,20 @@ class HeartbeatThread(threading.Thread):
             logging.getLogger(__name__).debug("heartbeat publish failed", exc_info=True)
             if self._spool is not None:
                 try:
-                    seq = self._spool.next_seq("heartbeat")
-                    self._spool.append("heartbeat", seq, payload)
+                    # `append_next`, not a separate `next_seq()` + `append()`
+                    # pair (Codex round 3 P1 follow-up, comment 3924082774):
+                    # that shape left a gap a concurrent writer (e.g. a
+                    # selftest run) could land in, allocating a seq that
+                    # collided with what append() then tried to use. This
+                    # `except Exception` already caught that `ValueError`
+                    # (so it was never a thread-killer here, unlike the
+                    # router's unguarded batch-flush path -- see
+                    # `router.py`), but it still silently dropped this
+                    # beat's heartbeat from the never-drop lane on a
+                    # spurious collision. The heartbeat payload itself
+                    # carries no embedded `seq` field (spec §8 -- unlike
+                    # channels/events), so the `build` callable is trivial.
+                    self._spool.append_next("heartbeat", lambda _seq: payload)
                 except Exception as exc:
                     self._spool_failures += 1
                     logging.getLogger(__name__).warning(

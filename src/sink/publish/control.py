@@ -409,24 +409,37 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
     Returns:
         `{"service": "running" | "paused" | "stopped", "channels":
         list[dict], "events": list[str], "changed": bool, "persisted": bool}`,
-        plus `"persist_error": str` ONLY when persisting after an actual
-        (`changed`) restart failed (see below). `"paused"` when a restart
-        happened and the service it replaced was paused: `_restart_service`
-        preserves paused-ness across the restart (I1 ruling) -- a brief
-        reconnect blip to republish the schema, then straight back to
-        paused. `events` lists the event rule names still stored, forwarded,
-        AND evaluated on-robot after this call (a rule surviving the removal
-        was already predicate-validated when the service it's running on
-        last (re)started).
+        plus `"persist_error": str` ONLY when persisting after an actual,
+        RESTARTED (`changed` AND a live service) change failed (see below;
+        a persist failure on the persist-only path raises instead).
+        `"paused"` when a restart happened and the service it replaced was
+        paused: `_restart_service` preserves paused-ness across the restart
+        (I1 ruling) -- a brief reconnect blip to republish the schema, then
+        straight back to paused. `events` lists the event rule names still
+        stored, forwarded, AND evaluated on-robot after this call (a rule
+        surviving the removal was already predicate-validated when the
+        service it's running on last (re)started).
 
         Live-vs-persisted atomicity (Codex round 3, P2; widened P2 follow-up
-        on PR #214 to also cover `OSError`): same ruling as `stream_topics`'s
-        -- when `changed` is True, the restart has ALREADY happened by the
-        time persistence is attempted, so a persist failure (an unparsable
+        on PR #214 to also cover `OSError`) -- ONLY for the restarted case:
+        when `changed` is True AND a live service was running, the restart
+        has ALREADY happened (and, per `_restart_service`'s own
+        failure-outcome contract, already SUCCEEDED) by the time
+        persistence is attempted, so a persist failure there (an unparsable
         manifest, or an `OSError` from a read-only manifest directory, a
         full disk, etc) does NOT raise; `persisted` is `False` and
         `persist_error` carries the problem instead, so a genuinely
         successful live change is never misreported as a failure.
+
+        Persist-ONLY failure-outcome contract (Codex round 3 follow-up, PR
+        #214 P2 on comment 3924387659): when `changed` is True but NO live
+        service was running, this call's ENTIRE effect is the manifest
+        write -- there is no successful restart for a swallowed persist
+        failure to protect. A persist failure there PROPAGATES typed
+        (`StreamConfigError` or `OSError`) instead of being folded into
+        `persist_error`: the call did nothing, so it says so, rather than
+        reporting a misleadingly benign-looking `persisted: False` for what
+        is actually a total failure.
 
     Raises:
         FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
@@ -441,6 +454,10 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
             event rule in the manifest rides along unvalidated and surfaces
             at the next service start, where `startup._start_fleet` degrades
             it to a `{"fleet": "failed"}` report entry rather than a crash.
+        StreamConfigError | OSError: from `_persist_streams` itself, ONLY
+            when `changed` is True and NO live service was running (the
+            persist-only path above) -- an unparsable manifest, or a
+            read-only manifest directory / full disk / other write failure.
 
     """
     require_fleet()
@@ -470,8 +487,23 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
         # with identical content) -- a manifest with no `streams:` section
         # stays byte-identical, and `persisted` truthfully reports `False`.
         persist_error = None
-        if changed:
+        if changed and service is not None:
+            # A restart already happened here (and, per `_restart_service`'s
+            # own failure-outcome contract, already SUCCEEDED -- a failing
+            # restart would have raised before this line was ever reached).
+            # `_persist_or_report`'s swallow-and-report ruling exists
+            # precisely to avoid masking that success (Codex round 3, P2,
+            # widened in the PR #214 follow-up).
             persisted, persist_error = _persist_or_report(remaining.to_manifest())
+        elif changed:
+            # No live service, so nothing was restarted -- the manifest
+            # write IS this call's entire effect (Codex round 3 follow-up,
+            # PR #214 P2 on comment 3924387659). There is no successful
+            # restart here for a swallowed failure to protect, so a persist
+            # failure propagates typed instead: the call did nothing, and
+            # says so, rather than reporting a misleadingly benign-looking
+            # `persisted: False` for what is actually a total failure.
+            persisted = _persist_streams(remaining.to_manifest())
         else:
             persisted = False
         if service is None:
@@ -681,10 +713,15 @@ def _read_manifest_doc() -> dict:
     """Read the startup manifest into a dict; `{}` when unset, unwritten, or empty.
 
     Raises:
-        StreamConfigError: the file exists but fails to parse as YAML, or
-            parses to something other than a mapping -- so a corrupt
-            manifest is never silently treated as empty and then clobbered
-            by a subsequent `_persist_streams` write.
+        StreamConfigError: the file exists but fails to parse as YAML,
+            fails to even decode as UTF-8 (`Path.read_text()` raises
+            `UnicodeDecodeError` on invalid bytes -- before `yaml.safe_load`
+            ever runs, so this must be caught alongside `yaml.YAMLError`,
+            not just it; Codex round 3 follow-up, PR #214 P2, comment
+            3927023413's sibling finding), or parses to something other
+            than a mapping -- so a corrupt manifest is never silently
+            treated as empty and then clobbered by a subsequent
+            `_persist_streams` write.
 
     """
     path = _manifest_path()
@@ -692,7 +729,7 @@ def _read_manifest_doc() -> dict:
         return {}
     try:
         doc = yaml.safe_load(path.read_text())
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, UnicodeDecodeError) as exc:
         raise StreamConfigError("manifest", f"unparsable manifest at {path}: {exc}") from exc
     if doc is None:
         return {}

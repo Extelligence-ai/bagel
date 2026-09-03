@@ -241,6 +241,21 @@ class StreamRouter(threading.Thread):
         and exit the loop so `alive`/`last_error` surface it to
         `FleetService.status()`.
 
+        This catch-all is exactly why `_tick`'s spool writes MUST go
+        through `Spool.append_next()`, never a separate `next_seq()` +
+        `append()` pair (Codex round 3 P1, comment 3924082774):
+        investigation for that fix confirmed the old two-call pattern's
+        `ValueError` (raised when a concurrent writer -- e.g. a selftest
+        run's `spool.exclusive()` -- interleaved between the two calls and
+        advanced the lane first) was completely unguarded here. It
+        propagated straight out of `_tick()` into this `except`, which
+        treated it as the fatal "bug in Spool" case and KILLED the thread --
+        `alive` false, streaming dead until the service is restarted, from
+        what was actually a harmless, expected race between two legitimate
+        writers. `append_next()` closes the race structurally (allocate and
+        write in one lock acquisition), so this failure mode is now
+        unreachable, not merely less likely.
+
         On a clean exit (the stop signal, not a fatal `_tick` error), this
         calls `_final_flush()` as the very last thing before returning --
         see its docstring for why samples the tap already accepted (via
@@ -273,6 +288,10 @@ class StreamRouter(threading.Thread):
         `pause(discard=True)` is unaffected: it flushes here same as any
         other stop, then FleetService acks past the newly-spooled batch's
         seq, same as it always could for anything already in the spool.
+
+        Uses `Spool.append_next()` (Codex round 3 P1 follow-up), not a
+        `next_seq()` + `append()` pair -- see `run()`'s docstring for why
+        the two-call shape is unsafe here.
         """
         while True:
             samples = self._queue.drain(max_items=500, timeout_s=0.0)
@@ -282,9 +301,7 @@ class StreamRouter(threading.Thread):
                 self._core.offer(topic, t, msg)
         now = time.time()
         while (batch := self._core.flush(now)) is not None:
-            seq = self._spool.next_seq("channels")
-            batch["seq"] = seq
-            self._spool.append("channels", seq, batch)
+            self._spool.append_next("channels", lambda seq, batch=batch: {**batch, "seq": seq})
 
     def _tick(self, now: float) -> None:
         """One iteration: drain+offer+maybe-flush-to-spool, then publish.
@@ -296,9 +313,10 @@ class StreamRouter(threading.Thread):
         `core.flush(now)` caps its own output at `max_samples` (Codex
         review), so a should_flush-triggered flush loops here until it
         returns `None` -- every chunk gets its own seq and its own spool
-        append, so a wide manifest's oversized batch is fully drained and
-        durably spooled within this one tick rather than trickling out over
-        several.
+        append (via `Spool.append_next()`, atomically -- see `run()`'s
+        docstring), so a wide manifest's oversized batch is fully drained
+        and durably spooled within this one tick rather than trickling out
+        over several.
         """
         timeout_s = min(0.2, self._core.flush_interval_s)
         samples = self._queue.drain(max_items=500, timeout_s=timeout_s)
@@ -306,9 +324,7 @@ class StreamRouter(threading.Thread):
             self._core.offer(topic, t, msg)
         if self._core.should_flush(now, self._core.pending_count):
             while (batch := self._core.flush(now)) is not None:
-                seq = self._spool.next_seq("channels")
-                batch["seq"] = seq
-                self._spool.append("channels", seq, batch)
+                self._spool.append_next("channels", lambda seq, batch=batch: {**batch, "seq": seq})
         self._pump(now)
 
     def _pump_lane(self, lane: str, publish: Callable[[dict], None], now: float) -> bool:

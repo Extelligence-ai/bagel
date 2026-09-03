@@ -233,7 +233,11 @@ uv run python -m src.sink.publish.selftest --broker mqtt://localhost:1883  # dev
 
 It publishes a fixed four-channel schema, ten deterministic batches, a
 heartbeat and an event (exact expected values are in the contract doc's
-Conformance section), prints a one-line JSON summary, and exits 0.
+Conformance section), prints a one-line JSON summary, and exits 0. It keeps
+publishing AS the enrolled robot on that robot's real topics, but none of its
+own messages are retained and it arms no last-will, so it leaves no residue
+behind once it's done -- a real robot's own retained schema/heartbeat, and
+the live service's own last-will, are left completely untouched.
 
 Run it with fleet streaming **paused or stopped**: it shares the robot's real
 spool lanes and holds the spool lock for its entire run, so a concurrently
@@ -255,6 +259,21 @@ been offline for a while will make the selftest refuse -- that's not a
 fault. Bring the service online, let the backlog drain, then run the
 selftest. (Discarding is not an option for that backlog: `discard=True`
 only ever empties the channels lane; events are never dropped.)
+
+And it refuses outright, before publishing anything, if the robot's live
+fleet session is currently **connected** (not merely paused) -- pausing or
+stopping the service first is required here, not just recommended, since
+this run's fixture schema would otherwise reach that connected live
+subscriber as a schema update, remapping live channel batches to the
+fixture's `selftest.*` channels until the live service's next reconnect.
+That check isn't just a start-of-run gate: it keeps watching for the rest
+of the run, and aborts (same typed error, connection torn down silently,
+no close beat) the instant it sees any live activity on the robot's
+session topics -- not the heartbeat alone. A service resuming partway
+through a run can have its heartbeat thread stuck behind the selftest's
+own spool lock while its router still reconnects and republishes the
+schema regardless, so both topics are watched, and a signal on either one
+is enough on its own to abort.
 
 ## Dev rigs
 

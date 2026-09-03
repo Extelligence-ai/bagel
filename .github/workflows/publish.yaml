@@ -17,8 +17,9 @@ jobs:
     strategy:
       matrix:
         include:
-          # ROS
-          - service: ros2-kilted
+          # ROS (ros2-kilted excluded: it publishes via the dedicated
+          # kilted-amd64 / publish-arm64 / merge-manifests jobs below, which
+          # produce its multi-arch manifest -- see those jobs' comments).
           - service: ros2-jazzy
           - service: ros2-iron
           - service: ros2-humble
@@ -84,3 +85,125 @@ jobs:
             push_with_retry "$BETA"
             push_with_retry $IMAGE:$TAG
           fi
+
+  # arm64 phase 1, amd64 leg for ros2-kilted: this image is isolated from
+  # the `docker` matrix entirely (see Codex review on PR #215) so that (a)
+  # no single-arch `latest`/$VERSION/beta tag is ever visible to users --
+  # only merge-manifests below ever writes those -- and (b) the merge does
+  # not depend on the other 10 services' matrix legs succeeding. This job
+  # pushes ONLY a run-scoped staging tag, never a final tag, so concurrent
+  # `main` pushes each get their own staging references and can't clobber
+  # each other (finding: shared mutable -amd64/-arm64 tags).
+  kilted-amd64:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
+      - name: Build ros2-kilted
+        run: docker compose build ros2-kilted
+      - name: Push ros2-kilted staging tag (amd64)
+        run: |
+          IMAGE=ghcr.io/extelligence-ai/bagel/ros2-kilted
+          # Same ghcr blob-drop retry as the `docker` job's push step.
+          push_with_retry() {
+            for attempt in 1 2 3; do
+              docker push "$1" && return 0
+              echo "push $1 failed (attempt $attempt); retrying in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+            docker push "$1"
+          }
+          docker tag $IMAGE:latest $IMAGE:staging-${{ github.run_id }}-amd64
+          push_with_retry $IMAGE:staging-${{ github.run_id }}-amd64
+
+  # arm64 phase 1, arm64 leg for ros2-kilted. GitHub-hosted native arm64
+  # runner (free for public repos), so `docker compose build` targets arm64
+  # without cross compilation -- compose has no `platforms:` override, so it
+  # builds for the runner's own arch by default. Same staging-only rule as
+  # kilted-amd64 above: no final tag is ever pushed from this job.
+  publish-arm64:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
+      - name: Build ros2-kilted
+        run: docker compose build ros2-kilted
+      - name: Push ros2-kilted staging tag (arm64)
+        run: |
+          IMAGE=ghcr.io/extelligence-ai/bagel/ros2-kilted
+          # Same ghcr blob-drop retry as the `docker` job's push step.
+          push_with_retry() {
+            for attempt in 1 2 3; do
+              docker push "$1" && return 0
+              echo "push $1 failed (attempt $attempt); retrying in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+            docker push "$1"
+          }
+          docker tag $IMAGE:latest $IMAGE:staging-${{ github.run_id }}-arm64
+          push_with_retry $IMAGE:staging-${{ github.run_id }}-arm64
+
+  # arm64 phase 1: the ONLY place ros2-kilted's final, user-facing tags get
+  # created. Needs just the two staging producers above -- not the 11-service
+  # `docker` matrix -- so an unrelated service's build failure can never
+  # block or skip this (Codex review finding). Assembles every final tag the
+  # run produces from the run-scoped staging pair, replicating the `docker`
+  # job's tagging rules exactly: beta branches get one pre-release tag; main
+  # gets `latest` unconditionally plus $VERSION gated by the same
+  # immutability check the `docker` job uses -- run here, at the only point
+  # the final $VERSION tag is actually created, so a version bump can never
+  # observe a semver tag that a single-arch push already claimed.
+  merge-manifests:
+    needs: [kilted-amd64, publish-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish ros2-kilted manifest (amd64 + arm64)
+        run: |
+          IMAGE=ghcr.io/extelligence-ai/bagel/ros2-kilted
+          STAGING_AMD64=$IMAGE:staging-${{ github.run_id }}-amd64
+          STAGING_ARM64=$IMAGE:staging-${{ github.run_id }}-arm64
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            docker buildx imagetools create -t $IMAGE:latest $STAGING_AMD64 $STAGING_ARM64
+            if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+              echo "$IMAGE:$VERSION already published; leaving it untouched"
+            else
+              docker buildx imagetools create -t $IMAGE:$VERSION $STAGING_AMD64 $STAGING_ARM64
+            fi
+          else
+            BETA_TAG="${VERSION}-beta.${GITHUB_RUN_NUMBER}"
+            docker buildx imagetools create -t $IMAGE:$BETA_TAG $STAGING_AMD64 $STAGING_ARM64
+          fi
+      # Best-effort cleanup: staging-<run_id>-{amd64,arm64} are never used
+      # again after the merge above. Deleting them needs the ghcr package
+      # version API (look up the version id for a tag, then DELETE it),
+      # which is more than a `docker` one-liner; left out of phase 1 to keep
+      # this job small. They accumulate harmlessly -- one pair per run, not
+      # pulled by anything, and cheap to prune later in bulk if needed.

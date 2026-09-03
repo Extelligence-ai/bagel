@@ -13,6 +13,7 @@ import pytest
 
 from src.message.base import AccessPath
 from src.sink.publish import router as router_mod
+from src.sink.publish import spool as spool_mod
 from src.sink.publish.config import ResolvedChannel
 from src.sink.publish.publisher import Publisher, PublishError
 from src.sink.publish.router import RouterCore, SampleQueue, StreamRouter, extract_value
@@ -539,6 +540,95 @@ class TestStreamRouterHeartbeatPrune:
         assert router.online  # a prune failure must not fail the reconnect
         warnings_ = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert any("heartbeat" in r.getMessage().lower() for r in warnings_)
+
+
+class TestTickUsesAppendNext:
+    """Codex round 3 follow-up (PR #214, P1, comment 3924082774): the
+    batch-flush path must go through `Spool.append_next()`, never a
+    separate `next_seq()` + `append()` pair -- see `StreamRouter.run`'s and
+    `Spool.append_next`'s docstrings for why that shape used to be able to
+    kill the router thread outright.
+    """
+
+    def test_flushed_batch_uses_append_next_with_correctly_embedded_seq(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        router, q, spool, pub = _router(tmp_path)
+        calls: list[str] = []
+        original_next_seq = spool_mod.Spool.next_seq
+        original_append = spool_mod.Spool.append
+        original_append_next = spool_mod.Spool.append_next
+
+        def spy_next_seq(self: Spool, lane: str) -> int:
+            calls.append("next_seq")
+            return original_next_seq(self, lane)
+
+        def spy_append(self: Spool, lane: str, seq: int, payload: dict) -> None:
+            calls.append("append")
+            return original_append(self, lane, seq, payload)
+
+        def spy_append_next(self: Spool, lane: str, build: object) -> int:
+            calls.append("append_next")
+            return original_append_next(self, lane, build)
+
+        monkeypatch.setattr(spool_mod.Spool, "next_seq", spy_next_seq)
+        monkeypatch.setattr(spool_mod.Spool, "append", spy_append)
+        monkeypatch.setattr(spool_mod.Spool, "append_next", spy_append_next)
+
+        q.put(("/imu", 1.0, {"x": 1.0}))
+        router._tick(now=10.0)
+
+        # The batch-flush path uses append_next exclusively -- never the old
+        # two-call next_seq()+append() pair.
+        assert calls == ["append_next"]
+        # The embedded seq in the published payload is the atomically
+        # allocated one.
+        assert pub.channel_calls[0]["seq"] == 1
+        # And it's what's actually durable on disk too: acked_seq reflects
+        # append_next's write having advanced the watermark to 1.
+        assert spool.stats()["channels"].acked_seq == 1
+
+    def test_concurrent_exclusive_held_writer_no_longer_raises_during_tick(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Regression test: reproduces the exact scenario that used to kill
+        the router thread. Investigation (Codex round 3 P1, comment
+        3924082774) confirmed `_tick`'s old batch-flush loop
+        (`next_seq()` then `append()`) was completely UNGUARDED -- only
+        `PublishError` is caught, inside `_pump`, several lines below.  A
+        `ValueError` from a stale-floor `append()` call propagated straight
+        out of `_tick()` into `run()`'s broad `except Exception`, which
+        treated it as a fatal `Spool`/`RouterCore` bug: logged it, set
+        `_fatal_error`, and RETURNED -- ending the thread's loop for good.
+        `alive` would go false and stay false; streaming would stay dead
+        until the `FleetService` (and its `StreamRouter`) was rebuilt via a
+        restart or a `stream_topics`/`stop_streams` call.
+
+        With `append_next()`, the exact interleaving that used to trigger
+        this -- a competing writer's `exclusive()`-held run landing between
+        allocation and write -- can no longer land in a gap that no longer
+        exists. This proves `_tick()` no longer raises at all when that
+        happens, so `run()`'s fatal catch-all is never reached.
+        """
+        router, q, spool, pub = _router(tmp_path)
+        competitor = Spool(tmp_path / "spool")  # a SEPARATE instance, same root
+
+        q.put(("/imu", 1.0, {"x": 1.0}))
+
+        # A competing writer -- e.g. a selftest run -- writes to the SAME
+        # lane via an exclusive()-held append_next, exactly mirroring
+        # `run_selftest`'s own pattern, before the router's own flush runs.
+        with competitor.exclusive(timeout=1.0):
+            competitor.append_next("channels", lambda seq: {"seq": seq, "who": "competitor"})
+
+        router._tick(now=10.0)  # must not raise
+
+        # _pump publishes everything pending in seq order: the competitor's
+        # seq=1 (still unacked -- it's a legitimate write on the same real
+        # spool) first, then the router's own batch, correctly allocated
+        # seq=2 (not a stale/colliding value) and not raising along the way.
+        assert [c["seq"] for c in pub.channel_calls] == [1, 2]
+        assert list(spool.pending("channels")) == []
 
 
 class TestStreamRouterThread:

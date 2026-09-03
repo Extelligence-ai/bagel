@@ -61,13 +61,24 @@ class TestRunSelftest:
 
         result = run_selftest(pub, spool, batches=5, interval_s=0.0, now=lambda: 1000.0)
 
-        # -- call order: connect, schema first, then 5 channel batches, then
+        # -- call order: connect, the START live-session probe (Codex
+        # round 3 follow-up, P1, comment 3927287968), the ONGOING watch
+        # opening right after it (comment 3927287968's own follow-up --
+        # kept open for the whole run so a live service resuming mid-run
+        # is still caught), schema, then 5 channel batches, then
         # heartbeat, then one event, then close last.
-        assert pub.calls == ["connect", "schema"] + ["channels"] * 5 + [
+        assert pub.calls == [
+            "connect",
+            "live_session_probe",
+            "watch_open",
+            "schema",
+        ] + ["channels"] * 5 + [
             "heartbeat",
             "events",
             "close",
         ]
+        assert pub._watch is not None
+        assert pub._watch.stop_calls == 1
 
         # -- schema payload is the fixed four-channel conformance schema.
         assert pub.schema_calls == [{"v": 1, "channels": SELFTEST_CHANNELS}]
@@ -267,6 +278,136 @@ class TestRunSelftest:
         assert "build" in event["summary"]
 
 
+class TestRefusesWhileLiveSessionConnected:
+    """Codex round 3 follow-up (PR #214, P1, comment 3927287968): even
+    non-retained (round 8) and even under a distinct client id (round 6),
+    the selftest's fixture schema still reaches a CONNECTED live
+    subscriber as a schema update -- the only structural fix is to never
+    publish at all while a live session exists. Detection: a bounded probe
+    for a retained heartbeat right after connect(), before any publish.
+    """
+
+    def test_retained_online_true_refuses_before_any_publish(self, tmp_path: pathlib.Path) -> None:
+        from src.sink.publish.selftest import SelftestPreconditionError, run_selftest
+
+        spool = Spool(tmp_path / "spool")
+        pub = FakePublisher(live_session_beat={"v": 1, "online": True})
+
+        with pytest.raises(SelftestPreconditionError, match="live fleet session"):
+            run_selftest(pub, spool, batches=2, interval_s=0.0)
+
+        # Refused right after connect + the probe -- the connection is torn
+        # down silently (never close(), which would publish a clean-stop
+        # beat and could itself mislead a live watcher), and nothing
+        # published, no spool side effect, no residue.
+        assert pub.calls == ["connect", "live_session_probe", "disconnect_without_publishing"]
+        assert pub.disconnect_without_publishing_calls == 1
+        assert pub.schema_calls == []
+        assert pub.channel_calls == []
+        assert pub.heartbeat_calls == []
+        assert pub.event_calls == []
+        assert pub.close_calls == 0
+        assert list(spool.pending("channels")) == []
+        assert list(spool.pending("events")) == []
+
+    def test_retained_online_false_proceeds(self, tmp_path: pathlib.Path) -> None:
+        """A paused/stopped service (or an unclean disconnect's last-will)
+        retains `online: False` -- not a live session, must proceed."""
+        from src.sink.publish.selftest import run_selftest
+
+        spool = Spool(tmp_path / "spool")
+        pub = FakePublisher(live_session_beat={"v": 1, "online": False, "reason": "stopped"})
+
+        result = run_selftest(pub, spool, batches=1, interval_s=0.0)
+
+        assert result["batches"] == 1
+        assert pub.calls[:4] == ["connect", "live_session_probe", "watch_open", "schema"]
+
+    def test_no_retained_beat_proceeds(self, tmp_path: pathlib.Path) -> None:
+        """A fresh robot/broker with nothing retained yet -- must proceed,
+        not be treated as "unknown, refuse to be safe"."""
+        from src.sink.publish.selftest import run_selftest
+
+        spool = Spool(tmp_path / "spool")
+        pub = FakePublisher(live_session_beat=None)
+
+        result = run_selftest(pub, spool, batches=1, interval_s=0.0)
+
+        assert result["batches"] == 1
+        assert pub.live_session_probe_calls == 1
+
+    def test_publisher_without_the_probe_capability_proceeds(self, tmp_path: pathlib.Path) -> None:
+        """A `Publisher` implementation that doesn't offer
+        `wait_for_retained_heartbeat` (not part of the ABC) must not break
+        -- the check is skipped entirely, matching pre-round-9 behavior."""
+        from src.sink.publish.selftest import run_selftest
+
+        class BareFakePublisher(FakePublisher):
+            wait_for_retained_heartbeat = None  # type: ignore[assignment]
+
+        spool = Spool(tmp_path / "spool")
+        pub = BareFakePublisher()
+
+        result = run_selftest(pub, spool, batches=1, interval_s=0.0)
+
+        assert result["batches"] == 1
+
+
+class TestRefusesWhileLiveSessionConnectsMidRun:
+    """Codex round 3 follow-up (PR #214, P1, comment 3927287968's own
+    follow-up): the original live-session refusal probe only checked the
+    heartbeat topic's state right after `connect()`, at the START of the
+    run -- a live `FleetService` that RESUMES partway through a (multi-
+    batch, `interval_s`-spaced) selftest run reopens the exact same
+    schema-pollution window. The fix keeps the heartbeat subscription open
+    for the whole run and checks it between batches and before the
+    heartbeat/event publishes, aborting the instant a live beat is seen."""
+
+    def test_online_true_beat_after_batch_two_aborts_before_batch_three(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        from src.sink.publish.selftest import SelftestPreconditionError, run_selftest
+
+        spool = Spool(tmp_path / "spool")
+        pub = FakePublisher(live_session_beat_after_batch=2)
+
+        with pytest.raises(SelftestPreconditionError, match="live fleet session"):
+            run_selftest(pub, spool, batches=5, interval_s=0.0)
+
+        # Batches 1-2 published (and immediately acked, per the existing
+        # per-batch ack order) before the mid-run beat was seen; batch 3
+        # never attempted, and nothing past it (heartbeat/events/close) was
+        # ever reached.
+        assert len(pub.channel_calls) == 2
+        assert pub.heartbeat_calls == []
+        assert pub.event_calls == []
+        assert pub.close_calls == 0
+
+        # Same silent-teardown contract as the START-only refusal: no
+        # close-beat, connection torn down via disconnect_without_publishing.
+        assert pub.disconnect_without_publishing_calls == 1
+
+        # Both lanes end zero-pending -- the two successful batches were
+        # already acked in-loop; the events lane was never touched.
+        assert list(spool.pending("channels")) == []
+        assert list(spool.pending("events")) == []
+
+    def test_no_beat_ever_arriving_runs_to_completion_normally(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """Regression guard: the new ongoing watch must not itself break the
+        (still far more common) case where no live session ever appears."""
+        from src.sink.publish.selftest import run_selftest
+
+        spool = Spool(tmp_path / "spool")
+        pub = FakePublisher()
+
+        result = run_selftest(pub, spool, batches=3, interval_s=0.0)
+
+        assert result["batches"] == 3
+        assert pub.close_calls == 1
+
+
 class TestExclusiveLockDuringRun:
     """P1b (Codex round 3): the whole run holds `spool.exclusive()`, so a
     concurrent writer on the same spool root either waits for it or the run
@@ -440,6 +581,93 @@ class TestMain:
         assert captured["kwargs"]["batches"] == 3
         assert captured["kwargs"]["interval_s"] == 0.0
 
+    def test_publisher_gets_the_selftest_client_id_suffix(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Codex round 3 follow-up (PR #214, P2, comment 3925391258):
+        without a distinct client id, the selftest's MqttPublisher would
+        derive the SAME deterministic client id as the live service's own
+        (same tenant/robot) -- the broker kicks the existing session when a
+        new connection claims an already-connected client id, so running
+        the selftest against an enrolled robot's broker while its real
+        streaming service is connected would silently displace it."""
+        import src.sink.publish.selftest as selftest_mod
+
+        monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+        monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+        monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+        monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+        captured: dict = {}
+
+        def fake_mqtt_publisher(*args: object, **kwargs: object) -> object:
+            captured["kwargs"] = kwargs
+            return object()
+
+        monkeypatch.setattr(selftest_mod, "MqttPublisher", fake_mqtt_publisher)
+        monkeypatch.setattr(
+            selftest_mod,
+            "run_selftest",
+            lambda publisher, spool, **kwargs: {
+                "channels": 4,
+                "batches": 1,
+                "samples": 4,
+                "heartbeat": 1,
+                "events": 1,
+            },
+        )
+
+        rc = selftest_mod.main(
+            ["--broker", "mqtt://localhost:1883", "--batches", "1", "--interval-s", "0"]
+        )
+
+        assert rc == 0
+        assert captured["kwargs"]["client_id_suffix"] == "/selftest"
+
+    def test_publisher_gets_retain_messages_false(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Codex round 3 follow-up (PR #214, P1, comment 3927023413): the
+        selftest keeps publishing AS the robot on the SAME shared topics,
+        so its retained publishes would otherwise linger with nothing to
+        overwrite them once the run ends -- its fixture schema staying
+        retained (a late subscriber decodes live batches against the WRONG
+        schema until the live service's next reconnect) and its close()
+        beat leaving a retained online:false (the robot looks dead until
+        the next live beat)."""
+        import src.sink.publish.selftest as selftest_mod
+
+        monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+        monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+        monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+        monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+        captured: dict = {}
+
+        def fake_mqtt_publisher(*args: object, **kwargs: object) -> object:
+            captured["kwargs"] = kwargs
+            return object()
+
+        monkeypatch.setattr(selftest_mod, "MqttPublisher", fake_mqtt_publisher)
+        monkeypatch.setattr(
+            selftest_mod,
+            "run_selftest",
+            lambda publisher, spool, **kwargs: {
+                "channels": 4,
+                "batches": 1,
+                "samples": 4,
+                "heartbeat": 1,
+                "events": 1,
+            },
+        )
+
+        rc = selftest_mod.main(
+            ["--broker", "mqtt://localhost:1883", "--batches", "1", "--interval-s", "0"]
+        )
+
+        assert rc == 0
+        assert captured["kwargs"]["retain_messages"] is False
+
     def test_load_identity_or_none_is_a_single_load_not_check_then_load(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -522,6 +750,320 @@ def test_selftest_e2e_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_path: path
             "online": False,
             "reason": "stopped",
         }
+
+        # Codex round 3 follow-up (PR #214, P1, comment 3927023413): every
+        # schema/heartbeat publish this run made -- including the final
+        # close() beat, captured above -- must be non-retained.
+        assert all(retain is False for _, retain in got[schema_topic])
+        assert all(retain is False for _, retain in got[heartbeat_topic])
     finally:
         client.loop_stop()
         client.disconnect()
+
+
+@pytest.mark.skipif(not BROKER, reason="MQTT_TEST_BROKER not set")
+def test_selftest_e2e_leaves_no_retained_residue(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Codex round 3 follow-up (PR #214, P1, comment 3927023413): after a
+    selftest run, a subscriber that only subscribes AFTER the run has
+    finished (never watching live) must receive NOTHING retained on the
+    schema/heartbeat topics -- `retain_messages=False` must leave no
+    residue for a late subscriber to find, not merely avoid delivering
+    retained flags to a subscriber that was already watching."""
+    import paho.mqtt.client as paho
+
+    import src.sink.publish.selftest as selftest_mod
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+    monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+    rc = selftest_mod.main(["--broker", BROKER, "--batches", "1", "--interval-s", "0"])
+    assert rc == 0
+
+    inbox: queue.Queue[tuple[str, bytes, bool]] = queue.Queue()
+    client = paho.Client(
+        callback_api_version=paho.CallbackAPIVersion.VERSION2,
+        client_id=f"fresh-sub-{uuid.uuid4().hex[:8]}",
+        protocol=paho.MQTTv5,
+    )
+    client.on_message = lambda cl, ud, msg: inbox.put((msg.topic, msg.payload, msg.retain))
+    parsed = urlparse(BROKER)
+    client.connect(parsed.hostname, parsed.port or 1883)
+    client.loop_start()
+    # Subscribed only now, well after main() (and its close()) returned --
+    # any retained message on these topics would be replayed immediately.
+    client.subscribe("bagel/v1/dev/robot/#", qos=1)
+    time.sleep(0.5)
+
+    try:
+        retained_topics: list[str] = []
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            try:
+                topic, _payload, retain = inbox.get(timeout=max(0.0, deadline - time.time()))
+            except queue.Empty:
+                break
+            if retain:
+                retained_topics.append(topic)
+        assert retained_topics == []
+    finally:
+        client.loop_stop()
+        client.disconnect()
+
+
+@pytest.mark.skipif(not BROKER, reason="MQTT_TEST_BROKER not set")
+def test_selftest_e2e_refuses_while_a_live_session_is_connected(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Codex round 3 follow-up (PR #214, P1, comment 3927287968): a fake
+    "live" retained heartbeat (`online: true`) on the robot's own
+    heartbeat topic -- exactly what a real, connected `FleetService` would
+    leave retained -- must make the selftest refuse cleanly before
+    publishing anything. Once that retained message is cleared (a
+    paused/stopped service, or nothing at all), the identical selftest
+    command succeeds."""
+    import paho.mqtt.client as paho
+
+    import src.sink.publish.selftest as selftest_mod
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+    monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+    heartbeat_topic = "bagel/v1/dev/robot/heartbeat"
+    parsed = urlparse(BROKER)
+    fake_live = paho.Client(
+        callback_api_version=paho.CallbackAPIVersion.VERSION2,
+        client_id=f"fake-live-{uuid.uuid4().hex[:8]}",
+        protocol=paho.MQTTv5,
+    )
+    fake_live.connect(parsed.hostname, parsed.port or 1883)
+    fake_live.loop_start()
+
+    try:
+        # Simulate a live, connected service's own retained heartbeat.
+        info = fake_live.publish(
+            heartbeat_topic, json.dumps({"v": 1, "online": True}), qos=1, retain=True
+        )
+        info.wait_for_publish(timeout=5.0)
+        time.sleep(0.3)  # give the broker a moment to actually retain it
+
+        rc = selftest_mod.main(["--broker", BROKER, "--batches", "1", "--interval-s", "0"])
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "live fleet session" in err
+
+        # Clear the fake live beat -- an empty retained payload deletes it,
+        # same as a real broker's retained state once nothing claims it.
+        info = fake_live.publish(heartbeat_topic, "", qos=1, retain=True)
+        info.wait_for_publish(timeout=5.0)
+        time.sleep(0.3)
+
+        rc2 = selftest_mod.main(["--broker", BROKER, "--batches", "1", "--interval-s", "0"])
+        capsys.readouterr()
+        assert rc2 == 0
+    finally:
+        fake_live.loop_stop()
+        fake_live.disconnect()
+
+
+# -- round-11 (Codex review, comment 3928569268): the mid-run watch must
+# trigger on any live session activity, not just an `online: true` beat, and
+# must not depend on the heartbeat topic alone (a resuming service's
+# heartbeat thread can be stuck behind this selftest's own spool lock while
+# its router still reconnects and republishes the schema regardless). ------
+
+
+@pytest.mark.skipif(not BROKER, reason="MQTT_TEST_BROKER not set")
+def test_selftest_e2e_pre_existing_retained_schema_does_not_false_abort(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Codex round 3 follow-up (PR #214, P1, comment 3928569268), proof (a):
+    a retained schema ALWAYS exists on a robot's schema topic once
+    anything has ever run there for real (the live service's own pre-pause
+    schema, if nothing else). `watch_live_session()`'s `retainHandling=2`
+    subscribe option must suppress that replay -- otherwise a content-
+    agnostic "ANY delivery = abort" watch would false-abort every single
+    run, instantly, even with no other session anywhere near the robot."""
+    import paho.mqtt.client as paho
+
+    import src.sink.publish.selftest as selftest_mod
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+    monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+    schema_topic = "bagel/v1/dev/robot/schema"
+    parsed = urlparse(BROKER)
+    injector = paho.Client(
+        callback_api_version=paho.CallbackAPIVersion.VERSION2,
+        client_id=f"pre-existing-schema-{uuid.uuid4().hex[:8]}",
+        protocol=paho.MQTTv5,
+    )
+    injector.connect(parsed.hostname, parsed.port or 1883)
+    injector.loop_start()
+
+    try:
+        # Simulate a real robot's own pre-pause retained schema, already
+        # sitting on the broker before this selftest run ever subscribes.
+        info = injector.publish(
+            schema_topic, json.dumps({"v": 1, "channels": [{"c": "imu.x"}]}), qos=1, retain=True
+        )
+        info.wait_for_publish(timeout=5.0)
+        time.sleep(0.3)  # give the broker a moment to actually retain it
+
+        rc = selftest_mod.main(["--broker", BROKER, "--batches", "2", "--interval-s", "0.1"])
+        err = capsys.readouterr().err
+        assert rc == 0, err
+    finally:
+        # Clear the retained schema -- don't leave residue for later tests.
+        info = injector.publish(schema_topic, "", qos=1, retain=True)
+        info.wait_for_publish(timeout=5.0)
+        time.sleep(0.2)
+        injector.loop_stop()
+        injector.disconnect()
+
+
+@pytest.mark.skipif(not BROKER, reason="MQTT_TEST_BROKER not set")
+def test_selftest_e2e_new_schema_publish_mid_run_aborts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Codex round 3 follow-up (PR #214, P1, comment 3928569268), proof (b)
+    -- the core fix itself, end to end: a resuming service's heartbeat
+    thread can be stuck behind this selftest run's own spool lock and
+    never emit a beat, while its router still reconnects and republishes
+    the schema regardless. A NEW (non-retained) schema publish from a
+    DIFFERENT client, injected partway through a real multi-batch run,
+    must abort it before the run completes -- proving the watch doesn't
+    depend on the heartbeat topic, or on any lock, at all."""
+    import paho.mqtt.client as paho
+
+    import src.sink.publish.selftest as selftest_mod
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+    monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+    schema_topic = "bagel/v1/dev/robot/schema"
+    parsed = urlparse(BROKER)
+    injector = paho.Client(
+        callback_api_version=paho.CallbackAPIVersion.VERSION2,
+        client_id=f"mid-run-schema-{uuid.uuid4().hex[:8]}",
+        protocol=paho.MQTTv5,
+    )
+    injector.connect(parsed.hostname, parsed.port or 1883)
+    injector.loop_start()
+
+    # The START-of-run probe (`_check_no_live_session`) has NO retained
+    # heartbeat to find here, so it blocks for the full
+    # `DEFAULT_LIVE_SESSION_PROBE_TIMEOUT_S` before the ongoing watch even
+    # opens -- the injection must land safely AFTER that fixed delay, not
+    # merely "partway through main()", or it fires before anything is
+    # subscribed and is simply never seen.
+    probe_wait_s = selftest_mod.DEFAULT_LIVE_SESSION_PROBE_TIMEOUT_S
+
+    def _inject_mid_run() -> None:
+        time.sleep(probe_wait_s + 0.2)  # land after the watch opens, mid-batch-phase
+        info = injector.publish(
+            schema_topic, json.dumps({"v": 1, "channels": [{"c": "imu.x"}]}), qos=1, retain=False
+        )
+        info.wait_for_publish(timeout=5.0)
+
+    injector_thread = threading.Thread(target=_inject_mid_run)
+    injector_thread.start()
+    try:
+        rc = selftest_mod.main(["--broker", BROKER, "--batches", "10", "--interval-s", "0.2"])
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "live fleet session" in err
+    finally:
+        injector_thread.join()
+        injector.loop_stop()
+        injector.disconnect()
+
+
+@pytest.mark.skipif(not BROKER, reason="MQTT_TEST_BROKER not set")
+def test_selftest_e2e_online_true_beat_mid_run_aborts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Codex round 3 follow-up (PR #214, P1, comment 3928569268), proof (c):
+    the pre-existing heartbeat-topic trigger, proven again specifically
+    MID-run -- `test_selftest_e2e_refuses_while_a_live_session_is_connected`
+    only proves the START-of-run case. A resumed service's own live
+    `online: true` heartbeat, injected partway through a real multi-batch
+    run, must still abort it."""
+    import paho.mqtt.client as paho
+
+    import src.sink.publish.selftest as selftest_mod
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+    monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+    heartbeat_topic = "bagel/v1/dev/robot/heartbeat"
+    parsed = urlparse(BROKER)
+    injector = paho.Client(
+        callback_api_version=paho.CallbackAPIVersion.VERSION2,
+        client_id=f"mid-run-heartbeat-{uuid.uuid4().hex[:8]}",
+        protocol=paho.MQTTv5,
+    )
+    injector.connect(parsed.hostname, parsed.port or 1883)
+    injector.loop_start()
+
+    # Same timing note as the schema-topic sibling test above: the
+    # START-of-run probe blocks for the full
+    # `DEFAULT_LIVE_SESSION_PROBE_TIMEOUT_S` before the ongoing watch opens.
+    probe_wait_s = selftest_mod.DEFAULT_LIVE_SESSION_PROBE_TIMEOUT_S
+
+    def _inject_mid_run() -> None:
+        time.sleep(probe_wait_s + 0.2)
+        info = injector.publish(
+            heartbeat_topic, json.dumps({"v": 1, "online": True}), qos=1, retain=True
+        )
+        info.wait_for_publish(timeout=5.0)
+
+    injector_thread = threading.Thread(target=_inject_mid_run)
+    injector_thread.start()
+    try:
+        rc = selftest_mod.main(["--broker", BROKER, "--batches", "10", "--interval-s", "0.2"])
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "live fleet session" in err
+    finally:
+        injector_thread.join()
+        # Clear the retained heartbeat -- don't leave residue for later tests.
+        info = injector.publish(heartbeat_topic, "", qos=1, retain=True)
+        info.wait_for_publish(timeout=5.0)
+        time.sleep(0.2)
+        injector.loop_stop()
+        injector.disconnect()
+
+
+@pytest.mark.skipif(not BROKER, reason="MQTT_TEST_BROKER not set")
+def test_selftest_e2e_clean_run_is_stable_across_repeats(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Codex round 3 follow-up (PR #214, P1, comment 3928569268), proof
+    (d): the new two-topic, `noLocal` + `retainHandling=2` watch must not
+    itself introduce flakiness into the ordinary clean-run case -- run it
+    three times back to back and require every run to succeed."""
+    import src.sink.publish.selftest as selftest_mod
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", True)
+    monkeypatch.setattr(settings, "FLEET_DEV_INSECURE", True)
+    monkeypatch.setattr(settings, "FLEET_IDENTITY_DIRECTORY", str(tmp_path / "identity"))
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+
+    for attempt in range(3):
+        rc = selftest_mod.main(["--broker", BROKER, "--batches", "2", "--interval-s", "0"])
+        err = capsys.readouterr().err
+        assert rc == 0, f"attempt {attempt}: {err}"
