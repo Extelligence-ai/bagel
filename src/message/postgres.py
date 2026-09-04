@@ -15,6 +15,7 @@ import pyarrow as pa
 from settings import settings
 from src.di import module
 from src.message import base
+from src.query import connection
 from src.source.base import SourceFactory
 from src.source.postgres import PostgresDatabase, quote_identifier
 from src.topic.base import TopicRegistry
@@ -77,7 +78,7 @@ class MessageDataset(base.MessageDataset):
         ]
         # UNION ALL BY NAME lines up shared columns and fills missing structs with NULL.
         query = " UNION ALL BY NAME ".join(f"({select})" for select in selects)
-        return duckdb.sql(f'{query} ORDER BY "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}"')
+        return connection().sql(f'{query} ORDER BY "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}"')
 
     def _messages(
         self,
@@ -88,7 +89,7 @@ class MessageDataset(base.MessageDataset):
     ) -> Iterator[tuple[str, float, object]]:
         """Yield (topic, timestamp seconds, row dict) tuples from the database."""
         for topic in topics:
-            relation = duckdb.sql(
+            relation = connection().sql(
                 self._topic_select(
                     data_source, topic, start_seconds_inclusive, end_seconds_inclusive
                 )

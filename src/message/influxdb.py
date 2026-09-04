@@ -15,6 +15,7 @@ import pyarrow as pa
 from settings import settings
 from src.di import module
 from src.message import base
+from src.query import connection, from_arrow
 from src.source.base import SourceFactory
 from src.source.influxdb import InfluxDatabase
 from src.source.postgres import quote_identifier
@@ -63,7 +64,7 @@ class MessageDataset(base.MessageDataset):
             f"{quote_identifier(name)} := {quote_identifier(name)}"
             for name in arrow_table.schema.names
         )
-        relation = duckdb.from_arrow(arrow_table)
+        relation = from_arrow(arrow_table)
         return relation.project(
             f'epoch("time")::DOUBLE AS "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}", '
             f"struct_pack({packed}) AS {quote_identifier(topic)}"
@@ -89,11 +90,11 @@ class MessageDataset(base.MessageDataset):
             # union() on projections with differing struct columns lines up by position,
             # so register each relation and combine with UNION ALL BY NAME in SQL.
             alias = f"influx_{abs(hash((data_source.database, topic))) % 10**8}"
-            duckdb.register(alias, relation.arrow())
+            connection().register(alias, relation.arrow())
             select = f'SELECT * FROM "{alias}"'  # noqa: S608
             combined = select if combined is None else f"{combined} UNION ALL BY NAME {select}"
 
-        return duckdb.sql(f'{combined} ORDER BY "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}"')
+        return connection().sql(f'{combined} ORDER BY "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}"')
 
     def _messages(
         self,

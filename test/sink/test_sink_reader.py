@@ -2,7 +2,6 @@
 
 import pathlib
 
-import duckdb
 import pyarrow as pa
 import pytest
 import yaml
@@ -72,8 +71,9 @@ def test_sink_directory_resolves_and_full_adapter_chain_reads(sink_dir: pathlib.
 
     # THEN SQL over the sink returns what the writer wrote
     relation = dataset.to_duckdb(factory, registry, ["/battery"])
-    duckdb.register("battery", relation)
-    result = duckdb.sql("SELECT MAX(\"/battery\"['x']) AS peak FROM battery").fetchone()
+    result = relation.query(
+        "battery", "SELECT MAX(\"/battery\"['x']) AS peak FROM battery"
+    ).fetchone()
     assert result[0] == 3.0
 
 

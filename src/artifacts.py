@@ -9,6 +9,8 @@ import re
 import uuid
 from datetime import datetime
 
+import filelock
+
 from settings import settings
 
 BYTE = 1
@@ -96,7 +98,11 @@ def evict_arrow_cache() -> int:
     for _, size, file in sorted(entries):
         if total <= limit_bytes:
             break
-        file.unlink(missing_ok=True)
+        try:
+            with filelock.FileLock(str(file) + ".lock", timeout=0):
+                file.unlink(missing_ok=True)
+        except filelock.Timeout:
+            continue
         total -= size
         deleted += 1
     if deleted:

@@ -1,4 +1,3 @@
-import duckdb
 import pytest
 
 from src.di import module
@@ -57,9 +56,8 @@ def test_message_dataset_supports_sql_over_logs() -> None:
 
     # WHEN
     relation = dataset.to_duckdb(factory, registry, topics=["talker"])
-    duckdb.register("talker_logs", relation)
-    result = duckdb.sql(
-        "SELECT COUNT(*) FROM talker_logs WHERE \"talker\"['level'] = 'ERROR'"
+    result = relation.query(
+        "talker_logs", "SELECT COUNT(*) FROM talker_logs WHERE \"talker\"['level'] = 'ERROR'"
     ).fetchone()
 
     # THEN

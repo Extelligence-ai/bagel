@@ -9,7 +9,7 @@ import yaml
 from poml import poml
 
 from settings import settings
-from src import artifacts, mcp_compat
+from src import artifacts, mcp_compat, query
 from src.agent import capabilities as agent_capabilities
 from src.di import module
 from src.di.types.base_module import BaseModule
@@ -227,8 +227,7 @@ def query_messages(  # noqa: PLR0913
     dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
 
     relation = dataset.to_duckdb(factory, registry, [topic], start_seconds, end_seconds)
-    duckdb.register(topic, relation)
-    result = duckdb.sql(sql_statement)
+    result = query.sql(relation, topic, sql_statement)
     return result.to_df().to_dict(orient="records")
 
 

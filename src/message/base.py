@@ -2,17 +2,15 @@
 
 import abc
 import hashlib
-import os
 from collections.abc import Iterator
 from typing import Any
 
 import duckdb
 import pyarrow as pa
-import pyarrow.dataset as ds
 from pydantic import BaseModel, ConfigDict
 
 from settings import settings
-from src import artifacts
+from src import artifacts, cache, query
 from src.source.base import SourceFactory
 from src.topic.base import TopicRegistry
 
@@ -155,7 +153,7 @@ class MessageDataset(abc.ABC):
         if empty:
             topics = topics or registry.available_topics(factory.build())
             schema = self._schema(factory, registry, topics)
-            return duckdb.from_arrow(schema.empty_table())
+            return query.from_arrow(schema.empty_table())
 
         # The schema is part of the cache key: a change in how a source maps
         # its types to Arrow must not keep serving files written under the old
@@ -164,6 +162,8 @@ class MessageDataset(abc.ABC):
             factory, registry, topics or registry.available_topics(factory.build())
         )
         seeds = [
+            factory.cache_identity,
+            type(self).__module__,
             *(topics or [str(None)]),
             str(start_seconds),
             str(end_seconds),
@@ -171,35 +171,14 @@ class MessageDataset(abc.ABC):
             _schema_fingerprint(schema),
         ]
         arrow_file = artifacts.arrow_file(factory.uuid, seeds, "topics")
-        if arrow_file.exists() and self._use_cache:
-            try:
-                # Mark the entry as recently used so LRU eviction prefers
-                # colder files (#134).
-                os.utime(arrow_file)
-            except OSError:
-                pass  # a read-only cache mount must not break reads
-            dataset = ds.dataset(arrow_file, format="arrow")
-            return duckdb.from_arrow(dataset)
-        arrow_file.unlink(missing_ok=True)
-        arrow_file.parent.mkdir(parents=True, exist_ok=True)
-        artifacts.evict_arrow_cache()
 
-        data_source = factory.build()
-        topics = topics or registry.available_topics(data_source)
-        messages = self._messages(data_source, topics, start_seconds, end_seconds)
+        def batches() -> Iterator[pa.RecordBatch]:
+            data_source = factory.build()
+            selected = topics or registry.available_topics(data_source)
+            messages = self._messages(data_source, selected, start_seconds, end_seconds)
+            yield from self._record_batches(messages, schema, ffill)
 
-        try:
-            with (
-                pa.OSFile(str(arrow_file), "wb") as sink,
-                pa.RecordBatchFileWriter(sink, schema=schema) as writer,
-            ):
-                for record_batch in self._record_batches(messages, schema, ffill):
-                    writer.write_batch(record_batch)
-            dataset = ds.dataset(arrow_file, format="arrow")
-            return duckdb.from_arrow(dataset)
-        except Exception as e:
-            arrow_file.unlink(missing_ok=True)
-            raise e
+        return cache.arrow_relation(arrow_file, schema, batches, self._use_cache)
 
     def _schema(
         self,
@@ -226,7 +205,7 @@ class MessageDataset(abc.ABC):
         return pa.schema(fields)
 
     def _record_batches(
-        self, messages: Iterator[str, float, object], schema: pa.Schema, ffill: bool
+        self, messages: Iterator[tuple[str, float, object]], schema: pa.Schema, ffill: bool
     ) -> Iterator[pa.RecordBatch]:
         """Return an iterator over the record batches for the given messages.
 

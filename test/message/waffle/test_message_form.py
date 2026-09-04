@@ -3,7 +3,6 @@
 import os
 import pathlib
 
-import duckdb
 import pytest
 
 from src.di import module
@@ -67,9 +66,9 @@ def test_sql_over_hardware_state() -> None:
     factory, registry, dataset = _provide()
 
     relation = dataset.to_duckdb(factory, registry, ["sensors"])
-    duckdb.register("sensors", relation)
-    row = duckdb.sql(
-        "SELECT \"sensors\"['model'] FROM sensors WHERE \"sensors\"['firmware'] = '5.14.0'"
+    row = relation.query(
+        "sensors",
+        "SELECT \"sensors\"['model'] FROM sensors WHERE \"sensors\"['firmware'] = '5.14.0'",
     ).fetchone()
     assert row == ("realsense-d435i",)
 
