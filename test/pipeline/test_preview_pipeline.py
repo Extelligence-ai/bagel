@@ -48,7 +48,7 @@ def test_preview_windows_merge_when_overlapping() -> None:
     )
     assert result["event_count"] == 2
     assert len(result["intervals"]) == 1
-    assert result["intervals"][0] == {"start_seconds": 0.0, "end_seconds": 65.0}
+    assert result["intervals"][0] == {"start_seconds": 0.0, "end_seconds": 59.5}
 
 
 def test_preview_no_events_keeps_nothing() -> None:

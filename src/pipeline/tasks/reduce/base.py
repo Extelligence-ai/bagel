@@ -2,6 +2,7 @@
 
 from settings import settings
 from src.pipeline import windows
+from src.source.context import SourceContext
 
 
 class ReduceMixin:
@@ -20,10 +21,17 @@ class ReduceMixin:
         """
         relation = self.to_duckdb(topics=[self._event_topic], asof_seconds=asof_seconds)
         ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
-        rows = relation.project(f"{ts_column} AS ts, ({self._predicate}) AS hit").fetchall()
-
-        events = windows.rising_edges(rows, self._debounce_seconds)
-        intervals = windows.merge_intervals(
-            windows.event_windows(events, self._pre_seconds, self._post_seconds)
+        rows = windows.relation_rows(
+            relation.project(f"{ts_column} AS ts, ({self._predicate}) AS hit").order("ts")
         )
-        return events, intervals
+        bounds = SourceContext(self.factory, self.registry, self.dataset).bounds()
+        plan = windows.plan_reduction(
+            rows,
+            self._pre_seconds,
+            self._post_seconds,
+            bounds[1] - bounds[0],
+            self._debounce_seconds,
+            bounds=bounds,
+            ordered=True,
+        )
+        return plan["events"], plan["intervals"]

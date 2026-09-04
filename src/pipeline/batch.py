@@ -8,6 +8,7 @@ source does not abort the batch -- failures are reported per path.
 
 import glob
 import logging
+from dataclasses import asdict
 from typing import Any
 
 from src.pipeline import base
@@ -58,7 +59,8 @@ def run_batch(config: dict[str, Any], paths: list[str]) -> list[dict[str, Any]]:
             results.append(
                 {
                     "path": path,
-                    "status": "completed",
+                    "status": pipeline.summary.status,
+                    "runs": asdict(pipeline.summary),
                     "artifacts": [str(artifact) for artifact in produced],
                 }
             )
@@ -72,10 +74,12 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize batch results: source counts and total artifacts produced."""
     completed = [result for result in results if result["status"] == "completed"]
     failed = [result for result in results if result["status"] == "failed"]
+    partial = [result for result in results if result["status"] == "partial"]
     return {
         "sources": len(results),
         "completed": len(completed),
         "failed": len(failed),
-        "artifacts": sum(len(result.get("artifacts", [])) for result in completed),
+        "partial": len(partial),
+        "artifacts": sum(len(result.get("artifacts", [])) for result in results),
         "results": results,
     }
