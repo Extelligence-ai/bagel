@@ -70,8 +70,18 @@ def validate_predicates(rules: list[EventRule], structs: dict[str, pa.StructType
     `StreamConfigError` naming `events[i].predicate`, wrapping the original
     message. A predicate that merely evaluates to a null/false result on the
     all-null probe row is not an error -- only a raised exception is.
+
+    A duplicate `rule.name` also raises, naming `events[i].name`: `EventEngine.
+    __init__` indexes per-rule state (`_RuleState` -- the trigger, suppression
+    deque, counters) by name, so two rules sharing a name would silently
+    collapse into one shared state -- possibly even across different topics --
+    with the LAST rule's window settings controlling both (Codex review).
     """
+    seen_names: set[str] = set()
     for i, rule in enumerate(rules):
+        if rule.name in seen_names:
+            raise StreamConfigError(f"events[{i}].name", f"duplicate event name '{rule.name}'")
+        seen_names.add(rule.name)
         if rule.topic not in structs:
             raise StreamConfigError(f"events[{i}].topic", f"not subscribed to topic '{rule.topic}'")
         struct = structs[rule.topic]
@@ -154,24 +164,41 @@ class EventEngine:
         self._fired = 0
         self._suppressed = 0
         self._last_event_at: float | None = None
+        self._last_seen_t: dict[str, float] = {}
 
     def offer(self, topic: str, t: float, msg: dict) -> list[Firing]:
         """Feed one sample: append to its topic's ring, evaluate each rule on it.
 
         Returns any Firings released as of this sample (edges whose post
         window has now elapsed and that passed the suppression gate).
+
+        Source clocks are not guaranteed monotonic -- simulated time can
+        reset or jump backward across a log/replay boundary -- but `live.
+        LiveEventTrigger.feed` requires non-decreasing timestamps for its
+        debounce/window arithmetic; fed a regressing `t` raw, a genuine new
+        edge could be silently discarded (Codex review, P1). So the
+        predicate is always evaluated against this sample's own `msg` (its
+        values still matter, however late it arrived), but the trigger is
+        fed `max(t, last_seen)` per topic, so time as the trigger sees it
+        never runs backward. The ring keeps the sample's real `t` (window
+        slicing wants the true arrival order); only the trigger feed and the
+        resulting Firing's `t_event`/`t_end` are clamped.
         """
         if topic not in self._rules_by_topic:
             return []
 
         self._append_to_ring(topic, t, msg)
 
+        last_seen = self._last_seen_t.get(topic)
+        feed_t = t if last_seen is None else max(t, last_seen)
+        self._last_seen_t[topic] = feed_t
+
         firings: list[Firing] = []
         for rule in self._rules_by_topic[topic]:
             state = self._states[rule.name]
             hit = self._safe_evaluate(rule, state, topic, msg)
-            for t_event in state.trigger.feed(t, hit):
-                firing = self._release(rule, state, t_event, t)
+            for t_event in state.trigger.feed(feed_t, hit):
+                firing = self._release(rule, state, t_event, feed_t)
                 if firing is not None:
                     firings.append(firing)
         return firings
@@ -245,10 +272,26 @@ class EventEngine:
             return None
         self._fired += 1
         self._last_event_at = t_event
+        # Reads, but deliberately does NOT clear, suppressed_since_last: it
+        # is only cleared via `ack_suppressed`, once the caller has durably
+        # spooled this Firing (Codex review) -- clearing it here, before
+        # the append even happens, would lose the count if that append
+        # then failed.
         suppressed = state.suppressed_since_last
-        state.suppressed_since_last = 0
         window = self._window_slice(rule, t_event, t_end)
         return Firing(rule=rule, t_event=t_event, t_end=t_end, window=window, suppressed=suppressed)
+
+    def ack_suppressed(self, rule_name: str, amount: int) -> None:
+        """Clear `amount` off a rule's pending suppressed-since-last count.
+
+        Called by `EventEmitter` only once a `Firing`'s envelope has been
+        durably appended to the spool -- see `_release`'s docstring. A
+        no-op for an unknown rule name (defensive; should not happen in
+        practice since names come from the engine's own rules).
+        """
+        state = self._states.get(rule_name)
+        if state is not None:
+            state.suppressed_since_last = max(0, state.suppressed_since_last - amount)
 
     def _gate(self, state: _RuleState, t_event: float) -> bool:
         while state.fired_at and t_event - state.fired_at[0] >= SUPPRESSION_WINDOW_SECONDS:
@@ -427,11 +470,17 @@ class EventEmitter(threading.Thread):
                     artifact_error = "artifact byte budget exceeded"
                 else:
                     uri = path.as_uri()
-        self._append_to_events_lane(
+        success = self._append_to_events_lane(
             lambda seq: build_event_payload(
                 firing, seq=seq, event_id=event_id, artifact_uri=uri, artifact_error=artifact_error
             )
         )
+        if success:
+            # Only clear the rule's suppressed-since-last count once this
+            # Firing's envelope has actually been delivered (Codex review):
+            # clearing it earlier (inside the engine's own `_release`)
+            # would lose the count on an append failure.
+            self._engine.ack_suppressed(rule.name, firing.suppressed)
 
     def _emit_health(self, now: float) -> None:
         """Build one scheduled health report and append it to the events lane.
@@ -443,6 +492,17 @@ class EventEmitter(threading.Thread):
         or the runtime start for the first report -- up to `now`);
         `source_topic` `"internal:health"` marks robot-internal events
         (contract doc paragraph 7).
+
+        `_health_prev` and `_last_report_at` are only committed to their new
+        values once the report is actually appended (Codex review): if the
+        append fails (spool full, transient disk error --
+        `_append_to_events_lane` swallows it), committing anyway would make
+        the NEXT delivered report compute its deltas from this undelivered
+        report's snapshot and skip `t_start` ahead to this report's `now`,
+        silently dropping the missing interval's queue drops, evictions,
+        reconnects, and heartbeat failures from every future report. Keeping
+        the old baseline means the next successful report's period simply
+        spans both the failed and the successful attempt.
         """
         try:
             inputs = self._health_inputs()
@@ -451,12 +511,12 @@ class EventEmitter(threading.Thread):
             logger.warning("health inputs gatherer failed; skipping this report", exc_info=True)
             return
         self._last_error = None
-        summary, self._health_prev = build_health_report(inputs, self._health_prev, now=now)
+        summary, new_health_prev = build_health_report(inputs, self._health_prev, now=now)
         build = build_provenance()
         if build is not None:
             summary["build"] = build
         t_start = self._last_report_at if self._last_report_at is not None else self._started_at
-        self._append_to_events_lane(
+        success = self._append_to_events_lane(
             lambda seq: {
                 "v": 1,
                 "seq": seq,
@@ -468,9 +528,11 @@ class EventEmitter(threading.Thread):
                 "summary": summary,
             }
         )
-        self._last_report_at = now
+        if success:
+            self._health_prev = new_health_prev
+            self._last_report_at = now
 
-    def _append_to_events_lane(self, build: Callable[[int], dict]) -> None:
+    def _append_to_events_lane(self, build: Callable[[int], dict]) -> bool:
         """Atomically allocate a seq, build the payload with it, and append -- never-drop lane.
 
         Goes through `Spool.append_next()` (post-#214 fusion), never a
@@ -487,12 +549,20 @@ class EventEmitter(threading.Thread):
         else from the spool path) logs WARNING and increments
         `spool_failures` (surfaced in status and the `events_pipeline` health
         metrics), mirroring `HeartbeatThread._tick`'s posture.
+
+        Returns whether the append succeeded: callers (`_emit`, `_emit_
+        health`) use this to gate state that must only advance on a durable
+        append -- the suppressed-count drain and the health baseline commit
+        (Codex review) -- rather than committing eagerly and losing that
+        state on a failure this method already swallowed.
         """
         try:
             self._spool.append_next("events", build)
         except Exception:
             self._spool_failures += 1
             logger.warning("events spool append failed on lane 'events'", exc_info=True)
+            return False
+        return True
 
     def stop(self) -> None:
         """Signal the loop to stop, join bounded, then final-flush on the caller's thread.

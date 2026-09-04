@@ -221,9 +221,21 @@ class ArtifactStore:
             oldest.unlink(missing_ok=True)
 
     def stats(self) -> dict[str, int]:
-        """Return ``{"bytes": total, "files": count}`` for this store."""
-        files = list(self._root.glob("*.mcap"))
-        return {
-            "bytes": sum(p.stat().st_size for p in files),
-            "files": len(files),
-        }
+        """Return ``{"bytes": total, "files": count}`` for this store.
+
+        ``glob()`` takes a snapshot of paths, then each is ``stat()``'d
+        separately; a file can vanish in between -- a concurrent eviction
+        (``_evict``) or the documented collector-sidecar workflow removing
+        an already-copied artifact (Codex review) -- so a
+        ``FileNotFoundError`` on any one entry is tolerated: that entry is
+        simply excluded rather than failing the whole scan.
+        """
+        total_bytes = 0
+        file_count = 0
+        for path in self._root.glob("*.mcap"):
+            try:
+                total_bytes += path.stat().st_size
+            except FileNotFoundError:
+                continue
+            file_count += 1
+        return {"bytes": total_bytes, "files": file_count}

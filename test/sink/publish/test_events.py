@@ -207,6 +207,21 @@ class TestValidatePredicates:
         # a normal validation right after must still succeed.
         assert events.validate_predicates([_rule()], {"imu": IMU_STRUCT}) is None
 
+    def test_duplicate_names_rejected_naming_the_duplicate_index(self) -> None:
+        """Codex review (P2, events.py:140): duplicate names would otherwise
+        collapse into one shared `_RuleState` in `EventEngine.__init__`
+        (shared debounce/suppression/window state across rules), so
+        validation must reject them before the engine is ever built."""
+        rules = [_rule(name="dup"), _rule(name="dup", topic="imu")]
+        with pytest.raises(StreamConfigError) as exc_info:
+            events.validate_predicates(rules, {"imu": IMU_STRUCT})
+        assert exc_info.value.field == "events[1].name"
+        assert "duplicate" in str(exc_info.value).lower()
+
+    def test_unique_names_still_pass(self) -> None:
+        rules = [_rule(name="a"), _rule(name="b")]
+        assert events.validate_predicates(rules, {"imu": IMU_STRUCT}) is None
+
 
 class TestEdgeAndWindows:
     def test_single_firing_after_post_window_with_correct_window_slice(self) -> None:
@@ -235,6 +250,52 @@ class TestEdgeAndWindows:
         assert firing.t_event == 5.0
         assert firing.t_end == 7.0
         assert [t for t, _ in firing.window] == [3.0, 5.0, 6.0, 7.0]
+
+
+class TestRegressingTimestamps:
+    """Codex review (P1, events.py:173): a source clock is not guaranteed
+    monotonic (e.g. simulated time can reset across a log boundary).
+    `LiveEventTrigger.feed` requires non-decreasing timestamps for its
+    debounce/window arithmetic -- fed a regressing `t` raw, a genuine new
+    edge could be silently discarded (debounce math going negative) rather
+    than raising. `EventEngine.offer` must clamp what it feeds the trigger
+    to a per-topic monotonic maximum, without ever raising and without
+    dropping a real edge."""
+
+    def test_regressing_sample_does_not_raise_and_edge_still_fires(self) -> None:
+        rule = _rule(post_seconds=0.0, debounce_seconds=0.0)
+        engine = events.EventEngine(
+            [rule],
+            {"imu": IMU_STRUCT},
+            max_per_minute=100,
+            ring_max_samples=1000,
+            ring_max_bytes=10_000_000,
+        )
+        firings: list[events.Firing] = []
+        firings.extend(engine.offer("imu", 10.0, {"accel_x": -12.0}))  # edge 1, fires @10
+        firings.extend(engine.offer("imu", 11.0, {"accel_x": -1.0}))  # false, resets edge
+        # Regresses behind the topic's last-seen t=11.0 -- must not raise,
+        # and (being a genuine rising edge) must still be detected.
+        firings.extend(engine.offer("imu", 9.0, {"accel_x": -12.0}))
+
+        assert [f.t_event for f in firings] == [10.0, 11.0]
+        # Monotonic: the trigger never saw time run backward.
+        assert firings[1].t_event >= firings[0].t_event
+        assert firings[1].t_end >= firings[1].t_event
+
+    def test_regressing_non_edge_sample_produces_no_false_firing(self) -> None:
+        rule = _rule(post_seconds=0.0, debounce_seconds=0.0)
+        engine = events.EventEngine(
+            [rule],
+            {"imu": IMU_STRUCT},
+            max_per_minute=100,
+            ring_max_samples=1000,
+            ring_max_bytes=10_000_000,
+        )
+        engine.offer("imu", 10.0, {"accel_x": -12.0})  # edge 1, fires @10
+        # A regressing sample that is NOT a hit must fire nothing.
+        firings = engine.offer("imu", 9.0, {"accel_x": -1.0})
+        assert firings == []
 
 
 class TestDebounce:
@@ -312,6 +373,73 @@ class TestSuppression:
         counters = engine.counters()
         assert counters["fired"] == 3
         assert counters["suppressed"] == 3
+
+
+class TestSuppressedCountPreservedUntilAck:
+    """Codex review (P2, events.py:249): `_release` used to zero
+    `suppressed_since_last` unconditionally, before the caller (the
+    emitter) ever attempted to durably spool the resulting `Firing`. If
+    that append then failed, the count was already gone -- the NEXT
+    successful event silently omitted losses the protocol promises to
+    report since the previous delivered firing. `_release` now only
+    *reads* the counter; a caller must explicitly `ack_suppressed()` once
+    the append has actually succeeded."""
+
+    def test_release_reports_but_does_not_clear_the_counter(self) -> None:
+        rule = _rule(post_seconds=0.0, debounce_seconds=0.0)
+        engine = events.EventEngine(
+            [rule],
+            {"imu": IMU_STRUCT},
+            max_per_minute=1,
+            ring_max_samples=1000,
+            ring_max_bytes=10_000_000,
+        )
+        engine.offer("imu", 1.0, {"accel_x": -12.0})  # fires, suppressed=0
+        engine.offer("imu", 2.0, {"accel_x": -1.0})
+        engine.offer("imu", 3.0, {"accel_x": -12.0})  # gated -> suppressed_since_last=1
+        engine.offer("imu", 4.0, {"accel_x": -1.0})
+        firings = engine.offer("imu", 65.0, {"accel_x": -12.0})  # ages out t=1.0, fires again
+        assert firings[0].suppressed == 1
+
+        # Simulate the caller never acknowledging this release (its append
+        # "failed"): a SECOND release, with no further suppression in
+        # between, must still report the SAME count -- not 0.
+        engine.offer("imu", 66.0, {"accel_x": -1.0})
+        firings2 = engine.offer("imu", 127.0, {"accel_x": -12.0})  # ages out t=65.0
+        assert firings2[0].suppressed == 1
+
+    def test_ack_suppressed_clears_only_the_acknowledged_amount(self) -> None:
+        rule = _rule(post_seconds=0.0, debounce_seconds=0.0)
+        engine = events.EventEngine(
+            [rule],
+            {"imu": IMU_STRUCT},
+            max_per_minute=1,
+            ring_max_samples=1000,
+            ring_max_bytes=10_000_000,
+        )
+        engine.offer("imu", 1.0, {"accel_x": -12.0})
+        engine.offer("imu", 2.0, {"accel_x": -1.0})
+        engine.offer("imu", 3.0, {"accel_x": -12.0})  # gated -> suppressed_since_last=1
+        engine.offer("imu", 4.0, {"accel_x": -1.0})
+        firings = engine.offer("imu", 65.0, {"accel_x": -12.0})
+        assert firings[0].suppressed == 1
+
+        engine.ack_suppressed(rule.name, 1)
+
+        engine.offer("imu", 66.0, {"accel_x": -1.0})
+        firings2 = engine.offer("imu", 127.0, {"accel_x": -12.0})
+        assert firings2[0].suppressed == 0  # cleared by the ack
+
+    def test_ack_suppressed_unknown_rule_name_is_a_no_op(self) -> None:
+        rule = _rule()
+        engine = events.EventEngine(
+            [rule],
+            {"imu": IMU_STRUCT},
+            max_per_minute=100,
+            ring_max_samples=1000,
+            ring_max_bytes=10_000_000,
+        )
+        engine.ack_suppressed("nope", 1)  # must not raise
 
 
 class TestRingBounds:
@@ -486,11 +614,13 @@ class _Clock:
         return self.t
 
 
-def _engine(rules: list[EventRule], structs: dict | None = None) -> events.EventEngine:
+def _engine(
+    rules: list[EventRule], structs: dict | None = None, *, max_per_minute: int = 100
+) -> events.EventEngine:
     return events.EventEngine(
         rules,
         structs if structs is not None else {"imu": IMU_STRUCT},
-        max_per_minute=100,
+        max_per_minute=max_per_minute,
         ring_max_samples=1000,
         ring_max_bytes=10_000_000,
     )
@@ -505,12 +635,13 @@ def _emitter(  # noqa: PLR0913 -- mirrors EventEmitter's own knob-per-collaborat
     health_settle_s: float = 3600.0,
     now: object = time.time,
     health_inputs: object = _canned_health_inputs,
+    max_per_minute: int = 100,
 ) -> tuple[events.EventEmitter, SampleQueue, Spool]:
     structs = structs if structs is not None else {"imu": IMU_STRUCT}
     queue = SampleQueue(1000)
     spool = Spool(tmp_path / "spool")
     emitter = events.EventEmitter(
-        _engine(rules, structs),
+        _engine(rules, structs, max_per_minute=max_per_minute),
         queue,
         spool,
         artifact_store=artifact_store,
@@ -733,6 +864,49 @@ class TestEmitterStopAndFailures:
         assert "flush exploded" in emitter.last_error
 
 
+class TestEmitterSuppressedCountSurvivesAppendFailure:
+    """End-to-end version of `TestSuppressedCountPreservedUntilAck`: a real
+    spool append failure must not lose a firing's suppressed count."""
+
+    def test_append_failure_preserves_suppressed_count_for_next_success(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rule = _rule(post_seconds=0.0, debounce_seconds=0.0)
+        emitter, queue, spool = _emitter(tmp_path, [rule], max_per_minute=1)
+
+        real_append_next = spool.append_next
+        calls = {"n": 0}
+
+        def flaky_append_next(lane: str, build: object) -> object:
+            calls["n"] += 1
+            if calls["n"] == 2:  # the SECOND append (the one carrying suppressed=1)
+                raise SpoolFullError("disk full")
+            return real_append_next(lane, build)
+
+        monkeypatch.setattr(spool, "append_next", flaky_append_next)
+
+        emitter.start()
+        try:
+            queue.put(("imu", 1.0, {"accel_x": -12.0}))  # Firing A: fires, suppressed=0
+            queue.put(("imu", 2.0, {"accel_x": -1.0}))
+            queue.put(("imu", 3.0, {"accel_x": -12.0}))  # gated -> suppressed_since_last=1
+            queue.put(("imu", 4.0, {"accel_x": -1.0}))
+            queue.put(("imu", 65.0, {"accel_x": -12.0}))  # Firing B: releases, append FAILS
+            queue.put(("imu", 66.0, {"accel_x": -1.0}))
+            assert _wait_until(lambda: emitter.status_counters()["spool_failures"] == 1)
+
+            queue.put(("imu", 127.0, {"accel_x": -12.0}))  # Firing C: must still carry it
+            queue.put(("imu", 128.0, {"accel_x": -1.0}))
+            assert _wait_until(lambda: len(_events_lane(spool)) == 2)  # A and C only
+        finally:
+            monkeypatch.undo()
+            emitter.stop()
+
+        payloads = [p for _, p in _events_lane(spool)]
+        assert payloads[0]["summary"].get("suppressed", 0) == 0  # Firing A
+        assert payloads[1]["summary"]["suppressed"] == 1  # Firing C carries B's lost count
+
+
 class TestEmitterJoinTimeout:
     def test_stop_joins_with_a_12s_timeout(
         self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
@@ -840,3 +1014,57 @@ class TestEmitterHealthSchedule:
             assert emitter.status_counters()["last_error"] is None
         finally:
             emitter.stop()
+
+    def test_spool_append_failure_keeps_old_baseline_so_next_report_spans_full_period(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex review (P2, events.py:454): `_emit_health` used to commit
+        `_health_prev`/`_last_report_at` before the append was even
+        attempted. If that append then failed (spool full, transient disk
+        error -- `_append_to_events_lane` swallows it), the NEXT delivered
+        report computed its deltas from the undelivered report's snapshot
+        and `t_start` skipped ahead too -- the missing interval's queue
+        drops/evictions/reconnects were never reported. The baseline must
+        only advance on a successful append, so the next report's
+        `t_start`/`t_end` span BOTH periods."""
+        monkeypatch.setattr(settings, "BAGEL_BUILD_ID", None)
+        monkeypatch.setattr(settings, "BAGEL_VCS_REF", None)
+        # health_settle_s > 0 so the FIRST (failing) report's `now` (1050.0)
+        # differs from `_started_at` (1000.0) -- otherwise a buggy commit-
+        # on-failure would coincidentally produce the same t_start as the
+        # fix, and the test couldn't tell them apart.
+        clock = _Clock(1000.0)
+        emitter, _queue, spool = _emitter(
+            tmp_path, [], structs={}, health_settle_s=50.0, health_interval_s=100.0, now=clock
+        )
+
+        real_append_next = spool.append_next
+        calls = {"n": 0}
+
+        def flaky_append_next(lane: str, build: object) -> object:
+            calls["n"] += 1
+            if calls["n"] == 1:  # the FIRST scheduled report's append fails
+                raise SpoolFullError("disk full")
+            return real_append_next(lane, build)
+
+        monkeypatch.setattr(spool, "append_next", flaky_append_next)
+
+        emitter.start()
+        try:
+            clock.t = 1050.0  # first scheduled report; its append fails
+            assert _wait_until(lambda: emitter.status_counters()["spool_failures"] == 1)
+            assert _events_lane(spool) == []  # the failed report was never recorded
+
+            clock.t = 1150.0 + 1.0  # the next scheduled tick (settle + 2 intervals)
+            assert _wait_until(lambda: len(_events_lane(spool)) == 1)
+        finally:
+            monkeypatch.undo()
+            emitter.stop()
+
+        payload = _events_lane(spool)[0][1]
+        # t_start is still the runtime start (1000.0) -- NOT the failed
+        # report's own `now` (1050.0) -- because `_last_report_at` was
+        # never committed on failure, so this report's period covers the
+        # full span since start, not just since the failed attempt.
+        assert payload["t_start"] == 1000.0
+        assert payload["t_end"] == 1151.0

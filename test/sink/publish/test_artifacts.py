@@ -199,6 +199,31 @@ class TestStats:
         assert stats["files"] == 1
         assert stats["bytes"] > 0
 
+    def test_file_deleted_between_glob_and_stat_is_skipped(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex review (P2, artifacts.py:228): `stats()` snapshots paths
+        with `glob()` and then `stat()`s each one; a concurrent eviction (or
+        the documented collector-sidecar workflow) can remove a file in
+        between, raising `FileNotFoundError` and degrading status to an
+        error. A vanished entry must be skipped, not fatal."""
+        store = ArtifactStore(tmp_path / "artifacts", max_bytes=10 * 1024 * 1024)
+        store.store("hard_decel", "evt-1", "imu", STRUCT, _samples(3))
+        store.store("hard_decel", "evt-2", "imu", STRUCT, _samples(3))
+
+        real_stat = pathlib.Path.stat
+
+        def flaky_stat(self: pathlib.Path, *args: object, **kwargs: object) -> os.stat_result:
+            if "evt-2" in self.name:
+                raise FileNotFoundError(self)
+            return real_stat(self, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "stat", flaky_stat)
+
+        stats = store.stats()
+        assert stats["files"] == 1
+        assert stats["bytes"] > 0
+
 
 def test_artifacts_module_does_not_import_paho_or_cryptography_eagerly(
     monkeypatch: pytest.MonkeyPatch,
