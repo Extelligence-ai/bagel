@@ -175,6 +175,28 @@ def test_delete_pipeline_rejects_symlink_escape(
     assert victim.exists()
 
 
+def test_list_pipelines_skips_symlinked_yaml(
+    tmp_path: pathlib.Path, pipelines_dir: pathlib.Path
+) -> None:
+    """A `*.yaml` symlink escaping the trusted root must not be read or
+    reported (Codex review): `is_file()` alone follows it, which would both
+    leak the outside file's content into `summary` and report a name
+    `delete_pipeline` refuses to act on (its containment check resolves the
+    same symlink), so listing and deletion would disagree.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.yaml"
+    secret.write_text("name: top_secret_config\n", encoding="utf-8")
+    (pipelines_dir / "escape.yaml").symlink_to(secret)
+    _save("csv_smoke")
+
+    entries = server.list_pipelines()
+    names = {entry["name"] for entry in entries}
+    assert names == {"csv_smoke"}
+    assert "top_secret_config" not in str(entries)
+
+
 def test_delete_pipeline_confinement_checked_before_unlink(
     pipelines_dir: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -201,3 +223,50 @@ def test_save_pipeline_explicit_directory_still_overrides(tmp_path: pathlib.Path
     output = server.save_pipeline(_config(), "csv_smoke", directory=str(tmp_path))
     loaded = yaml.safe_load(pathlib.Path(output).read_text())
     assert loaded["name"] == "csv_smoke"
+
+
+def test_delete_pipeline_serializes_with_save_lock(
+    pipelines_dir: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex review: the exists-check + unlink must hold the same lock
+    save_pipeline's write does, so a concurrent save and delete of the same
+    name cannot interleave (a delete unlinking mid-write, or two deletes both
+    passing the existence check). A spy proves the lock is held while
+    unlink() runs.
+    """
+    _save("csv_smoke")
+
+    shared_lock = server._pipeline_lock(pipelines_dir)
+    monkeypatch.setattr(server, "_pipeline_lock", lambda directory: shared_lock)
+
+    seen: dict[str, bool] = {}
+    real_unlink = pathlib.Path.unlink
+
+    def spy_unlink(self: pathlib.Path, *args: object, **kwargs: object) -> None:
+        seen["locked"] = shared_lock.is_locked
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", spy_unlink)
+    server.delete_pipeline("csv_smoke")
+    assert seen["locked"] is True
+
+
+def test_save_pipeline_holds_lock_during_write(
+    pipelines_dir: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The write side of the same race: the lock must be held while the file
+    is actually being written, not released beforehand."""
+    shared_lock = server._pipeline_lock(pipelines_dir)
+    monkeypatch.setattr(server, "_pipeline_lock", lambda directory: shared_lock)
+
+    seen: dict[str, bool] = {}
+    real_open = open
+
+    def spy_open(file: object, *args: object, **kwargs: object) -> object:
+        if str(file).endswith("csv_smoke.yaml"):
+            seen["locked"] = shared_lock.is_locked
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", spy_open)
+    _save("csv_smoke")
+    assert seen["locked"] is True

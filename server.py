@@ -1,11 +1,13 @@
 """Entry point for the Bagel MCP server."""
 
+import hashlib
 import logging
 import pathlib
 from datetime import datetime
 from typing import Any
 
 import duckdb
+import filelock
 import yaml
 from poml import poml
 
@@ -765,6 +767,27 @@ def _pipeline_summary(text: str, yaml_file: pathlib.Path) -> str:
         return _fallback()
 
 
+def _pipeline_lock(directory: pathlib.Path) -> filelock.FileLock:
+    """Return the cross-process lock serializing save/delete for `directory`.
+
+    Mirrors ``agent_capabilities._save_lock``: the lock file lives under
+    ``CACHE_DIRECTORY``, never inside `directory` itself (which `save_pipeline`
+    can point at a caller-chosen location), so a planted lock-named symlink
+    there can't be followed by the lock implementation before any path check
+    runs. Keyed by the resolved directory so concurrent `save_pipeline` and
+    `delete_pipeline` calls against the same directory (in practice, the
+    trusted `settings.PIPELINES_DIRECTORY` default) serialize against each
+    other -- otherwise a delete can unlink a file after `save_pipeline` opens
+    it but before the write completes, or two deletes can both pass the
+    existence check and one raise an unexpected `FileNotFoundError` (review
+    #224).
+    """
+    locks = pathlib.Path(settings.CACHE_DIRECTORY) / "locks"
+    locks.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(str(directory.resolve()).encode("utf-8")).hexdigest()[:16]
+    return filelock.FileLock(str(locks / f"pipelines-{digest}.lock"))
+
+
 @server.tool(
     title="Save a pipeline to a YAML file",
     description=(
@@ -808,8 +831,11 @@ def save_pipeline(config: dict[str, Any], name: str, directory: str | None = Non
     )
     output_directory.mkdir(parents=True, exist_ok=True)
     output_file = output_directory / f"{name}.yaml"
-    with open(output_file, "w") as stream:
-        yaml.safe_dump(config, stream, sort_keys=False)
+    # Serialized with delete_pipeline's existence-check + unlink under the same
+    # lock, so a concurrent save and delete of the same name cannot race.
+    with _pipeline_lock(output_directory):
+        with open(output_file, "w") as stream:
+            yaml.safe_dump(config, stream, sort_keys=False)
     return str(output_file)
 
 
@@ -858,7 +884,12 @@ def list_pipelines() -> list[dict[str, str]]:
             ),
         }
         for yaml_file in root.glob("*.yaml")
-        if yaml_file.is_file()
+        # is_symlink() excludes a *.yaml symlink whose target is outside the
+        # trusted root: is_file() alone follows it, so read_text() would read
+        # and summarize a file this listing has no business exposing -- and
+        # one delete_pipeline refuses anyway, since its containment check
+        # resolves the same symlink (review #224).
+        if yaml_file.is_file() and not yaml_file.is_symlink()
     ]
     entries.sort(key=lambda entry: entry["name"])
     return entries
@@ -920,12 +951,16 @@ def delete_pipeline(name: str) -> dict[str, str]:
             f"outside the pipelines directory {root.resolve()}."
         )
 
-    if not target.is_file():
-        available = sorted(entry["name"] for entry in list_pipelines())
-        detail = f"Available: {available}" if available else "No pipelines are saved there."
-        raise ValueError(f"No saved pipeline named {name!r}. {detail}")
+    # Serialized with save_pipeline's write under the same lock, so a
+    # concurrent save and delete of the same name cannot race.
+    with _pipeline_lock(root):
+        if not target.is_file():
+            available = sorted(entry["name"] for entry in list_pipelines())
+            detail = f"Available: {available}" if available else "No pipelines are saved there."
+            raise ValueError(f"No saved pipeline named {name!r}. {detail}")
 
-    target.unlink()
+        target.unlink()
+
     return {"name": name, "path": str(target)}
 
 
