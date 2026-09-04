@@ -35,7 +35,7 @@ jobs:
           reviewed_shas() {
             {
               gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
-                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body' || true
+                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "github-actions[bot]") | .body' || true
               gh api "repos/$REPO/issues/$PR/comments" --paginate \
                 --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body' || true
             } | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \
@@ -44,7 +44,7 @@ jobs:
           for sha in $(reviewed_shas); do
             case "$HEAD_SHA" in
               "$sha"*)
-                echo "Codex reviewed the head commit ($sha)."
+                echo "An AI reviewer (Codex or Claude) reviewed the head commit ($sha)."
                 exit 0
                 ;;
             esac

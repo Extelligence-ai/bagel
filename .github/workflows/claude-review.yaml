@@ -1,0 +1,58 @@
+# Claude as an AI reviewer: a maintainer comments "@claude review" on a PR
+# and this workflow runs Claude Code against the PR diff, posts the findings
+# as a PR review, and stamps it with the same "Reviewed commit: <sha>"
+# marker the AI-review gate recognizes. Either reviewer (Codex or Claude)
+# satisfies the gate; see codex-gate.yaml.
+#
+# Requires the ANTHROPIC_API_KEY repository secret. Maintainer-only trigger
+# (author_association check) so external commenters cannot spend API credit
+# or influence the gate.
+name: claude-review
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '@claude review') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the PR head
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          echo "head_sha=$(gh api repos/$REPO/pulls/$PR --jq .head.sha)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          fetch-depth: 0
+      - name: Claude reviews the PR
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: >-
+            Review pull request #${{ github.event.issue.number }} in this repository
+            (head commit ${{ steps.pr.outputs.head_sha }}). Fetch the diff with
+            `gh pr diff ${{ github.event.issue.number }}` and read any file you need
+            at this checkout. Hunt for real defects: correctness, data loss,
+            concurrency, security, contract breaks. Ignore style. Then submit ONE
+            pull-request review via
+            `gh pr review ${{ github.event.issue.number }} --comment --body "..."`
+            whose body STARTS with the exact line:
+            "Claude review -- Reviewed commit: ${{ steps.pr.outputs.head_sha }}"
+            followed by your findings ranked by severity (or "No findings that
+            block merge." if clean).
+          claude_args: "--allowedTools Bash(gh:*),Read,Grep,Glob --max-turns 40"
+        env:
+          GH_TOKEN: ${{ github.token }}
