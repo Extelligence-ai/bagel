@@ -22,6 +22,7 @@ import threading
 import time
 from collections.abc import Callable
 
+from src.sink.publish.provenance import build_provenance
 from src.sink.publish.publisher import Publisher, PublishError
 from src.sink.publish.spool import Spool
 
@@ -96,7 +97,7 @@ def build_heartbeat(  # noqa: PLR0913
     -- `FleetService` supplies it once constructed with an `identity`.
     """
     t = now if now is not None else time.time()
-    return {
+    payload = {
         "v": 1,
         "t": t,
         "online": True,
@@ -114,6 +115,10 @@ def build_heartbeat(  # noqa: PLR0913
         "cert_expires_at": cert_expires_at,
         "reconnects": reconnects,
     }
+    build = build_provenance()
+    if build is not None:
+        payload["build"] = build
+    return payload
 
 
 class HeartbeatThread(threading.Thread):

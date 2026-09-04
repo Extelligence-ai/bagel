@@ -212,6 +212,71 @@ class TestRunSelftest:
 
         assert result["batches"] == 1
 
+    def test_event_summary_includes_build_when_provenance_set(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from settings import settings
+        from src.sink.publish.selftest import run_selftest
+
+        monkeypatch.setattr(settings, "BAGEL_BUILD_ID", "abc123")
+        monkeypatch.setattr(settings, "BAGEL_VCS_REF", "v2.2.3")
+
+        pub = FakePublisher()
+        spool = Spool(tmp_path / "spool")
+
+        run_selftest(pub, spool, batches=1, interval_s=0.0)
+
+        assert len(pub.event_calls) == 1
+        event = pub.event_calls[0]
+        assert "build" in event["summary"]
+        assert event["summary"]["build"] == {"build_id": "abc123", "vcs_ref": "v2.2.3"}
+        # Heartbeat also gets build via build_heartbeat
+        assert len(pub.heartbeat_calls) == 1
+        assert "build" in pub.heartbeat_calls[0]
+
+    def test_event_summary_omits_build_when_provenance_unset(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from settings import settings
+        from src.sink.publish.selftest import run_selftest
+
+        monkeypatch.setattr(settings, "BAGEL_BUILD_ID", None)
+        monkeypatch.setattr(settings, "BAGEL_VCS_REF", None)
+
+        pub = FakePublisher()
+        spool = Spool(tmp_path / "spool")
+
+        run_selftest(pub, spool, batches=1, interval_s=0.0)
+
+        assert len(pub.event_calls) == 1
+        event = pub.event_calls[0]
+        assert "build" not in event["summary"]
+        # Heartbeat also has no build
+        assert len(pub.heartbeat_calls) == 1
+        assert "build" not in pub.heartbeat_calls[0]
+
+    def test_event_summary_existing_keys_still_present_with_build(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from settings import settings
+        from src.sink.publish.selftest import run_selftest
+
+        monkeypatch.setattr(settings, "BAGEL_BUILD_ID", "abc123")
+        monkeypatch.setattr(settings, "BAGEL_VCS_REF", None)
+
+        pub = FakePublisher()
+        spool = Spool(tmp_path / "spool")
+
+        run_selftest(pub, spool, batches=1, interval_s=0.0)
+
+        assert len(pub.event_calls) == 1
+        event = pub.event_calls[0]
+        # Verify existing keys are still there
+        assert event["summary"]["kind"] == "selftest"
+        assert event["summary"]["batches"] == 1
+        # And build is added
+        assert "build" in event["summary"]
+
 
 class TestRefusesWhileLiveSessionConnected:
     """Codex round 3 follow-up (PR #214, P1, comment 3927287968): even

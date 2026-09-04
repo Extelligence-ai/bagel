@@ -32,13 +32,31 @@ store-and-forward spooling -- an unreliable link delays data, never loses it.
         fields: ["speed", "battery.percent"]
         rate_hz: 5
     events:
-      - name: low_battery
+      - name: hard_decel
         topic: "robot/telemetry"
-        predicate: "\"robot/telemetry\"['battery']['percent'] < 10"
+        predicate: "\"robot/telemetry\"['decel'] > 8"
+        pre_seconds: 5            # capture window before the firing
+        post_seconds: 2           # capture window after (delays the firing)
+        debounce_seconds: 30      # coalesce nearby edges
+        artifact: mcap            # window -> robot-local MCAP, file:// URI
   ```
 
   A rule change restarts the streaming service (brief reconnect; the spool
   preserves data across it).
+- Event rules are evaluated on-robot: the predicate is SQL over the topic's
+  fields (`topic['field']`, nested via more `['field']` steps), validated at
+  service start -- a bad predicate is rejected with a typed error, never
+  silently accepted. Firings are rate-capped per rule (excess is reported as
+  `summary.suppressed`, never silently dropped); `artifact: mcap` writes the
+  captured window under `CACHE_DIRECTORY/publish-artifacts/` with a
+  robot-local `file://` URI in the event (fetching it is out of band in v1).
+- The robot also publishes a scheduled `health_report` event
+  (`source_topic: "internal:health"`, ten pass/warn/fail/skipped checks plus
+  a one-line verdict) shortly after each session start and every
+  `FLEET_HEALTH_INTERVAL_S` thereafter -- never on demand. Set
+  `BAGEL_BUILD_ID` (and optionally `BAGEL_VCS_REF`) at image build time to
+  stamp heartbeats and event summaries with a `build` provenance block. See
+  the runbook's "Events", "Health reports" and "Build provenance" sections.
 - Kill switch: `FLEET_ENABLED=0` makes the subsystem fully inert -- no
   connections, no first-boot enrollment, tools refuse. Only
   `describe_stream_status` and `unenroll_fleet_identity` still work.

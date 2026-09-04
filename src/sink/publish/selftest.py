@@ -45,6 +45,7 @@ from src.sink.publish.connect import resolve_publisher_kwargs
 from src.sink.publish.heartbeat import build_heartbeat, disk_free
 from src.sink.publish.identity import Identity, load_identity
 from src.sink.publish.mqtt import MqttPublisher
+from src.sink.publish.provenance import build_provenance
 from src.sink.publish.publisher import Publisher, PublishError
 from src.sink.publish.spool import Spool, SpoolLockedError
 
@@ -287,7 +288,7 @@ def _abort_if_live_session_detected(watch: object | None, publisher: Publisher) 
     )
 
 
-def run_selftest(  # noqa: PLR0913
+def run_selftest(  # noqa: PLR0913, PLR0915 -- fused #214 hardening + step-8 provenance
     publisher: Publisher,
     spool: Spool,
     *,
@@ -430,6 +431,10 @@ def run_selftest(  # noqa: PLR0913
             )
             publisher.publish_heartbeat(heartbeat_payload)
 
+            summary = {"kind": "selftest", "batches": batches}
+            build = build_provenance()
+            if build is not None:
+                summary["build"] = build
             event_payload: dict = {}
 
             def _build_event_payload(seq: int) -> dict:
@@ -442,7 +447,7 @@ def run_selftest(  # noqa: PLR0913
                     "t_start": t0,
                     "t_end": now(),
                     "source_topic": "selftest",
-                    "summary": {"kind": "selftest", "batches": batches},
+                    "summary": summary,
                 }
                 return event_payload
 

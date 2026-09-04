@@ -29,6 +29,9 @@ class FakeWriter:
         self._struct = struct
         self._tap = None
         self.tap_calls: list[object] = []
+        # Mirrors TopicBufferWriter.last_timestamp_seconds (None until a
+        # message arrives) -- FleetService's health-inputs closure reads it.
+        self.last_timestamp_seconds: float | None = None
 
     @property
     def struct(self) -> pa.StructType:
@@ -40,6 +43,7 @@ class FakeWriter:
 
     def feed(self, topic: str, t: float, msg: dict) -> None:
         """Simulate a live message arriving: fire the tap, like buffer.append() does."""
+        self.last_timestamp_seconds = t
         if self._tap is not None:
             self._tap(topic, t, msg)
 

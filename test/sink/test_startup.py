@@ -127,3 +127,65 @@ def test_empty_manifest_is_fine(tmp_path: pathlib.Path) -> None:
     manifest_file = tmp_path / "startup.yaml"
     manifest_file.write_text("")
     assert startup.start(manifest_file) == []
+
+
+BAGEL_FLEET_WARNING = (
+    "BAGEL_FLEET is a build-time image argument and has no runtime effect; "
+    "to disable fleet streaming set FLEET_ENABLED=0"
+)
+
+
+class TestBagelFleetEnvWarning:
+    """Cross-repo contract (rider b): BAGEL_FLEET is build-time-only; a
+    runtime env var of that name is a no-op, and boot warns about it -- once
+    per boot attempt, and regardless of settings.FLEET_ENABLED."""
+
+    def test_set_warns_exactly_once(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("BAGEL_FLEET", "true")
+        manifest_file = tmp_path / "startup.yaml"
+        manifest_file.write_text("")
+
+        with caplog.at_level("WARNING"):
+            startup.start(manifest_file)
+
+        matches = [r for r in caplog.records if r.getMessage() == BAGEL_FLEET_WARNING]
+        assert len(matches) == 1
+
+    def test_unset_is_silent(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.delenv("BAGEL_FLEET", raising=False)
+        manifest_file = tmp_path / "startup.yaml"
+        manifest_file.write_text("")
+
+        with caplog.at_level("WARNING"):
+            startup.start(manifest_file)
+
+        assert not any("BAGEL_FLEET" in r.getMessage() for r in caplog.records)
+
+    def test_fires_even_when_fleet_enabled_is_false(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Both a disabled and an enabled boot pass through the warning site
+        exactly once -- this pins the disabled side."""
+        monkeypatch.setenv("BAGEL_FLEET", "1")
+        monkeypatch.setattr(settings, "FLEET_ENABLED", False)
+        manifest_file = tmp_path / "startup.yaml"
+        manifest_file.write_text("")
+
+        with caplog.at_level("WARNING"):
+            startup.start(manifest_file)
+
+        matches = [r for r in caplog.records if r.getMessage() == BAGEL_FLEET_WARNING]
+        assert len(matches) == 1

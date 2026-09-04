@@ -17,10 +17,10 @@ work even with `FLEET_ENABLED=0`. Every other operation here calls
 before the live-service holder (`src.sink.startup.fleet_service()`) is ever
 touched.
 
-`connect`, `config`, `spool`, and `mqtt` are all imported at module scope
-here (alongside `startup` and `identity`) -- none of them import
-paho/cryptography eagerly either (see each module's own docstring), so
-doing so does not trip the package's no-eager-import invariant; a lazy
+`connect`, `config`, `spool`, `mqtt`, and `events` are all imported at
+module scope here (alongside `startup` and `identity`) -- none of them
+import paho/cryptography eagerly either (see each module's own docstring),
+so doing so does not trip the package's no-eager-import invariant; a lazy
 regression test for THIS module lives in `test_control.py` alongside the
 existing gate/service ones.
 
@@ -50,6 +50,7 @@ from src.sink.publish import (
     FleetNotEnrolledError,
     StreamConfigError,
     config,
+    events,
     identity,
     require_fleet,
 )
@@ -64,24 +65,6 @@ from src.sink.publish.spool import Spool
 # intentionally left unlocked -- it is read-only and must never block on a
 # slow mutating call.
 _control_lock = threading.Lock()
-
-# Honest-reporting ruling (Codex round 3, P1a): event rules are accepted,
-# validated, merged, restarted against, and persisted to the manifest just
-# like channel rules -- but the on-robot runtime that would actually
-# evaluate an event predicate and fire an event ships in a later release
-# (step 8 lands before launch). Rejecting event rules now would break
-# manifest workflows that already declare them; instead `stream_topics`/
-# `stop_streams` report them honestly via `events_configured`/
-# `events_active` (see each function's Returns) and log this once whenever
-# a call leaves any event rule configured.
-EVENTS_NOT_ACTIVE_MSG = (
-    "event rules are stored and forwarded but not evaluated until the event runtime ships"
-)
-
-
-def _warn_if_events_configured(events: list) -> None:
-    if events:
-        logging.getLogger(__name__).warning(EVENTS_NOT_ACTIVE_MSG)
 
 
 def _fleet_installed() -> bool:
@@ -140,6 +123,7 @@ def fleet_status() -> dict:
                        "renew_url"} | None,  # never key material, never paths
           "service": "running" | "paused" | "stopped",
           "channels": list[dict],  # resolved channel descriptors, [] if no service
+          "events": list[str],     # configured event rule names, [] if no service
           "status": dict | None,   # FleetService.status()'s §4 counters block, verbatim,
                                     # {"error": "<class>: <msg>"} if status() itself raised
                                     # (e.g. a corrupt spool segment -- Codex round 3, P2),
@@ -183,6 +167,7 @@ def fleet_status() -> dict:
         "identity": identity_summary,
         "service": service_state,
         "channels": service.channels if service is not None else [],
+        "events": [rule.name for rule in service.streams.events] if service is not None else [],
         "status": _service_status(service),
     }
 
@@ -326,19 +311,17 @@ def stream_topics(channels: list[dict] | None, events: list[dict] | None) -> dic
     configured.
 
     Returns:
-        `{"service": "running" | "paused", "channels": list[dict],
-        "events_configured": list[str], "events_active": False, "persisted":
-        bool}`, plus `"persist_error": str` ONLY when persisting after an
-        otherwise-successful restart failed (see below). `"paused"` when the
-        service this replaced was paused: `_restart_service` preserves
-        paused-ness across the rule-change restart (I1 ruling) -- a brief
-        reconnect blip to republish the schema, then straight back to
-        paused. `events_configured` lists every event rule name now stored
-        and forwarded; `events_active` is always `False` -- event rules are
-        accepted, merged, and persisted, but nothing on-robot evaluates them
-        yet (honest-reporting ruling, Codex round 3: the event runtime ships
-        in a later release). A WARNING is logged once whenever
-        `events_configured` is non-empty.
+        `{"service": "running" | "paused", "channels": list[dict], "events":
+        list[str], "persisted": bool}`, plus `"persist_error": str` ONLY when
+        persisting after an otherwise-successful restart failed (see below).
+        `"paused"` when the service this replaced was paused:
+        `_restart_service` preserves paused-ness across the rule-change
+        restart (I1 ruling) -- a brief reconnect blip to republish the
+        schema, then straight back to paused. `events` lists every event
+        rule name now stored, forwarded, AND evaluated on-robot: since
+        `FleetService.start()` probes every event predicate
+        (`events.validate_predicates`) before it comes up, a rule reaching
+        this return value is live, not merely configured.
 
         Live-vs-persisted atomicity (Codex round 3, P2; widened P2 follow-up
         on PR #214 to also cover `OSError`): the restart above has ALREADY
@@ -352,9 +335,10 @@ def stream_topics(channels: list[dict] | None, events: list[dict] | None) -> dic
 
     Raises:
         FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
-        StreamConfigError: an invalid rule dict, or `_restart_service`'s own
-            failure modes (no covering sink for the merged topics, no
-            viable broker, etc).
+        StreamConfigError: an invalid rule dict, no covering sink for the
+            merged topics, no viable broker, or -- new as of `_restart_service`'s
+            predicate pre-check -- a bad event predicate (bad SQL syntax, an
+            unknown column, or a topic not covered by the resolved sink).
         FleetNotEnrolledError: `_restart_service`'s `resolve_publisher_kwargs`
             call -- no broker configured and this robot isn't enrolled.
 
@@ -389,13 +373,10 @@ def stream_topics(channels: list[dict] | None, events: list[dict] | None) -> dic
         _restart_service(merged)
         persisted, persist_error = _persist_or_report(merged.to_manifest())
         service = startup.fleet_service()
-        event_names = [rule.name for rule in merged.events]
-        _warn_if_events_configured(event_names)
         result = {
             "service": "paused" if service.paused else "running",
             "channels": service.channels,
-            "events_configured": event_names,
-            "events_active": False,
+            "events": [rule.name for rule in merged.events],
             "persisted": persisted,
         }
         if persist_error is not None:
@@ -427,18 +408,17 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
 
     Returns:
         `{"service": "running" | "paused" | "stopped", "channels":
-        list[dict], "events_configured": list[str], "events_active": False,
-        "changed": bool, "persisted": bool}`, plus `"persist_error": str`
-        ONLY when persisting after an actual, RESTARTED (`changed` AND a
-        live service) change failed (see below). `"paused"` when a restart
-        happened and the service it replaced was paused: `_restart_service`
-        preserves paused-ness across the restart (I1 ruling) -- a brief
-        reconnect blip to republish the schema, then straight back to
-        paused. `events_configured` lists the event rule names still stored
-        and forwarded after this call; `events_active` is always `False` --
-        nothing on-robot evaluates them yet (honest-reporting ruling, Codex
-        round 3: the event runtime ships in a later release). A WARNING is
-        logged once whenever `events_configured` is non-empty.
+        list[dict], "events": list[str], "changed": bool, "persisted": bool}`,
+        plus `"persist_error": str` ONLY when persisting after an actual,
+        RESTARTED (`changed` AND a live service) change failed (see below;
+        a persist failure on the persist-only path raises instead).
+        `"paused"` when a restart happened and the service it replaced was
+        paused: `_restart_service` preserves paused-ness across the restart
+        (I1 ruling) -- a brief reconnect blip to republish the schema, then
+        straight back to paused. `events` lists the event rule names still
+        stored, forwarded, AND evaluated on-robot after this call (a rule
+        surviving the removal was already predicate-validated when the
+        service it's running on last (re)started).
 
         Live-vs-persisted atomicity (Codex round 3, P2; widened P2 follow-up
         on PR #214 to also cover `OSError`) -- ONLY for the restarted case:
@@ -464,10 +444,16 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
     Raises:
         FleetDisabledError | FleetNotInstalledError: via `require_fleet()`.
         FleetNotEnrolledError | StreamConfigError: via `_restart_service`
-            (no covering sink, no viable broker, etc) -- only reachable when
-            something changed and a service is running; per its failure-
-            outcome contract, such a failure leaves the OLD service running
-            untouched (see `_restart_service`'s docstring).
+            (no covering sink, no viable broker, a bad event predicate, etc)
+            -- only reachable when something changed and a service is
+            running; per its failure-outcome contract, such a failure leaves
+            the OLD service running untouched (see `_restart_service`'s
+            docstring). ACCEPTED GAP: the persist-only path (no running
+            service) cannot predicate-validate what it re-persists -- there
+            is no covering sink to build structs from -- so a stale invalid
+            event rule in the manifest rides along unvalidated and surfaces
+            at the next service start, where `startup._start_fleet` degrades
+            it to a `{"fleet": "failed"}` report entry rather than a crash.
         StreamConfigError | OSError: from `_persist_streams` itself, ONLY
             when `changed` is True and NO live service was running (the
             persist-only path above) -- an unparsable manifest, or a
@@ -526,13 +512,10 @@ def stop_streams(channels: list[str] | None, events: list[str] | None) -> dict:
             service_state = "paused"
         else:
             service_state = "running"
-        remaining_event_names = [rule.name for rule in remaining.events]
-        _warn_if_events_configured(remaining_event_names)
         result = {
             "service": service_state,
             "channels": service.channels if service is not None else [],
-            "events_configured": remaining_event_names,
-            "events_active": False,
+            "events": [rule.name for rule in remaining.events],
             "changed": changed,
             "persisted": persisted,
         }
@@ -655,18 +638,31 @@ def _restart_service(streams: config.StreamsConfig) -> None:
     """Rebuild path for `stream_topics`/`stop_streams` (mirrors `startup._start_fleet`).
 
     Failure-outcome contract: every check that can be done WITHOUT touching
-    the old service -- sink coverage (`_resolve_sink`), identity resolution
+    the old service -- sink coverage (`_resolve_sink`), event-predicate
+    validation (`events.validate_predicates`), identity resolution
     (`_load_identity_or_none`), broker/auth resolution
     (`resolve_publisher_kwargs`), and constructing the new publisher/spool/
     `FleetService` -- runs first, while the old service (if any) is still
     fully intact and untouched. Only once ALL of that has succeeded is the
     old service stopped and the holder cleared. So: a validation failure
-    (bad topic, no viable broker, etc) always leaves the OLD service running
-    exactly as it was; the only way this call can leave the holder `None` is
-    a failure INSIDE the new `FleetService.start()` itself, which runs after
-    the old service has already been torn down (there is no way to
-    interleave "start the new one" before "stop the old one" -- they would
-    otherwise both be tapping the same sink's buffers at once).
+    (bad topic, a bad event predicate, no viable broker, etc) always leaves
+    the OLD service running exactly as it was; the only way this call can
+    leave the holder `None` is a failure INSIDE the new `FleetService.start()`
+    itself, which runs after the old service has already been torn down
+    (there is no way to interleave "start the new one" before "stop the old
+    one" -- they would otherwise both be tapping the same sink's buffers at
+    once).
+
+    The predicate pre-check runs `events.validate_predicates(streams.events,
+    structs)` with `structs` built from THIS resolved sink's
+    `buffer_writer(topic).struct` for every `streams.events` topic --
+    exactly the probe `FleetService.start()` itself runs internally, just
+    early enough here to reject before `old` is touched. `_resolve_sink`'s
+    own coverage check already guarantees every event topic is among the
+    sink's `subscribed_topics` by the time this runs, so `buffer_writer`
+    below never misses; a rule surviving a merge/persist round trip with a
+    now-invalid predicate (a stale manifest entry, say) is caught here just
+    the same as a freshly-submitted bad one.
 
     Any failure here propagates typed -- unlike `startup._start_fleet`
     (a boot-time path that swallows everything into a report), these are
@@ -682,6 +678,9 @@ def _restart_service(streams: config.StreamsConfig) -> None:
     old = startup.fleet_service()
     was_paused = old.paused if old is not None else False
     sink = _resolve_sink(streams, old)
+
+    event_structs = {rule.topic: sink.buffer_writer(rule.topic).struct for rule in streams.events}
+    events.validate_predicates(streams.events, event_structs)
 
     identity_obj = _load_identity_or_none()
     publisher_kwargs = resolve_publisher_kwargs(streams, identity_obj)

@@ -1225,17 +1225,30 @@ def stream_live_topics(
         events (list[dict[str, Any]] | None, optional): Event rules, in the
             manifest `streams: events:` shape: `name`, `topic`, `predicate`,
             and optional `pre_seconds`/`post_seconds`/`debounce_seconds`/
-            `artifact`. Defaults to None (no event changes).
+            `artifact`. `predicate` is SQL evaluated over the topic's own
+            fields, referenced as `topic['field']` (nest more `['field']`
+            steps for a nested field), e.g. `"/imu"['linear_acceleration']
+            ['x'] < -10`. A rule with `artifact: "mcap"` additionally
+            captures the firing's pre/post window into a robot-local
+            windowed MCAP file, referenced by the event's `artifact.uri`,
+            instead of just reporting the firing itself. Predicates are
+            evaluated live, on-robot: a bad one (unknown column, bad SQL) is
+            rejected up front, not silently never fired (see Raises).
+            Defaults to None (no event changes).
 
     Returns:
         dict[str, Any]: ``service`` ("running" or "paused" -- "paused" when
             the service this replaced was paused), the resolved
-            ``channels``, the ``events_configured`` names, whether the
-            change was ``persisted`` to the manifest, and ``events_active``
-            (always ``False``: event rules are stored and forwarded but not
-            evaluated until the event runtime ships -- configuring one now
-            is forward-compatible, not a no-op). If the streaming change
-            itself succeeded but writing it back to the manifest failed (an
+            ``channels``, ``events`` (the event rule names now stored,
+            forwarded, AND evaluated on-robot -- reaching this list means
+            live, not merely configured), and whether the change was
+            ``persisted`` to the manifest. Firings themselves (and the
+            periodic `health_report`, which rides the same `events` stream
+            on its own interval schedule rather than on demand) surface as
+            records on the robot's `events` publish lane, not in this tool's
+            return value -- use `describe_stream_status` to check the
+            streaming service is up. If the streaming change itself
+            succeeded but writing it back to the manifest failed (an
             unparsable manifest file, a read-only manifest directory, a full
             disk, etc), this does not raise: ``persisted`` is ``False`` and a
             ``persist_error`` message is included, so the truthful state is
@@ -1243,8 +1256,9 @@ def stream_live_topics(
             manifest didn't get them.
 
     Raises:
-        StreamConfigError: An invalid rule, or no viable broker/covering
-            sink for the merged topics.
+        StreamConfigError: An invalid rule, an event predicate that fails
+            its schema probe (bad SQL, an unknown column, an uncovered
+            topic), or no viable broker/covering sink for the merged topics.
         FleetNotEnrolledError: No broker configured and this robot isn't
             enrolled.
         FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
@@ -1294,18 +1308,19 @@ def stop_live_streams(
     Returns:
         dict[str, Any]: ``service`` ("running", "paused", or "stopped" --
             "paused" when a restart happened and the service it replaced was
-            paused), the remaining ``channels``, the remaining
-            ``events_configured`` names, whether anything ``changed``,
-            whether that change was ``persisted``, and ``events_active``
-            (always ``False``: event rules are stored and forwarded but not
-            evaluated until the event runtime ships). If something changed
-            and the restart succeeded but writing it back to the manifest
-            failed, this does not raise: ``persisted`` is ``False`` and a
-            ``persist_error`` message is included.
+            paused), the remaining ``channels``, ``events`` (the event rule
+            names still stored, forwarded, and evaluated on-robot after this
+            call), whether anything ``changed``, and whether that change was
+            ``persisted``. If something changed and the restart succeeded
+            but writing it back to the manifest failed, this does not raise:
+            ``persisted`` is ``False`` and a ``persist_error`` message is
+            included.
 
     Raises:
         FleetNotEnrolledError | StreamConfigError: Only reachable when
-            something changed and a service is running -- and, per the
+            something changed and a service is running -- e.g. a remaining
+            event rule's predicate is re-probed on the restart and can now
+            fail (a topic dropped out of coverage, say) -- and, per the
             failure-outcome contract, such a failure leaves the previously
             running service running, untouched.
         FleetDisabledError: Fleet streaming is disabled (`FLEET_ENABLED=0`).
@@ -1428,8 +1443,12 @@ def describe_stream_status() -> dict[str, Any]:
             ``identity`` (tenant/robot_id/broker_url/cert_expires_at/
             renew_url, or None -- never key material or paths); ``service``
             ("running"/"paused"/"stopped"); ``channels`` (resolved channel
-            descriptors, `[]` if no service); ``status`` (the running
-            service's counters block, or None).
+            descriptors, `[]` if no service); ``events`` (the live event rule
+            names -- `[]` if no service); ``status`` (the running service's
+            counters block, or None). Individual firings (and the periodic
+            `health_report`) are not returned here -- they arrive on the
+            robot's `events` publish lane as they happen/on schedule; this
+            tool reports the service's overall state, not its event history.
 
     Examples:
         As an LLM prompt:

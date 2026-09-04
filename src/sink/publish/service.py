@@ -24,15 +24,35 @@ existing, which step 6 delivers. `startup.py` is not touched by this module.
 
 import dataclasses
 import time
+from collections.abc import Callable
 
 from settings import settings
 from src.sink.publish import require_fleet
+from src.sink.publish.artifacts import ArtifactStore
 from src.sink.publish.config import StreamsConfig
+from src.sink.publish.events import EventEmitter, EventEngine, validate_predicates
+from src.sink.publish.health import HealthInputs
 from src.sink.publish.heartbeat import HeartbeatThread, build_heartbeat, disk_free
 from src.sink.publish.identity import Identity, renew, should_attempt_renewal
 from src.sink.publish.publisher import Publisher
 from src.sink.publish.router import RouterCore, SampleQueue, StreamRouter
 from src.sink.publish.spool import Spool
+
+
+def _fanout_tap(queues: list[SampleQueue]) -> Callable[[str, float, dict], None]:
+    """Return one tap callback that puts each sample into every queue in `queues`.
+
+    Replaces the single shared `SampleQueue.as_tap()`: a topic can source
+    channels (router queue), event rules (emitter queue), or both. Every
+    `put` stays non-blocking drop-oldest -- this runs on source callback
+    threads and must never block or raise.
+    """
+
+    def tap(topic: str, t: float, msg: dict) -> None:
+        for queue in queues:
+            queue.put((topic, t, msg))
+
+    return tap
 
 
 class FleetService:
@@ -79,11 +99,17 @@ class FleetService:
         self._resolved: list = []
         self._schema_payload: dict = {"v": 1, "channels": []}
         self._writers: dict[str, object] = {}  # topic -> writer, for taps
+        self._event_structs: dict = {}  # event topic -> pa.StructType, for the engine
+        self._tap_targets: dict[str, list[SampleQueue]] = {}  # topic -> fan-out queues
 
         self._queue: SampleQueue | None = None
         self._core: RouterCore | None = None
         self._router: StreamRouter | None = None
         self._heartbeat: HeartbeatThread | None = None
+        self._event_queue: SampleQueue | None = None
+        self._engine: EventEngine | None = None
+        self._emitter: EventEmitter | None = None
+        self._artifact_store: ArtifactStore | None = None
         self._started_at: float | None = None
 
         self._started = False
@@ -142,7 +168,10 @@ class FleetService:
                 currently subscribed on the sink (reused from
                 `StreamsConfig.resolve`, which raises exactly this when a
                 topic is missing from the `structs` mapping -- a topic not
-                subscribed on the sink is simply absent from it here).
+                subscribed on the sink is simply absent from it here); or an
+                `events[].topic` is unsubscribed / an `events[].predicate`
+                fails its probe (via `events.validate_predicates`, called
+                here with structs built from `buffer_writer(topic).struct`).
 
         """
         if self._started:
@@ -156,7 +185,16 @@ class FleetService:
         }
         resolved = self._streams.resolve(structs)
 
+        event_topics = {rule.topic for rule in self._streams.events}
+        event_structs = {
+            topic: self._sink.buffer_writer(topic).struct
+            for topic in event_topics
+            if topic in self._sink.subscribed_topics
+        }
+        validate_predicates(self._streams.events, event_structs)
+
         self._resolved = resolved
+        self._event_structs = event_structs
         self._schema_payload = {
             "v": 1,
             "channels": [
@@ -172,7 +210,7 @@ class FleetService:
         }
         self._writers = {
             topic: self._sink.buffer_writer(topic)
-            for topic in sorted({channel.source_topic for channel in resolved})
+            for topic in sorted({channel.source_topic for channel in resolved} | event_topics)
         }
 
         self._launch_runtime()
@@ -194,6 +232,8 @@ class FleetService:
             self._clear_taps()
             if self._heartbeat is not None:
                 self._heartbeat.stop()
+            if self._emitter is not None:
+                self._emitter.stop()
             if self._router is not None:
                 self._router.stop()
         finally:
@@ -218,6 +258,15 @@ class FleetService:
         (spec §3) on the transition itself, so the retained clean-stop
         heartbeat a broker-side subscriber sees reads distinctly from a
         genuine `stop()`.
+
+        Teardown runs in a `try`/`finally` (Codex review, rider c), mirroring
+        `stop()`'s own shape: a failure partway through (an emitter/router/
+        heartbeat thread's `stop()` raising) must not skip releasing the
+        publisher session or leave `_paused` unset -- `publisher.close(reason
+        ="paused")` and the paused-flag transition always run, so the
+        service lands in a consistent, re-enterable state even when a
+        teardown step itself raises (the exception still propagates, same as
+        `stop()`'s contract).
         """
         if not self._started:
             return
@@ -225,15 +274,19 @@ class FleetService:
             if discard:
                 self._discard_channels_backlog()
             return
-        self._clear_taps()
-        if self._heartbeat is not None:
-            self._heartbeat.stop()
-        if self._router is not None:
-            self._router.stop()
-        self._publisher.close(reason="paused")
-        if discard:
-            self._discard_channels_backlog()
-        self._paused = True
+        try:
+            self._clear_taps()
+            if self._heartbeat is not None:
+                self._heartbeat.stop()
+            if self._emitter is not None:
+                self._emitter.stop()
+            if self._router is not None:
+                self._router.stop()
+        finally:
+            self._publisher.close(reason="paused")
+            if discard:
+                self._discard_channels_backlog()
+            self._paused = True
 
     def _discard_channels_backlog(self) -> None:
         """Ack the channels lane up to its last written seq, dropping any unacked backlog."""
@@ -243,11 +296,13 @@ class FleetService:
     def resume(self) -> None:
         """Restart threads (fresh queue/core/router/heartbeat) and reconnect.
 
-        Idempotent: a no-op if not started or not paused. Router/heartbeat
-        threads cannot be restarted once stopped (`threading.Thread` runs
-        once), so this builds fresh instances rather than reusing the paused
-        ones; the resolved config and writer set from `start()` carry over
-        unchanged.
+        Idempotent: a no-op if not started or not paused. Router/heartbeat/
+        emitter threads cannot be restarted once stopped (`threading.Thread`
+        runs once), so this builds fresh instances rather than reusing the
+        paused ones; the resolved config and writer set from `start()` carry
+        over unchanged. The fresh emitter means the event rings/triggers
+        reset and a fresh settle-delayed health report follows -- deliberate:
+        a resume is a new session.
         """
         if not self._started or not self._paused:
             return
@@ -277,20 +332,65 @@ class FleetService:
             "heartbeat_alive": self._heartbeat.alive if self._heartbeat is not None else False,
             "heartbeat_error": self._heartbeat.last_error if self._heartbeat is not None else None,
             "cert_expires_at": self._identity.expires_at if self._identity is not None else None,
+            "events": self._events_status(),
         }
 
     # -- internals ---------------------------------------------------------------
 
     def _launch_runtime(self) -> None:
-        """Build fresh queue/core/router/heartbeat, wire taps, and start both threads."""
+        """Build fresh queue/core/router/heartbeat/emitter, wire taps, start the threads.
+
+        The `EventEmitter` is ALWAYS built and started, even with zero event
+        rules: it owns the `health_report` schedule (see its class
+        docstring). The artifact store is built only when some rule actually
+        requests an `mcap` artifact -- robot id from `self._identity.robot`,
+        else `"dev/robot"` (the same fallback the spool wiring uses).
+
+        Tap fan-out: each tapped topic gets one `_fanout_tap` closure putting
+        into the router queue (topic sourced by a channel), the emitter queue
+        (topic named by an event rule), or both -- replacing the old single
+        shared `queue.as_tap()`.
+        """
         self._queue = SampleQueue(settings.FLEET_QUEUE_MAX_SAMPLES)
         self._core = RouterCore(self._resolved, self._streams.flush_interval_s)
         self._router = StreamRouter(
             self._core, self._queue, self._spool, self._publisher, self._schema_payload
         )
-        tap = self._queue.as_tap()
-        for writer in self._writers.values():
-            writer.set_tap(tap)
+        self._event_queue = SampleQueue(settings.FLEET_QUEUE_MAX_SAMPLES)
+        self._engine = EventEngine(
+            self._streams.events,
+            self._event_structs,
+            max_per_minute=settings.FLEET_EVENTS_MAX_PER_MINUTE,
+            ring_max_samples=settings.FLEET_EVENT_RING_MAX_SAMPLES,
+            ring_max_bytes=settings.FLEET_EVENT_RING_MAX_BYTES,
+        )
+        self._artifact_store = None
+        if any(rule.artifact == "mcap" for rule in self._streams.events):
+            robot = self._identity.robot if self._identity is not None else "dev/robot"
+            self._artifact_store = ArtifactStore.for_robot(robot)
+        self._emitter = EventEmitter(
+            self._engine,
+            self._event_queue,
+            self._spool,
+            artifact_store=self._artifact_store,
+            health_inputs=self._health_inputs,
+            structs=self._event_structs,
+            health_interval_s=settings.FLEET_HEALTH_INTERVAL_S,
+            health_settle_s=settings.FLEET_HEALTH_SETTLE_S,
+        )
+
+        channel_topics = {channel.source_topic for channel in self._resolved}
+        event_topics = {rule.topic for rule in self._streams.events}
+        self._tap_targets = {}
+        for topic, writer in self._writers.items():
+            targets: list[SampleQueue] = []
+            if topic in channel_topics:
+                targets.append(self._queue)
+            if topic in event_topics:
+                targets.append(self._event_queue)
+            self._tap_targets[topic] = targets
+            writer.set_tap(_fanout_tap(targets))
+
         self._started_at = time.time()
         self._heartbeat = HeartbeatThread(
             self._publisher,
@@ -300,10 +400,67 @@ class FleetService:
         )
         self._router.start()
         self._heartbeat.start()
+        self._emitter.start()
 
     def _clear_taps(self) -> None:
         for writer in self._writers.values():
             writer.set_tap(None)
+
+    def _events_status(self) -> dict:
+        """Build the `status()["events"]` block: emitter counters + rule/artifact totals."""
+        return {
+            **(self._emitter.status_counters() if self._emitter is not None else {}),
+            "rules": len(self._streams.events),
+            "artifacts": (
+                self._artifact_store.stats()
+                if self._artifact_store is not None
+                else {"bytes": 0, "files": 0}
+            ),
+        }
+
+    def _events_counters_flat(self) -> dict:
+        """`HealthInputs.events_counters`'s FLATTENED merge (see that field's comment).
+
+        `EventEngine.counters()` reports `predicate_errors` as a per-rule
+        dict; the health check needs a SINGLE INT, so it is summed across
+        rules here. The queue stats come from the emitter's own queue.
+        """
+        engine_counters = (
+            self._engine.counters()
+            if self._engine is not None
+            else {"fired": 0, "suppressed": 0, "predicate_errors": {}}
+        )
+        return {
+            "queue_depth": self._event_queue.depth if self._event_queue is not None else 0,
+            "dropped": self._event_queue.dropped if self._event_queue is not None else 0,
+            "predicate_errors": sum(engine_counters["predicate_errors"].values()),
+            "fired": engine_counters["fired"],
+            "suppressed": engine_counters["suppressed"],
+        }
+
+    def _health_inputs(self) -> HealthInputs:
+        """Gather one health report's inputs (the emitter's `health_inputs` closure).
+
+        The pure sibling of `_heartbeat_payload`: everything
+        `build_health_report` reads, reduced to plain numbers/dicts here so
+        `health.py` stays I/O-free. `artifacts` is `{}` when no store is
+        wired -- the artifacts check reads that as "skip, not zero usage".
+        """
+        status = self.status()
+        return HealthInputs(
+            status=status,
+            topic_last_seen={
+                topic: writer.last_timestamp_seconds for topic, writer in self._writers.items()
+            },
+            cert_expires_at=self._identity.expires_at if self._identity is not None else None,
+            enrolled=self._identity is not None,
+            disk_free_bytes=disk_free(settings.CACHE_DIRECTORY),
+            spool_cap_bytes=settings.FLEET_SPOOL_MAX_BYTES,
+            artifacts=self._artifact_store.stats() if self._artifact_store is not None else {},
+            artifacts_cap_bytes=settings.FLEET_ARTIFACTS_MAX_BYTES,
+            events_counters=self._events_counters_flat(),
+            uptime_s=(time.time() - self._started_at) if self._started_at is not None else 0.0,
+        )
 
     def _subscriptions(self) -> list[str]:
         return sorted(self._writers)

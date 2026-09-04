@@ -65,6 +65,7 @@ when the manifest has no ``streams:`` section.
 """
 
 import logging
+import os
 import pathlib
 from typing import Any
 
@@ -183,6 +184,27 @@ def subscribe_with_pipeline(
     return list(topics)
 
 
+def _warn_if_bagel_fleet_env_set() -> None:
+    """Warn once per boot attempt when `BAGEL_FLEET` is set in the process environment.
+
+    Cross-repo contract (binding): `BAGEL_FLEET` is a build-time Docker ARG
+    (see `docker/Dockerfile.iot`/`docker/Dockerfile.ros2` -- it toggles
+    whether the `fleet` dependency group is even installed into the image)
+    and has NO runtime meaning whatsoever; `settings.FLEET_ENABLED` is the
+    actual runtime kill switch. An operator who sets `BAGEL_FLEET` as a
+    runtime env var (e.g. in a `docker run -e`/compose `environment:` block,
+    mistaking it for the runtime knob) needs to see that mistake, so this
+    fires unconditionally at the top of `start()` -- BEFORE the manifest is
+    even read, and regardless of `settings.FLEET_ENABLED` -- so both a
+    disabled and an enabled boot pass through here exactly once.
+    """
+    if os.environ.get("BAGEL_FLEET") is not None:
+        logging.warning(
+            "BAGEL_FLEET is a build-time image argument and has no runtime effect; "
+            "to disable fleet streaming set FLEET_ENABLED=0"
+        )
+
+
 def start(manifest_file: str | pathlib.Path) -> list[dict[str, Any]]:
     """Apply a startup manifest: connect sinks, subscribe topics, attach pipelines.
 
@@ -199,6 +221,7 @@ def start(manifest_file: str | pathlib.Path) -> list[dict[str, Any]]:
         see the module docstring.
 
     """
+    _warn_if_bagel_fleet_env_set()
     try:
         manifest = yaml.safe_load(pathlib.Path(manifest_file).read_text()) or {}
     except (OSError, yaml.YAMLError) as error:

@@ -40,7 +40,10 @@ from collections.abc import Callable, Iterator
 import filelock
 
 SEGMENT_MAX_BYTES = 4 * 1024 * 1024
-NEVER_CAPPED_LANES = ("heartbeat",)
+# Per spec §4: events and heartbeat must never be dropped (never-drop lanes).
+# The constructor guard and append()'s oversized-drop exemption key off this
+# constant, so both protections extend to all never-drop lanes with no new branches.
+NEVER_CAPPED_LANES = ("heartbeat", "events")
 
 
 class SpoolError(Exception):

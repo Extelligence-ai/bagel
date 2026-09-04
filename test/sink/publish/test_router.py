@@ -215,7 +215,10 @@ class FakePublisher(Publisher):
         self.connect_calls = 0
         self.schema_calls: list[dict] = []
         self.channel_calls: list[dict] = []
+        self.event_calls: list[dict] = []
+        self.calls: list[str] = []  # kinds, in call order -- lets tests assert interleaving
         self._fail_channel_publishes = 0
+        self._fail_event_publishes = 0
         self._channel_publish_delay_s = channel_publish_delay_s
         self._connected = False
 
@@ -228,6 +231,7 @@ class FakePublisher(Publisher):
     def publish(
         self, kind: str, payload: dict, *, retain: bool = False, timeout_s: float = 10.0
     ) -> None:
+        self.calls.append(kind)
         if kind == "schema":
             self.schema_calls.append(payload)
         elif kind == "channels":
@@ -237,6 +241,11 @@ class FakePublisher(Publisher):
                 self._fail_channel_publishes -= 1
                 raise PublishError("channels publish failed")
             self.channel_calls.append(payload)
+        elif kind == "events":
+            if self._fail_event_publishes > 0:
+                self._fail_event_publishes -= 1
+                raise PublishError("events publish failed")
+            self.event_calls.append(payload)
         else:
             raise AssertionError(f"FakePublisher: unexpected kind {kind!r}")
 
@@ -249,6 +258,9 @@ class FakePublisher(Publisher):
 
     def fail_next_channel_publishes(self, n: int) -> None:
         self._fail_channel_publishes = n
+
+    def fail_next_event_publishes(self, n: int) -> None:
+        self._fail_event_publishes = n
 
 
 def _router(
@@ -413,6 +425,121 @@ class TestStreamRouterTick:
         assert pub.channel_calls == []
         assert not router.online
         assert [seq for seq, _ in spool.pending("channels")] == [1]
+
+
+class TestStreamRouterEventsLane:
+    def test_pump_publishes_events_before_channels_and_acks_both(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        router, _q, spool, pub = _router(tmp_path)
+        spool.append("events", 1, {"n": 1})
+        spool.append("events", 2, {"n": 2})
+        spool.append("channels", 1, {"seq": 1, "v": 1, "samples": []})
+
+        router._tick(now=10.0)
+
+        assert router.online
+        assert [p["n"] for p in pub.event_calls] == [1, 2]
+        assert len(pub.channel_calls) == 1
+        kinds = [k for k in pub.calls if k in ("events", "channels")]
+        assert kinds == ["events", "events", "channels"]  # events pumped first, fixed order
+        assert list(spool.pending("events")) == []
+        assert list(spool.pending("channels")) == []
+
+    def test_events_replay_on_reconnect_precedes_channels(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(router_mod.random, "uniform", lambda _lo, hi: hi)
+        pub = FakePublisher(connect_should_fail=True)
+        router, _q, spool, _ = _router(tmp_path, publisher=pub)
+        spool.append("events", 1, {"n": 1})
+        spool.append("events", 2, {"n": 2})
+        spool.append("channels", 1, {"seq": 1, "v": 1, "samples": []})
+
+        router._tick(now=0.0)  # connect fails; nothing published, all still spooled
+        assert not router.online
+        assert pub.event_calls == [] and pub.channel_calls == []
+
+        pub.connect_should_fail = False
+        router._tick(now=2.0)  # backoff deadline reached: reconnects, replays
+
+        assert router.online
+        assert [p["n"] for p in pub.event_calls] == [1, 2]
+        assert len(pub.channel_calls) == 1
+        assert list(spool.pending("events")) == []
+        assert list(spool.pending("channels")) == []
+
+    def test_events_publish_error_skips_channels_pass_this_tick(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(router_mod.random, "uniform", lambda _lo, hi: hi)
+        pub = FakePublisher()
+        router, _q, spool, _ = _router(tmp_path, publisher=pub)
+        spool.append("events", 1, {"n": 1})
+        spool.append("channels", 1, {"seq": 1, "v": 1, "samples": []})
+        pub.fail_next_event_publishes(1)
+
+        router._tick(now=0.0)
+
+        assert not router.online
+        assert router.backoff == 2.0  # min(60, 1.0 * 2)
+        assert pub.channel_calls == []  # channels pass not attempted this tick
+        assert [seq for seq, _ in spool.pending("events")] == [1]  # not acked past the failure
+        assert [seq for seq, _ in spool.pending("channels")] == [1]  # untouched
+
+
+class TestStreamRouterHeartbeatPrune:
+    def test_reconnect_prunes_heartbeat_backlog_without_touching_other_lanes(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        router, _q, spool, _pub = _router(tmp_path)
+        spool.append("heartbeat", 1, {"beat": 1})
+        spool.append("heartbeat", 2, {"beat": 2})
+        spool.append("heartbeat", 3, {"beat": 3})
+        spool.append("events", 1, {"n": 1})
+        spool.append("channels", 1, {"seq": 1, "v": 1, "samples": []})
+
+        router._reconnect(now=0.0)
+
+        assert router.online
+        assert list(spool.pending("heartbeat")) == []
+        stats = spool.stats()
+        assert stats["heartbeat"].acked_seq == 3
+        assert [seq for seq, _ in spool.pending("events")] == [1]  # untouched
+        assert [seq for seq, _ in spool.pending("channels")] == [1]  # untouched
+
+    def test_reconnect_creates_no_heartbeat_lane_dir_when_virgin(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        router, _q, spool, _pub = _router(tmp_path)
+
+        router._reconnect(now=0.0)
+
+        assert router.online
+        assert not (tmp_path / "spool" / "heartbeat").exists()
+
+    def test_reconnect_tolerates_heartbeat_prune_failure(
+        self,
+        tmp_path: pathlib.Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        router, _q, spool, _pub = _router(tmp_path)
+        spool.append("heartbeat", 1, {"beat": 1})
+
+        def boom(lane: str, seq: int) -> None:
+            raise RuntimeError("ack exploded")
+
+        monkeypatch.setattr(spool, "ack", boom)
+
+        with caplog.at_level(logging.WARNING):
+            router._reconnect(now=0.0)
+
+        assert router.online  # a prune failure must not fail the reconnect
+        warnings_ = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("heartbeat" in r.getMessage().lower() for r in warnings_)
 
 
 class TestTickUsesAppendNext:
