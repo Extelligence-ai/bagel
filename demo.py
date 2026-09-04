@@ -119,6 +119,12 @@ PX4_WARN_LEVELS = {"WARNING", "NOTICE"}
 ROS_LOG_ERROR_LEVEL = 40
 ROS_LOG_WARN_LEVEL = 30
 
+# rosgraph_msgs/Log severity thresholds (ROS1 logging levels: DEBUG=1, INFO=2,
+# WARN=4, ERROR=8, FATAL=16 -- a disjoint scale from ROS2's, so a ROS1 bag
+# must not be classified with the ROS2 thresholds above).
+ROS1_LOG_ERROR_LEVEL = 8
+ROS1_LOG_WARN_LEVEL = 4
+
 WARN_NUMEROUS_THRESHOLD = 3
 POWER_MIN_SAMPLES = 2
 GAP_MIN_TIMESTAMPS = 3  # need >= 2 gaps to have a median
@@ -267,10 +273,20 @@ def _locate(
     return None, None
 
 
+def _quote_ident(name: str) -> str:
+    """Return ``name`` as a double-quoted DuckDB identifier, escaped for embedded quotes.
+
+    Topic names come from the log's own topic registry, not a fixed schema, so
+    an unusual (or crafted) topic name could otherwise break out of a naive
+    ``f'"{name}"'`` interpolation and alter the statement.
+    """
+    return '"' + name.replace('"', '""') + '"'
+
+
 def _field_expr(topic: str, field_path: list[str]) -> str:
     """Return a quoted DuckDB dotted-path expression into a topic's struct column."""
-    quoted = ".".join(f'"{part}"' for part in field_path)
-    return f'"{topic}".{quoted}'
+    quoted = ".".join(_quote_ident(part) for part in field_path)
+    return f"{_quote_ident(topic)}.{quoted}"
 
 
 def _query_field(ctx: Context, topic: str, field_path: list[str]) -> pd.DataFrame:
@@ -278,11 +294,11 @@ def _query_field(ctx: Context, topic: str, field_path: list[str]) -> pd.DataFram
     relation = ctx.dataset.to_duckdb(ctx.factory, ctx.registry, [topic])
     duckdb.register(topic, relation)
     expr = _field_expr(topic, field_path)
-    # expr/topic/TIMESTAMP_COL are quoted identifiers from the topic registry
-    # and settings, never raw user input.
+    # expr/topic are escaped identifiers (see _quote_ident); TIMESTAMP_COL is
+    # from settings, never raw user input.
     sql = (
         f"SELECT {TIMESTAMP_COL} AS ts, {expr} AS value "  # noqa: S608
-        f'FROM "{topic}" ORDER BY {TIMESTAMP_COL}'
+        f"FROM {_quote_ident(topic)} ORDER BY {TIMESTAMP_COL}"
     )
     df = duckdb.sql(sql).df()
     df["t"] = df["ts"] - ctx.start_seconds
@@ -319,6 +335,10 @@ def check_power(ctx: Context) -> CheckResult:
         return CheckResult(
             "Power", ICON_SKIP, f"skipped: found {topic} but couldn't read a voltage field"
         )
+    # Unknown-voltage samples (e.g. a ROS BatteryState reporting NaN) don't
+    # count as data: an all-NaN series would otherwise reach idxmax() below
+    # and crash, and partial NaNs would silently print "nanV".
+    df = df.dropna(subset=["value"])
     if len(df) < POWER_MIN_SAMPLES:
         return CheckResult("Power", ICON_SKIP, f"skipped: {topic} has too few samples")
 
@@ -357,6 +377,8 @@ def check_imu(ctx: Context) -> CheckResult:
         return CheckResult(
             "IMU", ICON_SKIP, f"skipped: found {topic} but couldn't read an accel/gyro field"
         )
+    # Same NaN-drop rationale as check_power: unknown readings aren't samples.
+    df = df.dropna(subset=["value"])
     if len(df) < IMU_MIN_SAMPLES:
         return CheckResult("IMU", ICON_SKIP, f"skipped: {topic} has too few samples to window")
 
@@ -368,6 +390,12 @@ def check_imu(ctx: Context) -> CheckResult:
 
     median_dt = df["t"].diff().median()
     window = max(IMU_MIN_SAMPLES, round(1.0 / median_dt)) if median_dt > 0 else IMU_MIN_SAMPLES
+    # A high-rate IMU with < ~1s of total data can push the ~1s window past
+    # the sample count entirely; cap it so rolling() always has a real
+    # min_periods worth of data to produce a non-NaN result. len(values) is
+    # always >= IMU_MIN_SAMPLES here (checked above), so the cap never drops
+    # below IMU_MIN_SAMPLES.
+    window = min(window, len(values))
     rolling = values.rolling(window).std()
     peak_idx = rolling.idxmax()
     ratio = rolling.max() / baseline_std
@@ -396,8 +424,12 @@ def check_gps(ctx: Context) -> CheckResult:
         return CheckResult(
             "GPS", ICON_SKIP, f"skipped: found {topic} but couldn't read a fix-quality field"
         )
+    # A missing/NaN fix-quality reading compares false against the threshold
+    # either way, which would silently count an unavailable measurement as a
+    # poor fix; drop it instead so only real readings feed the fraction.
+    df = df.dropna(subset=["value"])
     if df.empty:
-        return CheckResult("GPS", ICON_SKIP, f"skipped: {topic} has no samples")
+        return CheckResult("GPS", ICON_SKIP, f"skipped: {topic} has no valid fix-quality samples")
 
     ctx.queried_topics.append(topic)
     threshold = GPS_GOOD_FIX_THRESHOLD.get(ctx.ds_key, GPS_GOOD_FIX_THRESHOLD["ros"])
@@ -482,14 +514,23 @@ def _px4_log_entries(df: pd.DataFrame) -> list[tuple[float, str, str]]:
     return entries
 
 
-def _ros_log_entries(df: pd.DataFrame) -> list[tuple[float, str, str]]:
-    """Bucket rcl_interfaces/msg/Log's numeric ``level`` into ERROR/WARN/INFO."""
+def _ros_log_entries(ds_type: DataSource, df: pd.DataFrame) -> list[tuple[float, str, str]]:
+    """Bucket a ROS Log topic's numeric ``level`` into ERROR/WARN/INFO.
+
+    ROS1 (`rosgraph_msgs/Log`) and ROS2 (`rcl_interfaces/msg/Log`) use
+    disjoint numeric level scales, so the threshold is picked by ``ds_type``.
+    """
+    error_level, warn_level = (
+        (ROS1_LOG_ERROR_LEVEL, ROS1_LOG_WARN_LEVEL)
+        if ds_type is DataSource.ROS1_BAG
+        else (ROS_LOG_ERROR_LEVEL, ROS_LOG_WARN_LEVEL)
+    )
     entries = []
     for _, row in df.iterrows():
         level = row["message"].get("level", 0)
-        if level >= ROS_LOG_ERROR_LEVEL:
+        if level >= error_level:
             severity = "ERROR"
-        elif level >= ROS_LOG_WARN_LEVEL:
+        elif level >= warn_level:
             severity = "WARN"
         else:
             severity = "INFO"
@@ -502,7 +543,7 @@ def _log_entries(ds_type: DataSource, df: pd.DataFrame) -> list[tuple[float, str
     if ds_type is DataSource.PX4_ULOG:
         return _px4_log_entries(df)
     if ds_type in ROS_DS_TYPES:
-        return _ros_log_entries(df)
+        return _ros_log_entries(ds_type, df)
     return []
 
 
@@ -542,7 +583,12 @@ def check_errors(ctx: Context) -> CheckResult:
 
     df = relation.to_df()
     if df.empty:
-        return CheckResult("Errors", ICON_OK, "0 log messages")
+        # A logging topic exists but carries no messages: the card's contract
+        # is "no status evidence" is skipped, not an all-clear -- an empty
+        # relation must not read the same as a verified-clean log.
+        return CheckResult(
+            "Errors", ICON_SKIP, "skipped: log/status topic present but has no messages"
+        )
 
     entries = sorted(_log_entries(ctx.ds_type, df), key=lambda entry: entry[0])
     if not entries:

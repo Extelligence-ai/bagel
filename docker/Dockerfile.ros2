@@ -84,8 +84,7 @@ COPY --chown=${USERNAME}:${USERNAME} test/e2e ./test/e2e
 
 # Fail the build if the server cannot even import -- catches missing-module
 # regressions (issue #151) at build time instead of at the user's terminal.
-RUN uv run python -c "import server"
-RUN uv run python -c "import demo"
+RUN uv run python -c "import server" && uv run python -c "import demo"
 
 # Copy sample data
 COPY --chown=${USERNAME}:${USERNAME} data/sample/ ./data/sample/

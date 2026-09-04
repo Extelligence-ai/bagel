@@ -60,6 +60,30 @@ def test_default_invocation_runs_with_no_arguments(capsys: pytest.CaptureFixture
     assert "VERDICT:" in out
 
 
+def test_default_invocation_falls_back_to_mcap_sample_without_px4(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # GIVEN an environment without the px4 optional dependency group (the
+    # flagship ros2-kilted image doesn't install it) -- CI's host-tests job
+    # always has pyulog, so this is the only path that actually exercises the
+    # dependency-free MCAP fallback described in _default_sample()
+    monkeypatch.setattr(demo, "_ecosystem_importable", lambda ds_type: False)
+
+    # WHEN the demo runs with no path argument
+    exit_code = demo.main([])
+    out = capsys.readouterr().out
+
+    # THEN it explains the fallback and runs the bundled MCAP sample, not PX4
+    assert exit_code == 0
+    assert "px4 support isn't installed" in out
+    assert demo.MCAP_SAMPLE.name in out
+
+    # AND it still produces a full card
+    for name in CHECK_NAMES:
+        assert _lines_starting_with(out, name)
+    assert "VERDICT:" in out
+
+
 def test_nonexistent_path_is_a_clean_error(
     tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
