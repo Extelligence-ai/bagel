@@ -198,7 +198,15 @@ class EventEngine:
             state = self._states[rule.name]
             hit = self._safe_evaluate(rule, state, topic, msg)
             for t_event in state.trigger.feed(feed_t, hit):
-                firing = self._release(rule, state, t_event, feed_t)
+                # The sample that RELEASES a pending event -- the first one
+                # `feed()` sees at or after `t_event + post_seconds` -- can
+                # arrive well after that boundary on a sparse/irregular
+                # topic (Codex review, P1). `t_end` is the rule's configured
+                # boundary, not that sample's own (possibly much later)
+                # timestamp -- else the reported duration and captured
+                # window both silently balloon to whenever the confirming
+                # sample happened to arrive.
+                firing = self._release(rule, state, t_event, t_event + rule.post_seconds)
                 if firing is not None:
                     firings.append(firing)
         return firings

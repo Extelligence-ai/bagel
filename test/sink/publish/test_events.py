@@ -251,6 +251,38 @@ class TestEdgeAndWindows:
         assert firing.t_end == 7.0
         assert [t for t, _ in firing.window] == [3.0, 5.0, 6.0, 7.0]
 
+    def test_late_confirming_sample_does_not_extend_the_window_past_post_seconds(self) -> None:
+        """Codex review (P1, events.py:201): the sample that RELEASES a
+        pending event -- the first one `feed()` sees at or after
+        `t_event + post_seconds` -- can arrive well after that boundary on a
+        sparse/irregular topic. `t_end` must be the rule's configured
+        boundary (`t_event + rule.post_seconds`), not that sample's own
+        (possibly much later) timestamp -- otherwise the reported window
+        duration and the captured samples both silently balloon to include
+        everything up to whenever the confirming sample happened to arrive."""
+        rule = _rule(pre_seconds=2.0, post_seconds=2.0, debounce_seconds=0.0)
+        engine = events.EventEngine(
+            [rule],
+            {"imu": IMU_STRUCT},
+            max_per_minute=100,
+            ring_max_samples=1000,
+            ring_max_bytes=10_000_000,
+        )
+        stream = [
+            (3.0, -1.0),
+            (5.0, -12.0),  # rising edge; post window ends at 5 + 2 == 7
+            (8.0, -1.0),  # confirms/releases, but arrives a full second late
+        ]
+        all_firings: list[events.Firing] = []
+        for t, accel in stream:
+            all_firings.extend(engine.offer("imu", t, {"accel_x": accel}))
+
+        assert len(all_firings) == 1
+        firing = all_firings[0]
+        assert firing.t_event == 5.0
+        assert firing.t_end == 7.0  # the rule's boundary, not the late sample's t=8.0
+        assert [t for t, _ in firing.window] == [3.0, 5.0]
+
 
 class TestRegressingTimestamps:
     """Codex review (P1, events.py:173): a source clock is not guaranteed
