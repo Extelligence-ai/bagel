@@ -34,7 +34,12 @@
 # means nothing gets posted and the job fails visibly. The OIDC identity
 # file lives under runner.temp -- outside any path Claude can read -- as
 # further defense-in-depth, though the model can no longer publish anything
-# regardless of what it reads.
+# regardless of what it reads. Both checkouts also set
+# persist-credentials: false: actions/checkout defaults to writing the
+# job-scoped GitHub token into .git/config, and pr-head/.git/config sits
+# right inside the directory Claude's Read/Grep/Glob rules can reach --
+# --disallowedTools also carries a Read(**/.git/**) deny rule as a second
+# layer in case a scoping rule is ever bypassed.
 #
 # Identity: the posting step authenticates with the CODEX_TRIGGER_TOKEN
 # secret (the same maintainer-owned fine-grained PAT codex-rerequest.yaml
@@ -94,11 +99,24 @@ jobs:
         # security guidance: an untrusted PR head must never land at the
         # workspace root of a secret-bearing job. The PR head is checked out
         # into a subdirectory below and handed to Claude via --add-dir.
+        # persist-credentials: false for consistency with the pr-head
+        # checkout below -- this one isn't in Claude's read scope, but
+        # there's no reason to leave a credential on disk either.
+        with:
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.head_sha }}
           fetch-depth: 0
           path: pr-head
+          # actions/checkout defaults to persist-credentials: true, which
+          # writes the job-scoped GitHub token into pr-head/.git/config --
+          # squarely inside the directory Claude's Read/Grep/Glob rules are
+          # allowed to read. An injected prompt could read it and smuggle it
+          # out below a valid stamp line in claude-review-body.md, since the
+          # posting step only checks the first line before publishing the
+          # rest verbatim. false here means there's no token on disk to read.
+          persist-credentials: false
       - name: Keep a fresh OIDC token in the identity file
         run: |
           set -uo pipefail
@@ -156,7 +174,7 @@ jobs:
           claude_args: >-
             --add-dir pr-head
             --allowedTools Bash(gh pr diff:*),Bash(gh pr view:*),Read(./pr-head/**),Grep(./pr-head/**),Glob(./pr-head/**),Write(./claude-review-body.md)
-            --disallowedTools Read(//tmp/**),Read(/${{ runner.temp }}/**)
+            --disallowedTools Read(//tmp/**),Read(/${{ runner.temp }}/**),Read(**/.git/**)
             --max-turns 40
       - name: Post Claude's review (deterministic -- no model in this step)
         env:
