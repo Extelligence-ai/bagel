@@ -30,9 +30,16 @@ RUN GPG_KEY=F42ED6FBAB17C654; \
     fi
 
 # Install tools needed to add new ROS package repositories and GPG keys
+#
+# Retries are set explicitly (rather than relying on a bash-level retry loop)
+# because archive.ubuntu.com intermittently drops the connection mid-download
+# for this package set (ROS1 Noetic pulls in the full opencv stack via
+# cv-bridge, ~300 packages / 180+ MB) -- apt's own per-file retry handles a
+# dropped connection without re-fetching packages that already succeeded.
 # hadolint ignore=DL3008
-RUN apt-get update && \
+RUN apt-get -o Acquire::Retries=5 update && \
     apt-get install -y --no-install-recommends \
+    -o Acquire::Retries=5 \
     curl \
     git \
     gnupg \
@@ -65,8 +72,9 @@ ARG PYTHON_VERSION=3.10
 # intermittently ("Error: retrieving gpg key timed out."), which repeatedly
 # broke CI builds (7 failures across 2026-08-11/12 alone).
 # hadolint ignore=DL3008
-RUN apt-get update && \
+RUN apt-get -o Acquire::Retries=5 update && \
     apt-get install -y --no-install-recommends \
+    -o Acquire::Retries=5 \
     software-properties-common && \
     ok=0 && \
     for attempt in 1 2 3; do \
@@ -75,8 +83,9 @@ RUN apt-get update && \
       sleep 20; \
     done && \
     [ "${ok}" = "1" ] && \
-    apt-get update && \
+    apt-get -o Acquire::Retries=5 update && \
     apt-get install -y --no-install-recommends \
+    -o Acquire::Retries=5 \
     python${PYTHON_VERSION} && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
