@@ -1,0 +1,44 @@
+name: scheduled-quality
+
+on:
+  schedule:
+    - cron: "0 5 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generated-resource-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.8.0"
+          python-version: "3.12"
+      - run: uv sync --locked --group automotive --group iot
+      - run: uv run --no-sync pytest test/pipeline/test_streaming_memory.py test/adversarial test/e2e/test_sample_flows.py
+      - name: Explain external fixture coverage
+        if: vars.BAGEL_EXTERNAL_RUNNER != 'enabled'
+        run: echo 'External-recording tests are NOT enabled. See doc/runbooks/quality.md for runner and fixture requirements.' >> "$GITHUB_STEP_SUMMARY"
+
+  # Never execute untrusted PR code on a runner with private recordings.
+  external-recordings:
+    if: github.ref == 'refs/heads/main' && vars.BAGEL_EXTERNAL_RUNNER == 'enabled'
+    runs-on: [self-hosted, bagel-fixtures]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.8.0"
+          python-version: "3.12"
+      - run: uv sync --locked --group automotive --group iot
+      - name: Require configured recordings; no skips allowed
+        env:
+          BAGEL_EXTERNAL_FIXTURES: ${{ vars.BAGEL_EXTERNAL_FIXTURES }}
+          BAGEL_LARGE_FIXTURE: ${{ vars.BAGEL_LARGE_FIXTURE }}
+          BAGEL_REQUIRE_NO_SKIPS: "1"
+        run: uv run --no-sync pytest test/e2e/test_known_anomalies.py test/e2e/test_large_file_smoke.py --timeout=1800

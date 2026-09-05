@@ -8,12 +8,63 @@ on:
   # all workflows for a merge commit; images for that version never built).
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# No concurrency group on this workflow: overlapping publish runs are left
+# to run in parallel rather than serialized against each other.
+#
+# A `publish-main` group (cancel-in-progress: false) was tried first, but
+# GitHub's documented default keeps at most one PENDING run per concurrency
+# group: once a publish is running and a second push is pending, a third
+# push cancels and replaces that still-pending run -- silently dropping the
+# second commit's release, the same failure mode as the 2026-08-19
+# dropped-event incident referenced above (that one lost the *push event*;
+# this would lose the *queued run*; same end result -- a version whose
+# images never publish). This holds regardless of cancel-in-progress, which
+# only governs already-RUNNING jobs, not pending ones. Verified against
+# GitHub's docs: https://docs.github.com/en/actions/using-jobs/using-concurrency
+# -- "By default, any existing pending job or workflow in the same
+# concurrency group will be canceled and the new queued job or workflow
+# will take its place."
+#
+# GitHub Actions has since added `queue: max`, which keeps up to 100 pending
+# runs and executes them one at a time in FIFO order -- exactly what this
+# workflow needs, and it would additionally avoid two overlapping runs
+# racing to tag the mutable `:latest` pointer. It is NOT used here because
+# `queue` is unrecognized by actionlint as of the latest release (v1.7.12)
+# and by the v1.7.7 pinned in this repo's types-and-workflows job --
+# `actionlint .github/workflows/publish.yaml` fails with
+# `unexpected key "queue" for "concurrency" section`. Revisit once
+# actionlint's schema catches up.
+#
+# Given that constraint, no group beats a group with the `queue: single`
+# default: every push's publish must eventually run, and dropping a queued
+# release silently is worse than the risks of running in parallel. The
+# remaining risks are bounded: per-version publication is protected by the
+# `docker manifest inspect` immutability check already in the docker job
+# (redundant concurrent pushes of the same not-yet-published version are
+# idempotent, not corrupting), and a `:latest` pointer that a slower
+# overlapping run leaves briefly behind the newest commit is self-healing --
+# the next push to main republishes it forward again. Pushes to main are
+# infrequent enough that this overlap is rare in practice.
 jobs:
+  validate-tests:
+    uses: ./.github/workflows/test.yaml
+  validate-lint:
+    uses: ./.github/workflows/lint.yaml
+  validate-dependencies:
+    uses: ./.github/workflows/dependency-audit.yaml
   docker:
+    needs: [validate-tests, validate-lint, validate-dependencies]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
+      contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         include:
           # ROS
@@ -33,9 +84,9 @@ jobs:
             image: arrow
           - service: iot
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -54,7 +105,7 @@ jobs:
           # push to main, and the registry entry treats the tag as immutable.
           # Bump the pyproject version to publish a new one.
           VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
-          docker tag $IMAGE:latest $IMAGE:$TAG
+          docker tag "$IMAGE:latest" "$IMAGE:$TAG"
           # ghcr intermittently drops a blob mid-push ("unknown blob"); a
           # short-backoff retry has cleared it on every occurrence to date
           # (2.1.0, 2.1.1, 2.2.0 all needed manual reruns for this).
@@ -66,11 +117,11 @@ jobs:
             done
             docker push "$1"
           }
-          push_with_retry $IMAGE:latest
-          push_with_retry $IMAGE:$TAG
+          push_with_retry "$IMAGE:latest"
+          push_with_retry "$IMAGE:$TAG"
           if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
             echo "$IMAGE:$VERSION already published; leaving it untouched"
           else
-            docker tag $IMAGE:latest $IMAGE:$VERSION
-            push_with_retry $IMAGE:$VERSION
+            docker tag "$IMAGE:latest" "$IMAGE:$VERSION"
+            push_with_retry "$IMAGE:$VERSION"
           fi

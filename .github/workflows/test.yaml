@@ -1,22 +1,47 @@
 name: test
 
 on:
+  workflow_call:
+  workflow_dispatch:
+  merge_group:
   pull_request:
-    branches:
-      - main
     types:
       - opened
       - synchronize
       - reopened
 
+permissions:
+  contents: read
+
+# PR runs: key by ref (stable per PR: refs/pull/<n>/merge) and cancel a
+# superseded push to the SAME pull request -- that SHOULD cancel, it just
+# wastes CI on a commit nobody will look at again.
+#
+# Every other trigger (workflow_call from publish.yaml on a push to main,
+# merge_group, workflow_dispatch): key by github.sha instead. Each push to
+# main now gets its own concurrency group, so two overlapping publish runs'
+# validate-tests calls into this reusable workflow can never collide and
+# cancel each other -- release gating for one SHA no longer depends on a
+# shared group where a second commit's push could zero out the first
+# commit's still-running validation before its `docker` job ever runs (the
+# same drop class just fixed in publish.yaml's own concurrency group,
+# surfacing one layer down in the reusable workflow it calls -- see that
+# workflow's comment for the doc citations on GitHub's queueing behavior).
+# Because the group is already unique per SHA here, cancel-in-progress is
+# false in this branch: nothing else should ever share the group in the
+# normal case, and if this workflow is somehow re-invoked twice for the
+# identical SHA (e.g. a manual re-run), both should run to completion
+# rather than one being dropped.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: tests-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
+      fail-fast: false
       matrix:
         include:
           # ROS
@@ -30,9 +55,11 @@ jobs:
           - service: px4
           - service: ardupilot
           - service: betaflight
+          - service: iot
+          - service: apache-arrow
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
       - name: Build ${{ matrix.service }}
@@ -46,17 +73,17 @@ jobs:
           docker compose run --rm \
             -e COVERAGE_FILE=/home/ubuntu/.bagel/artifacts/.coverage.${{ matrix.service }} \
             ${{ matrix.service }} \
-            uv run pytest -p no:warnings --cov --cov-report= ./test
+            uv run --no-sync pytest --cov --cov-config=pyproject.toml --cov-branch --cov-report= --junitxml=/home/ubuntu/.bagel/artifacts/junit.xml ./test
           cp "${HOME}/.bagel/artifacts/.coverage.${{ matrix.service }}" \
              "${{ github.workspace }}/.coverage.${{ matrix.service }}"
       - name: Upload coverage data
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-${{ matrix.service }}
           path: .coverage.${{ matrix.service }}
           include-hidden-files: true
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # Runtime-independent test modules run on the host, not in the service
   # images.
@@ -74,11 +101,17 @@ jobs:
   # suites (test/source/ros2, test/e2e, ...) stay with the `docker` job.
   host-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.8.0"
+          python-version: ${{ matrix.python }}
       - name: Install dependencies
         # iot/automotive: hard imports in sink and message tests.
         # upload/viz: optional-dep tests skip without them; install so they run.
@@ -86,17 +119,20 @@ jobs:
         # to actually exercise it instead of skipping (demo.py's default
         # image, ros2-kilted, doesn't install this group -- see demo.py's
         # _default_sample()).
-        run: uv sync --group iot --group automotive --group upload --group viz --group px4
+        run: uv sync --locked --group iot --group automotive --group upload --group viz --group px4
       - name: Run host-side tests
         env:
-          COVERAGE_FILE: .coverage.host
+          COVERAGE_FILE: .coverage.host-${{ matrix.python }}
+          BAGEL_REQUIRE_OPTIONAL_TESTS: "1"
         run: |
-          uv run pytest -p no:warnings --cov --cov-report= \
+          uv run --no-sync pytest --cov --cov-config=pyproject.toml --cov-branch --cov-report= --junitxml=junit-host.xml \
             test/*.py \
             test/agent \
             test/plugin \
             test/pipeline \
             test/sink \
+            test/adversarial \
+            test/_fixtures \
             test/message/automotive \
             test/message/waffle \
             test/source/test_influxdb.py \
@@ -106,31 +142,63 @@ jobs:
             test/source/ros
       - name: Upload coverage data
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: coverage-host
-          path: .coverage.host
+          name: coverage-host-${{ matrix.python }}
+          path: .coverage.host-${{ matrix.python }}
           include-hidden-files: true
-          if-no-files-found: warn
+          if-no-files-found: error
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: junit-host-${{ matrix.python }}
+          path: junit-host.xml
 
   coverage-gate:
     needs: [docker, host-tests]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           python-version: "3.12"
+          version: "0.8.0"
       - name: Install coverage
-        run: pip install "coverage>=7.0,<8.0"
+        run: uv sync --locked
       - name: Download all coverage data
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: coverage-data
           pattern: coverage-*
           merge-multiple: true
       - name: Combine and enforce floor
         run: |
-          cp coverage-data/.coverage.* . 2>/dev/null || true
-          coverage combine
-          coverage report --fail-under=64
+          uv run --no-sync python scripts/check_coverage.py coverage-data
+          uv run --no-sync coverage combine coverage-data
+          uv run --no-sync coverage report
+          uv run --no-sync coverage json -o coverage.json
+          uv run --no-sync python scripts/check_coverage.py --report coverage.json
+          uv run --no-sync coverage xml -o coverage.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: combined-coverage
+          path: |
+            coverage.json
+            coverage.xml
+
+  database-tests:
+    uses: ./.github/workflows/database-tests.yaml
+
+  quality-gate:
+    if: always()
+    needs: [docker, host-tests, coverage-gate, database-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every validation job to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python -c 'import json, os; jobs=json.loads(os.environ["RESULTS"]); assert all(job["result"] == "success" for job in jobs.values()), jobs'
