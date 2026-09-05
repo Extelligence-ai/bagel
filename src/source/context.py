@@ -3,9 +3,6 @@
 from dataclasses import dataclass
 from typing import Any, cast
 
-import duckdb
-
-from settings import settings
 from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
@@ -47,12 +44,4 @@ class SourceContext:
         """Return whole-source bounds, not just the event topic's observed span."""
         if isinstance(self.factory, BoundedSourceFactory):
             return self.factory.start_seconds, self.factory.end_seconds
-        relation = self.dataset.to_duckdb(self.factory, self.registry)
-        return relation_bounds(relation)
-
-
-def relation_bounds(relation: duckdb.DuckDBPyRelation) -> tuple[float, float]:
-    """Aggregate a relation's timestamp bounds without materializing its rows."""
-    timestamp = settings.TIMESTAMP_SECONDS_COLUMN_NAME
-    row = relation.aggregate(f'min("{timestamp}"), max("{timestamp}")').fetchone()
-    return (float(row[0]), float(row[1])) if row and row[0] is not None else (0.0, 0.0)
+        return self.dataset.bounds(self.factory, self.registry)

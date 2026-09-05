@@ -58,6 +58,33 @@ class MessageDataset(base.MessageDataset):
             f"WHERE {' AND '.join(conditions)}"
         )
 
+    def bounds(self, factory: SourceFactory, registry: TopicRegistry) -> tuple[float, float]:
+        """Aggregate MIN/MAX directly over tables with a detectable timestamp column.
+
+        Unlike `to_duckdb()` (which struct-packs every column of every table to build
+        a full relation), this only needs each eligible table's timestamp column, and
+        it must not fail merely because some unrelated table has none -- an event
+        table with a valid timestamp column must still yield bounds even if the
+        database also holds tables `timestamp_column` cannot interpret.
+        """
+        data_source = factory.build()
+        aggregates = []
+        for topic in registry.available_topics(data_source):
+            try:
+                timestamp_column = quote_identifier(data_source.timestamp_column(topic))
+            except ValueError:
+                continue
+            aggregates.append(
+                f"SELECT epoch(MIN({timestamp_column})) AS lo, "  # noqa: S608
+                f"epoch(MAX({timestamp_column})) AS hi "
+                f"FROM {data_source.relation_name(topic)}"
+            )
+        if not aggregates:
+            return (0.0, 0.0)
+        query = " UNION ALL ".join(f"({aggregate})" for aggregate in aggregates)
+        row = connection().sql(f"SELECT MIN(lo), MAX(hi) FROM ({query})").fetchone()  # noqa: S608
+        return (float(row[0]), float(row[1])) if row and row[0] is not None else (0.0, 0.0)
+
     def to_duckdb(  # noqa: PLR0913
         self,
         factory: SourceFactory,
