@@ -116,6 +116,7 @@ exclude = ["**/*.ipynb", "src/pipeline/tasks/cloudini/vendor/**"]
 
 [tool.ruff.lint.per-file-ignores]
 "./test/**/*.py" = ["S101", "S608", "D", "PLR2004"]  # S608: tests build SQL over their own tmp paths
+"./demo.py" = ["T20"]  # a CLI report card is meant to print
 
 [tool.coverage.run]
 source = ["src"]

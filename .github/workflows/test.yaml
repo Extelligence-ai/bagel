@@ -82,7 +82,11 @@ jobs:
       - name: Install dependencies
         # iot/automotive: hard imports in sink and message tests.
         # upload/viz: optional-dep tests skip without them; install so they run.
-        run: uv sync --group iot --group automotive --group upload --group viz
+        # px4: test_demo.py's pinned-number assertion needs pyulog installed
+        # to actually exercise it instead of skipping (demo.py's default
+        # image, ros2-kilted, doesn't install this group -- see demo.py's
+        # _default_sample()).
+        run: uv sync --group iot --group automotive --group upload --group viz --group px4
       - name: Run host-side tests
         env:
           COVERAGE_FILE: .coverage.host

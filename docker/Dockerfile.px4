@@ -59,6 +59,7 @@ EXPOSE ${JUPYTER_PORT}
 # Copy common source code
 COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
 COPY --chown=${USERNAME}:${USERNAME} run.py ./run.py
+COPY --chown=${USERNAME}:${USERNAME} demo.py ./demo.py
 COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
 COPY --chown=${USERNAME}:${USERNAME} src ./src
 # MCAP as a first-class format (no ROS required)
@@ -75,7 +76,7 @@ COPY --chown=${USERNAME}:${USERNAME} test/e2e ./test/e2e
 
 # Fail the build if the server cannot even import -- catches missing-module
 # regressions (issue #151) at build time instead of at the user's terminal.
-RUN uv run python -c "import server"
+RUN uv run python -c "import server" && uv run python -c "import demo"
 
 # Copy sample data
 COPY --chown=${USERNAME}:${USERNAME} data/sample/ ./data/sample/
@@ -89,6 +90,14 @@ COPY --chown=${USERNAME}:${USERNAME} test/message/px4 ./test/message/px4
 COPY --chown=${USERNAME}:${USERNAME} test/logging/px4 ./test/logging/px4
 
 RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test; fi
+
+# `docker run <image> demo [path]` runs the 60-second hello-world instead of
+# the server; anything else (no args, or another command) is unaffected. This
+# image has the px4 dependency group (pyulog), so `demo` here walks the full
+# PX4 sample -- see demo.py's _default_sample() for why the flagship
+# ros2-kilted image falls back to a lighter sample instead.
+COPY --chown=${USERNAME}:${USERNAME} docker/entrypoint.sh ./entrypoint.sh
+ENTRYPOINT ["./entrypoint.sh"]
 
 # By default, the Bagel MCP server will be launched
 CMD ["uv", "run", "server.py", "--transport", "sse"]
