@@ -75,9 +75,17 @@ jobs:
           fi
           echo "num=$num" >> "$GITHUB_OUTPUT"
           echo "head_sha=$(gh api "repos/$REPO/pulls/$num" --jq .head.sha)" >> "$GITHUB_OUTPUT"
-      # Base checkout at root (trusted); agent definition lives here.
+      # Agent definition (the persona the reviewer OBEYS) is read from root,
+      # so root MUST be trusted base code -- never the PR merge ref. On a
+      # pull_request event actions/checkout defaults to refs/pull/N/merge,
+      # which contains the PR's changes: without pinning, a PR that edits
+      # product-completeness-agent.md would rewrite the reviewer's own
+      # instructions and have them executed against itself (prompt injection
+      # via the persona file). Pin to the base SHA; the fallback covers the
+      # comment-triggered path, which has no PR context.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
           persist-credentials: false
       # PR head into a subdirectory the model may read; no credentials in it.
       - uses: actions/checkout@v4
