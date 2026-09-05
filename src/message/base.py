@@ -161,8 +161,12 @@ class MessageDataset(abc.ABC):
         schema = self._schema(
             factory, registry, topics or registry.available_topics(factory.build())
         )
+        # Read the source's content identity once: for a large local file this is a
+        # full-file hash, and `factory.uuid` and `factory.cache_identity` would
+        # otherwise each trigger their own read of the entire file (#232).
+        source_uuid = factory.uuid
         seeds = [
-            factory.cache_identity,
+            factory.cache_identity_for(source_uuid),
             type(self).__module__,
             *(topics or [str(None)]),
             str(start_seconds),
@@ -170,7 +174,7 @@ class MessageDataset(abc.ABC):
             str(ffill),
             _schema_fingerprint(schema),
         ]
-        arrow_file = artifacts.arrow_file(factory.uuid, seeds, "topics")
+        arrow_file = artifacts.arrow_file(source_uuid, seeds, "topics")
 
         def batches() -> Iterator[pa.RecordBatch]:
             data_source = factory.build()

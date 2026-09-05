@@ -16,12 +16,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A `workflow_dispatch` recovery run (see the comment above) has no PR, merge
+  # group, or push `before` SHA for dependency-audit.yaml to fall back on, so it
+  # would otherwise diff the released commit against itself and silently accept
+  # any newly introduced advisory. Resolve the parent commit here instead.
+  resolve-audit-baseline:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.parent.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
+      - id: parent
+        run: echo "sha=$(git rev-parse HEAD^)" >> "$GITHUB_OUTPUT"
   validate-tests:
     uses: ./.github/workflows/test.yaml
   validate-lint:
     uses: ./.github/workflows/lint.yaml
   validate-dependencies:
+    needs: [resolve-audit-baseline]
+    if: always() && !failure() && !cancelled()
     uses: ./.github/workflows/dependency-audit.yaml
+    with:
+      base-ref: ${{ needs.resolve-audit-baseline.outputs.sha }}
   docker:
     needs: [validate-tests, validate-lint, validate-dependencies]
     if: github.ref == 'refs/heads/main'

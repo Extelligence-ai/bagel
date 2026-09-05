@@ -35,8 +35,18 @@ class SourceFactory(abc.ABC):
     @property
     def cache_identity(self) -> str:
         """Fingerprint source content and interpretation, including timestamp options."""
+        return self.cache_identity_for(self.uuid)
+
+    def cache_identity_for(self, source_uuid: str) -> str:
+        """Fingerprint source content and interpretation from an already-computed uuid.
+
+        Content identity (`uuid`) can be expensive to compute for large local files
+        (a full-file hash): callers that also need the raw uuid (e.g. to key the cache
+        directory) should compute it once and pass it here instead of also reading
+        `cache_identity`, which would otherwise hash the same content a second time.
+        """
         payload = json.dumps(
-            [type(self).__module__, self.uuid, self.metadata], sort_keys=True, default=str
+            [type(self).__module__, source_uuid, self.metadata], sort_keys=True, default=str
         )
         return hashlib.sha256(payload.encode()).hexdigest()
 

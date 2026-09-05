@@ -47,7 +47,12 @@ class SourceContext:
         """Return whole-source bounds, not just the event topic's observed span."""
         if isinstance(self.factory, BoundedSourceFactory):
             return self.factory.start_seconds, self.factory.end_seconds
-        relation = self.dataset.to_duckdb(self.factory, self.registry)
+        topics = self.registry.bounds_topics(self.factory.build())
+        if not topics:
+            # `to_duckdb` treats an empty list the same as `None` (all topics),
+            # which would re-include topics `bounds_topics` deliberately excluded.
+            return 0.0, 0.0
+        relation = self.dataset.to_duckdb(self.factory, self.registry, topics)
         return relation_bounds(relation)
 
 

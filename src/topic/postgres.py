@@ -19,6 +19,22 @@ class TopicRegistry(base.TopicRegistry):
         """Return a list of available topic (table) names."""
         return [data_source.topic_of(schema, table) for schema, table in data_source.tables()]
 
+    def bounds_topics(self, data_source: PostgresDatabase) -> list[str]:
+        """Return topics (tables) with a resolvable timestamp column.
+
+        An ordinary lookup table alongside an event table is still a valid topic
+        for direct queries, but has no timestamp column to aggregate for
+        whole-source bounds; skip it rather than fail the bounds query entirely.
+        """
+        topics = []
+        for topic in self.available_topics(data_source):
+            try:
+                data_source.timestamp_column(topic)
+            except ValueError:
+                continue
+            topics.append(topic)
+        return topics
+
     def _require_topic(self, topic: str, data_source: PostgresDatabase) -> None:
         if topic not in self.available_topics(data_source):
             raise base.TopicNotFoundError(topic)
