@@ -44,11 +44,30 @@ class SourceFactory(abc.ABC):
         (a full-file hash): callers that also need the raw uuid (e.g. to key the cache
         directory) should compute it once and pass it here instead of also reading
         `cache_identity`, which would otherwise hash the same content a second time.
+
+        Subclasses that need extra identity inputs beyond `metadata` (e.g. a
+        companion schema file's own digest) should override this method rather than
+        `cache_identity`, so identity computed both this way and via the `cache_identity`
+        property stays consistent.
         """
         payload = json.dumps(
-            [type(self).__module__, source_uuid, self.metadata], sort_keys=True, default=str
+            [type(self).__module__, source_uuid, self.identity_metadata],
+            sort_keys=True,
+            default=str,
         )
         return hashlib.sha256(payload.encode()).hexdigest()
+
+    @property
+    def identity_metadata(self) -> dict[str, Any]:
+        """Return the interpretation options that must invalidate the cache on change.
+
+        Defaults to `metadata`. Override when `metadata` includes fields that require
+        decoding the source to compute (e.g. derived message counts or time bounds):
+        those describe the source's content, which the content `uuid` already
+        fingerprints, so recomputing them just to build a cache key defeats the cache
+        it's meant to key -- a cache hit would first pay for a full decode anyway.
+        """
+        return self.metadata
 
     @property
     @abc.abstractmethod
