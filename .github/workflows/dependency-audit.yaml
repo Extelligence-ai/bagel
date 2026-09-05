@@ -2,11 +2,27 @@ name: dependency-audit
 
 on:
   workflow_call:
+    inputs:
+      base-ref:
+        description: >-
+          Git ref/SHA to diff dependency advisories against. Defaults to the
+          pull_request/merge_group base, or the push's `before` SHA. A caller
+          without any of those (e.g. a workflow_dispatch recovery run with no
+          PR, merge-group, or push context) must pass this explicitly --
+          otherwise the audit falls back to the commit under release, comparing
+          it against itself, and a newly introduced advisory is never reported.
+        required: false
+        type: string
   pull_request:
   merge_group:
   schedule:
     - cron: "0 6 * * 1" # Monday 06:00 UTC
   workflow_dispatch:
+    inputs:
+      base-ref:
+        description: "Git ref/SHA to diff dependency advisories against (optional)."
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -19,7 +35,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || github.sha }}
+          ref: ${{ inputs.base-ref || github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || github.sha }}
           path: audit-base
           sparse-checkout: |
             pyproject.toml

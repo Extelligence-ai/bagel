@@ -32,20 +32,42 @@ class SourceFactory(abc.ABC):
     def uuid(self) -> str:
         """A unique identifier for the data source."""
 
-    def cache_identity(self, source_uuid: str | None = None) -> str:
-        """Fingerprint source content and interpretation, including timestamp options.
+    @property
+    def cache_identity(self) -> str:
+        """Fingerprint source content and interpretation, including timestamp options."""
+        return self.cache_identity_for(self.uuid)
 
-        Args:
-            source_uuid: Precomputed value of `self.uuid`, reused so callers that
-                also need the raw uuid (e.g. for the cache path) don't hash the
-                source content a second time. Computed here if omitted.
+    def cache_identity_for(self, source_uuid: str) -> str:
+        """Fingerprint source content and interpretation from an already-computed uuid.
 
+        Content identity (`uuid`) can be expensive to compute for large local files
+        (a full-file hash): callers that also need the raw uuid (e.g. to key the cache
+        directory) should compute it once and pass it here instead of also reading
+        `cache_identity`, which would otherwise hash the same content a second time.
+
+        Subclasses that need extra identity inputs beyond `metadata` (e.g. a
+        companion schema file's own digest) should override this method rather than
+        `cache_identity`, so identity computed both this way and via the `cache_identity`
+        property stays consistent.
         """
-        source_uuid = self.uuid if source_uuid is None else source_uuid
         payload = json.dumps(
-            [type(self).__module__, source_uuid, self.metadata], sort_keys=True, default=str
+            [type(self).__module__, source_uuid, self.identity_metadata],
+            sort_keys=True,
+            default=str,
         )
         return hashlib.sha256(payload.encode()).hexdigest()
+
+    @property
+    def identity_metadata(self) -> dict[str, Any]:
+        """Return the interpretation options that must invalidate the cache on change.
+
+        Defaults to `metadata`. Override when `metadata` includes fields that require
+        decoding the source to compute (e.g. derived message counts or time bounds):
+        those describe the source's content, which the content `uuid` already
+        fingerprints, so recomputing them just to build a cache key defeats the cache
+        it's meant to key -- a cache hit would first pay for a full decode anyway.
+        """
+        return self.metadata
 
     @property
     @abc.abstractmethod

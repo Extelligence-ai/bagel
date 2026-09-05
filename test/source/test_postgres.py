@@ -167,3 +167,26 @@ def test_preview_pipeline_detects_events_in_database() -> None:
     )
     assert result["event_count"] == 2  # seeded by the harness below
     assert 0 < result["kept_fraction"] < 1
+
+
+@requires_db
+def test_bounds_ignore_tables_without_a_timestamp_column() -> None:
+    """A lookup table with no timestamp column must not break whole-source bounds.
+
+    Whole-source bounds enumerate every topic (table) unless told otherwise; an
+    ordinary lookup table (`lookup_codes_no_timestamp`, seeded by the harness
+    alongside `readings`) used to make `preview_pipeline`/reduce fail before ever
+    evaluating the event topic, because bounds required every table -- including
+    unrelated ones -- to have a resolvable timestamp column.
+    """
+    import server
+
+    result = server.preview_pipeline(
+        path=PG_URL,
+        event_topic="readings",
+        predicate="\"readings\"['temp'] > 30",
+        pre_seconds=60.0,
+        post_seconds=60.0,
+        debounce_seconds=120.0,
+    )
+    assert result["event_count"] == 2
