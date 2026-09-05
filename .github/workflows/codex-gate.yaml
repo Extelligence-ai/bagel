@@ -1,13 +1,22 @@
 name: codex-gate
 
 # Codex review is mandatory: this check passes only once the Codex cloud
-# reviewer has reviewed the PR's *current head commit*. When it hasn't, the
-# job posts the "@codex review" trigger (once per commit) and fails; Codex
-# submitting its review re-runs the gate via pull_request_review.
+# reviewer OR Claude (claude-review.yaml) has reviewed the PR's *current head
+# commit*. When neither has, the job posts the "@codex review" trigger (once
+# per commit) and fails; either reviewer submitting its review re-runs the
+# gate via pull_request_review.
 #
 # Note: the auto-trigger comment is posted by github-actions[bot]; if the
 # Codex app ignores bot-authored triggers, comment "@codex review" manually
 # and the gate turns green when the review lands.
+#
+# Claude's reviews are authored by claude[bot] -- claude-code-action@v1 uses
+# its own exchanged GitHub App installation token by default (no GH_TOKEN
+# override in claude-review.yaml), not the workflow's GITHUB_TOKEN. GitHub
+# suppresses new workflow runs for events created with a repo's GITHUB_TOKEN,
+# but that suppression does not apply to a separate GitHub App's token, so a
+# claude[bot]-authored review still fires pull_request_review and re-triggers
+# this gate normally -- no outage-fallback special-casing needed.
 
 on:
   pull_request:
@@ -35,7 +44,7 @@ jobs:
           reviewed_shas() {
             {
               gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
-                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "github-actions[bot]") | .body' || true
+                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "claude[bot]") | .body' || true
               gh api "repos/$REPO/issues/$PR/comments" --paginate \
                 --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body' || true
             } | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \
