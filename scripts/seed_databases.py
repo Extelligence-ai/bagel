@@ -22,7 +22,12 @@ def main() -> None:
             "CREATE TABLE readings AS SELECT now() - interval '20 minutes' "
             "+ i * interval '1 minute' AS time, "
             "CASE WHEN i IN (3,4,12,13) THEN 40.0 ELSE 20.0 END AS temp "
-            "FROM generate_series(0,20) AS i;",
+            "FROM generate_series(0,20) AS i;"
+            # An ordinary lookup table with no timestamp column, alongside the
+            # timestamped event table: whole-source bounds must skip it rather
+            # than require every table to satisfy the message-relation contract.
+            "CREATE TABLE lookup_codes_no_timestamp (code TEXT, description TEXT); "
+            "INSERT INTO lookup_codes_no_timestamp VALUES ('a', 'alpha'), ('b', 'beta');",
         ],
         check=True,
     )

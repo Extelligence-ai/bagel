@@ -122,3 +122,76 @@ def test_missing_dbc_fails_cleanly(capture: tuple[pathlib.Path, pathlib.Path]) -
 
     with pytest.raises(FileNotFoundError, match="DBC"):
         SourceFactory(str(capture[0]), dbc="./no/such.dbc")
+
+
+def test_cache_identity_does_not_decode_the_capture(
+    capture: tuple[pathlib.Path, pathlib.Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Computing the cache key must not pay for a full capture decode.
+
+    A new factory is constructed per query, so if identity computation decodes
+    the capture, a cache *hit* still pays the decode cost just to build the key
+    that would have found the hit -- largely defeating the cache for large logs.
+    """
+    from src.source.automotive.can import CanLog
+
+    calls = []
+    original = CanLog._decoded_frames
+
+    def counting(self: CanLog):  # noqa: ANN202
+        calls.append(True)
+        yield from original(self)
+
+    monkeypatch.setattr(CanLog, "_decoded_frames", counting)
+    factory, _, _ = _provide(capture)
+
+    factory.cache_identity  # noqa: B018 -- property access is the point of the test
+    assert calls == [], "cache_identity must not decode capture frames"
+
+    factory.cache_identity_for(factory.uuid)
+    assert calls == [], "cache_identity_for must not decode capture frames"
+
+    # Sanity check the probe itself: full metadata *does* decode (it reports
+    # message counts and bounds), so a passing assertion above isn't vacuous.
+    factory.metadata  # noqa: B018
+    assert calls, "expected the sanity-check metadata access to decode the capture"
+
+
+def _write_scaled_dbc(path: pathlib.Path, scale: float) -> None:
+    path.write_text(
+        f'VERSION ""\nBO_ 256 EngineData: 8 ECU\n'
+        f' SG_ EngineSpeed : 0|16@1+ ({scale},0) [0|16383] "rpm" Vector__XXX\n'
+    )
+
+
+def test_editing_dbc_in_place_invalidates_the_cache(tmp_path: pathlib.Path) -> None:
+    """A DBC edited in place (same path) must not keep serving the old scaling.
+
+    `to_duckdb` builds a fresh `SourceFactory` per query (dependency injection
+    constructs one from the raw path/dbc args each time), so this reproduces the
+    real failure mode: editing a signal's scale and re-querying the same capture
+    path must decode with the new DBC, not replay a cached result keyed only by
+    the capture's own content.
+    """
+    dbc_file = tmp_path / "vehicle.dbc"
+    blf_file = tmp_path / "drive.blf"
+    _write_scaled_dbc(dbc_file, scale=1.0)
+    database = cantools.database.load_file(dbc_file)
+    with can.BLFWriter(blf_file) as writer:
+        engine = database.encode_message("EngineData", {"EngineSpeed": 100})
+        writer.on_message_received(
+            can.Message(arbitration_id=0x100, data=engine, is_extended_id=False, timestamp=T0)
+        )
+
+    def decoded_engine_speed() -> float:
+        factory, registry, dataset = _provide((blf_file, dbc_file))
+        relation = dataset.to_duckdb(factory, registry, ["EngineData"])
+        (value,) = relation.query(
+            "engine", "SELECT \"EngineData\"['EngineSpeed'] FROM engine"
+        ).fetchone()
+        return value
+
+    assert decoded_engine_speed() == 100.0  # raw counts * scale 1.0
+
+    _write_scaled_dbc(dbc_file, scale=2.0)  # same path, edited in place
+    assert decoded_engine_speed() == 200.0  # must re-decode with the new scale

@@ -18,6 +18,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     allowed = {
         "test/source/test_postgres.py::test_end_to_end_over_live_database",
         "test/source/test_postgres.py::test_preview_pipeline_detects_events_in_database",
+        "test/source/test_postgres.py::test_bounds_ignore_tables_without_a_timestamp_column",
         "test/source/test_influxdb.py::test_end_to_end_over_live_influxdb",
         "test/source/test_influxdb.py::test_preview_pipeline_detects_events_in_influxdb",
         "test/pipeline/integration/test_ros2_write_paths.py",

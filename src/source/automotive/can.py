@@ -206,15 +206,38 @@ class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
         self._log = CanLog(path=path, dbc=dbc)
         self._dbc_digest = self._md5_hash(pathlib.Path(dbc))
 
-    def cache_identity(self, source_uuid: str | None = None) -> str:
-        """Include the loaded DBC's scaling and decoding rules in cached results."""
-        return super().cache_identity(source_uuid) + self._dbc_digest
+    def cache_identity_for(self, source_uuid: str) -> str:
+        """Include the loaded DBC's scaling and decoding rules in cached results.
+
+        Overrides `cache_identity_for` (not just the `cache_identity` property) so
+        the DBC digest is included regardless of which one a caller uses: `to_duckdb`
+        calls this method directly with an already-computed uuid to avoid hashing a
+        large capture twice (#232), which would otherwise bypass a `cache_identity`-only
+        override entirely.
+        """
+        return super().cache_identity_for(source_uuid) + self._dbc_digest
 
     @property
     def metadata(self) -> dict[str, Any]:
         """Return metadata about the capture and its DBC."""
         return {
             **self._bounded_metadata,
+            **self._file_based_metadata,
+            "dbc": self._dbc,
+            "dbc_messages": [message.name for message in self._log.database.messages],
+        }
+
+    @property
+    def identity_metadata(self) -> dict[str, Any]:
+        """Return interpretation options for the cache key without decoding the capture.
+
+        Excludes `_bounded_metadata` (message count, start/end/duration): those are
+        derived by fully decoding the capture, and describe content already
+        fingerprinted by `uuid` -- a fixed byte-for-byte capture always decodes to the
+        same stats, so they add no cache-invalidation signal and would otherwise force
+        a full decode before even checking the on-disk cache.
+        """
+        return {
             **self._file_based_metadata,
             "dbc": self._dbc,
             "dbc_messages": [message.name for message in self._log.database.messages],
