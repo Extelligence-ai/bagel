@@ -3,11 +3,14 @@
 import json
 import pathlib
 import threading
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pyarrow as pa
 import pytest
 
-from src.pipeline.base import Cadence, Frequency, Lookback, OnEvent, Unit
+from src.pipeline.base import Cadence, Frequency, Lookback, OnceAtEnd, OnEvent, Unit
+from src.sink.base import TopicSink
 from src.sink.buffer import TopicBufferReader, TopicBufferWriter, _artifact_paths
 
 TOPIC = "/imu"
@@ -35,6 +38,7 @@ class PipelineStub:
     """Duck-typed stand-in: the writer only touches `.cadence` and `.run_at`."""
 
     def __init__(self, when: object) -> None:
+        self.name = "stub"
         self.cadence = Cadence(topic=TOPIC, when=when)
         self.ran_at: list[float] = []
 
@@ -159,3 +163,33 @@ def test_concurrent_writers_do_not_corrupt_the_buffer(tmp_path: pathlib.Path) ->
 def test_reader_requires_an_existing_buffer(tmp_path: pathlib.Path) -> None:
     with pytest.raises(FileNotFoundError):
         TopicBufferReader(tmp_path, "/never_written")
+
+
+def test_once_at_end_never_runs_from_append(tmp_path: pathlib.Path) -> None:
+    pipeline = PipelineStub(OnceAtEnd())
+    writer = make_writer(tmp_path, pipeline=pipeline)
+    for timestamp in (1.0, 2.0):
+        writer.append({"x": timestamp, "note": "end-only"})
+    assert pipeline.ran_at == []
+    assert writer.last_timestamp_seconds == 2.0
+
+
+@pytest.mark.parametrize("timestamps", [[], [1.0], [1.0, 2.0]])
+def test_once_at_end_runs_only_once_when_sink_closes(
+    tmp_path: pathlib.Path, timestamps: list[float]
+) -> None:
+    pipeline = PipelineStub(OnceAtEnd())
+    writer = make_writer(tmp_path, pipeline=pipeline)
+    for timestamp in timestamps:
+        writer.append({"x": timestamp, "note": "end-only"})
+    sink = SimpleNamespace(
+        _is_singleton_initialized=True,
+        host="test",
+        port=12345,
+        _buffers={TOPIC: writer},
+        pause=Mock(),
+        _disconnect=Mock(),
+    )
+    TopicSink.close(sink)
+    TopicSink.close(sink)
+    assert pipeline.ran_at == timestamps[-1:]

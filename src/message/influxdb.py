@@ -70,6 +70,30 @@ class MessageDataset(base.MessageDataset):
             f"struct_pack({packed}) AS {quote_identifier(topic)}"
         )
 
+    def bounds(self, factory: SourceFactory, registry: TopicRegistry) -> tuple[float, float]:
+        """Aggregate MIN/MAX time per measurement instead of downloading every row.
+
+        Unlike `to_duckdb()` (which downloads and struct-packs every measurement's
+        full rows to build a relation), this only needs each measurement's min/max
+        `time`, computed by InfluxDB itself. `epoch()` on the Arrow result matches
+        the seconds conversion `_topic_relation` uses for the full relation.
+        """
+        data_source = factory.build()
+        lo: float | None = None
+        hi: float | None = None
+        for topic in registry.available_topics(data_source):
+            arrow_table = data_source.client.query(
+                f'SELECT MIN(time) AS lo, MAX(time) AS hi FROM "{topic}"'  # noqa: S608
+            )
+            if arrow_table.num_rows == 0:
+                continue
+            row = from_arrow(arrow_table).aggregate("epoch(min(lo)), epoch(max(hi))").fetchone()
+            if row is None or row[0] is None:
+                continue
+            lo = float(row[0]) if lo is None else min(lo, float(row[0]))
+            hi = float(row[1]) if hi is None else max(hi, float(row[1]))
+        return (lo, hi) if lo is not None and hi is not None else (0.0, 0.0)
+
     def to_duckdb(  # noqa: PLR0913
         self,
         factory: SourceFactory,
