@@ -11,23 +11,25 @@ name: codex-gate
 # and the gate turns green when the review lands.
 #
 # Claude's reviews are posted by a deterministic, non-model shell step in
-# claude-review.yaml (see that file's header) authenticated with the
-# workflow's own GITHUB_TOKEN, so they're authored by github-actions[bot],
-# not claude[bot] -- the model itself is given no posting capability at all,
-# because any tool that lets it publish something is exploitable by a
-# prompt-injected PR (see PR #235 review discussion). Trust here rests on
-# claude-review.yaml's own controls -- its comment trigger is restricted to
-# OWNER/MEMBER/COLLABORATOR, and its posting step independently validates
-# the "Reviewed commit: <sha>" stamp against the real head commit before
-# ever calling `gh pr review` -- not on the github-actions[bot] login by
-# itself; `claude[bot]` stays in the accepted-logins list below too, in case
-# a future revision restores direct App-token posting.
+# claude-review.yaml (see that file's header) -- the model itself is given
+# no posting capability at all, because any tool that lets it publish
+# something is exploitable by a prompt-injected PR (see PR #235 review
+# discussion). That step authenticates with the CODEX_TRIGGER_TOKEN secret
+# (the same maintainer-owned fine-grained PAT codex-rerequest.yaml uses), so
+# the review is authored under that maintainer's own GitHub login
+# (arunvenkatadri) -- a human identity no same-repo workflow can mint for
+# itself, unlike github-actions[bot], which any workflow (including one
+# added by a PR) could stamp with a forged "Reviewed commit: <sha>" body to
+# satisfy its own gate. That's why github-actions[bot] is NOT in the
+# accepted logins below, even though claude-review.yaml's posting step can
+# fall back to it when the secret is unset (fail-open on posting the
+# finding, fail-closed on this gate ever trusting it). `claude[bot]` stays
+# in the list too, in case a future revision restores direct App-token
+# posting.
 #
-# GitHub suppresses new workflow runs for events created with a repo's
-# GITHUB_TOKEN, so a github-actions[bot]-authored review from claude-review.yaml
-# does NOT fire pull_request_review and won't auto-retrigger this gate --
-# same caveat as the auto-trigger comment above: comment "@codex review" (or
-# push a new commit) to re-run the gate once the review has landed.
+# PAT-authored events aren't subject to GITHUB_TOKEN's workflow-run
+# suppression, so an arunvenkatadri-authored review fires pull_request_review
+# normally and this gate re-runs on its own -- no manual recomment needed.
 
 on:
   pull_request:
@@ -55,7 +57,7 @@ jobs:
           reviewed_shas() {
             {
               gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
-                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "claude[bot]" or .user.login == "github-actions[bot]") | .body' || true
+                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "claude[bot]" or .user.login == "arunvenkatadri") | .body' || true
               gh api "repos/$REPO/issues/$PR/comments" --paginate \
                 --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body' || true
             } | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \

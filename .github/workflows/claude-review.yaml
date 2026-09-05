@@ -36,10 +36,20 @@
 # further defense-in-depth, though the model can no longer publish anything
 # regardless of what it reads.
 #
-# Trade-off: the posting step runs as a plain shell step authenticated with
-# GITHUB_TOKEN, not through claude-code-action's exchanged GitHub App token,
-# so the review is authored by github-actions[bot], not claude[bot]. See the
-# note in codex-gate.yaml.
+# Identity: the posting step authenticates with the CODEX_TRIGGER_TOKEN
+# secret (the same maintainer-owned fine-grained PAT codex-rerequest.yaml
+# uses), not claude-code-action's exchanged GitHub App token and not
+# GITHUB_TOKEN, so the review is authored by that maintainer's own GitHub
+# account -- an identity no workflow (including one added by a PR) can mint
+# without the secret, which fork/PR contexts never receive. That's also why
+# codex-gate.yaml can trust it: unlike github-actions[bot], it isn't a login
+# any same-repo workflow could stamp for itself. PAT-authored events aren't
+# subject to GITHUB_TOKEN's workflow-run suppression either, so this review
+# fires pull_request_review normally and the gate re-runs on its own -- see
+# codex-gate.yaml. If CODEX_TRIGGER_TOKEN isn't set, the step still posts
+# (via GITHUB_TOKEN, as github-actions[bot]) so the finding isn't silently
+# dropped, but logs a `::warning::` that codex-gate.yaml won't accept that
+# login -- fail-open on posting, fail-closed on trust.
 name: claude-review
 on:
   issue_comment:
@@ -150,7 +160,8 @@ jobs:
             --max-turns 40
       - name: Post Claude's review (deterministic -- no model in this step)
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CODEX_TRIGGER_TOKEN || github.token }}
+          HAVE_PAT: ${{ secrets.CODEX_TRIGGER_TOKEN != '' }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.issue.number }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
@@ -168,5 +179,8 @@ jobs:
             echo "::error::expected: $stamp"
             echo "::error::got:      $first_line"
             exit 1
+          fi
+          if [ "$HAVE_PAT" != "true" ]; then
+            echo "::warning::CODEX_TRIGGER_TOKEN is not set; posting this review as github-actions[bot] via GITHUB_TOKEN. codex-gate.yaml does not trust that login, so this review will NOT satisfy the gate. Add the secret (fine-grained PAT, this repo, Pull requests: write) to restore trust and auto-retrigger."
           fi
           gh pr review "$PR" --repo "$REPO" --comment --body-file "$file"
