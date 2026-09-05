@@ -39,16 +39,6 @@ class TopicRegistry(abc.ABC):
 
     """
 
-    def bounds_topics(self, data_source: object) -> list[str]:
-        """Return the topics usable for whole-source time bounds.
-
-        Defaults to every available topic. Override when some topics can't supply
-        a timestamp on their own terms (e.g. a database table with no timestamp
-        column): those must be excluded here so computing whole-source bounds
-        doesn't require unrelated topics to satisfy the message-relation contract.
-        """
-        return self.available_topics(data_source)
-
     @abc.abstractmethod
     def available_topics(self, data_source: object) -> list[str]:
         """Return a list of available topics associated with the data source.

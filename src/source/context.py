@@ -3,9 +3,6 @@
 from dataclasses import dataclass
 from typing import Any, cast
 
-import duckdb
-
-from settings import settings
 from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import resolve
@@ -47,17 +44,6 @@ class SourceContext:
         """Return whole-source bounds, not just the event topic's observed span."""
         if isinstance(self.factory, BoundedSourceFactory):
             return self.factory.start_seconds, self.factory.end_seconds
-        topics = self.registry.bounds_topics(self.factory.build())
-        if not topics:
-            # `to_duckdb` treats an empty list the same as `None` (all topics),
-            # which would re-include topics `bounds_topics` deliberately excluded.
-            return 0.0, 0.0
-        relation = self.dataset.to_duckdb(self.factory, self.registry, topics)
-        return relation_bounds(relation)
-
-
-def relation_bounds(relation: duckdb.DuckDBPyRelation) -> tuple[float, float]:
-    """Aggregate a relation's timestamp bounds without materializing its rows."""
-    timestamp = settings.TIMESTAMP_SECONDS_COLUMN_NAME
-    row = relation.aggregate(f'min("{timestamp}"), max("{timestamp}")').fetchone()
-    return (float(row[0]), float(row[1])) if row and row[0] is not None else (0.0, 0.0)
+        # `MessageDataset` is imported with `follow_imports = skip` (see pyproject.toml's
+        # strict-typed file list), so mypy sees `.bounds()` as untyped without this cast.
+        return cast(tuple[float, float], self.dataset.bounds(self.factory, self.registry))
