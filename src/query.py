@@ -1,6 +1,7 @@
 """Thread-owned DuckDB connections for queries and live subscription callbacks."""
 
 import threading
+from typing import cast
 
 import duckdb
 
@@ -15,7 +16,7 @@ def connection() -> duckdb.DuckDBPyConnection:
     """
     if not hasattr(_local, "connection"):
         _local.connection = duckdb.connect()
-    return _local.connection
+    return cast(duckdb.DuckDBPyConnection, _local.connection)
 
 
 def from_arrow(table: object) -> duckdb.DuckDBPyRelation:

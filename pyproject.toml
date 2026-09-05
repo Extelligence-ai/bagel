@@ -38,8 +38,10 @@ dev = [
     "pre-commit >=4.2.0,<5.0.0",
     "pytest >=8.4.0,<9.0.0",
     "pytest-cov >=5.0.0,<7.0.0",
+    "pytest-timeout >=2.4.0,<3.0.0",
     "ruff ==0.12.4",
 ]
+quality = ["mypy >=1.17.0,<2.0.0", "pip-audit >=2.9.0,<3.0.0"]
 cv = [
     "opencv-python >=4.0.0,<5.0.0",
     "pillow >=11.3.0,<12.0.0",
@@ -79,10 +81,28 @@ automotive = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+addopts = "--strict-markers"
+timeout = 300
+timeout_method = "thread"
 markers = [
     "adversarial: malformed/fuzzed inputs and property-based tests",
     "e2e: end-to-end flows driving the real server against fixtures",
+    "network: requires a disposable external service",
+    "integration: exercises multiple real components",
 ]
+filterwarnings = [
+    "error::pytest.PytestUnhandledThreadExceptionWarning",
+    # asammdf 7.x can fail during destruction of intentionally malformed fixtures.
+    # Keep it visible while allowing that third-party adversarial cleanup defect.
+    "default::pytest.PytestUnraisableExceptionWarning",
+]
+
+[tool.mypy]
+files = ["src/query.py", "src/source/context.py", "src/pipeline/results.py"]
+python_version = "3.10"
+strict = true
+follow_imports = "skip"
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
@@ -118,7 +138,9 @@ exclude = ["**/*.ipynb", "src/pipeline/tasks/cloudini/vendor/**"]
 "./test/**/*.py" = ["S101", "S608", "D", "PLR2004"]  # S608: tests build SQL over their own tmp paths
 
 [tool.coverage.run]
-source = ["src"]
+source = ["src", "server", "run"]
+branch = true
+relative_files = true
 omit = ["*/__pycache__/*", "*_pb2.py"]
 
 [tool.coverage.report]

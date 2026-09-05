@@ -24,6 +24,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -40,8 +41,8 @@ jobs:
           - iot
           - apache-arrow
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
       - name: Build ${{ matrix.service }}

@@ -96,19 +96,17 @@ RUN /bin/bash -c "curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh 
 # Set up virtual environment and install PyPI dependencies
 COPY --chown=${USERNAME}:${USERNAME} pyproject.toml ./
 COPY --chown=${USERNAME}:${USERNAME} uv.lock ./
+COPY --chown=${USERNAME}:${USERNAME} docker/sync-deps.sh ./sync-deps.sh
 ARG DEV_MODE
 ARG CV_MODE
 # hadolint ignore=SC2086
 RUN set -eux; \
-    groups="--group ros1"; \
+    groups="ros1"; \
     if [ "_${CV_MODE}" = "_true" ]; then \
-    groups="${groups} --group cv"; \
+    groups="${groups} cv"; \
     fi; \
-    if [ "_${DEV_MODE}" = "_true" ]; then \
-    uv sync ${groups}; \
-    else \
-    uv sync --no-dev ${groups}; \
-    fi
+    bash ./sync-deps.sh "${DEV_MODE}" ${groups}
+ENV UV_NO_SYNC=1
 
 # Expose MCP server port
 ARG MCP_SERVER_PORT
@@ -147,6 +145,9 @@ COPY --chown=${USERNAME}:${USERNAME} test/e2e ./test/e2e
 # Fail the build if the server cannot even import -- catches missing-module
 # regressions (issue #151) at build time instead of at the user's terminal.
 RUN uv run python -c "import server"
+RUN if [ "_${DEV_MODE}" != "_true" ]; then \
+    uv run python -c "import importlib.util; assert importlib.util.find_spec('pytest') is None; assert importlib.util.find_spec('jupyterlab') is None"; \
+    fi
 
 # Copy sample data
 COPY --chown=${USERNAME}:${USERNAME} data/sample/ ./data/sample/

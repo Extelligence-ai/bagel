@@ -3,3 +3,4 @@ repos:
     rev: v0.12.4 # should be same as pyproject.toml
     hooks:
       - id: ruff-check
+      - id: ruff-format

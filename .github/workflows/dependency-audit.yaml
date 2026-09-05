@@ -1,36 +1,41 @@
-# Non-blocking dependency-vulnerability cadence (issue #134).
-#
-# The current lockfile carries known advisories almost entirely in transitive
-# dependencies pulled in by the jupyter/torch/dev stack (setuptools, starlette,
-# tornado, urllib3, virtualenv, soupsieve, etc.). A hard-fail gate would be red
-# from day one and would likely get disabled rather than fixed. This workflow
-# is intentionally informational: it runs pip-audit on a cadence (every PR to
-# main, plus a weekly schedule) so advisories stay visible, without blocking
-# merges. Once the transitive-advisory baseline has been triaged, the audit
-# step below can be tightened to a blocking gate.
-
 name: dependency-audit
 
 on:
+  workflow_call:
   pull_request:
-    branches:
-      - main
+  merge_group:
   schedule:
     - cron: "0 6 * * 1" # Monday 06:00 UTC
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   pip-audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || github.sha }}
+          path: audit-base
+          sparse-checkout: |
+            pyproject.toml
+            uv.lock
+          sparse-checkout-cone-mode: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.8.0"
+          python-version: "3.12"
       - name: Install dependencies
-        run: uv sync
-      - name: Run pip-audit (non-blocking)
-        continue-on-error: true
-        run: |
-          uv run --with pip-audit pip-audit --format markdown >> "$GITHUB_STEP_SUMMARY" || true
-          uv run --with pip-audit pip-audit
+        run: uv sync --locked --group quality
+      - name: Reject new advisories and incomplete audits
+        run: uv run --no-sync python scripts/audit_dependencies.py --base audit-base
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: dependency-advisories
+          path: audit-*.json
+          if-no-files-found: error
