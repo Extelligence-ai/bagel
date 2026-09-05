@@ -107,7 +107,7 @@ jobs:
           PR: ${{ github.event.issue.number }}
         run: |
           echo "head_sha=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # No `ref:` -> base branch at workspace root, per the action's own
         # security guidance: an untrusted PR head must never land at the
         # workspace root of a secret-bearing job. The PR head is checked out
@@ -117,7 +117,7 @@ jobs:
         # there's no reason to leave a credential on disk either.
         with:
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.pr.outputs.head_sha }}
           fetch-depth: 0
