@@ -27,6 +27,7 @@ RUN apt-get update && \
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /etc/bash.bashrc
 
 # Set up runtime environment
+# hadolint ignore=DL3064
 ARG USERNAME=ubuntu
 RUN id -u 1000 >/dev/null 2>&1 || useradd -m -u 1000 ${USERNAME}
 USER ${USERNAME}
