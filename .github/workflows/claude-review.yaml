@@ -1,0 +1,237 @@
+# Claude as an AI reviewer: a maintainer comments "@claude review" on a PR
+# and this workflow runs Claude Code against the PR diff, posts the findings
+# as a PR review, and stamps it with the same "Reviewed commit: <sha>"
+# marker the AI-review gate recognizes. Either reviewer (Codex or Claude)
+# satisfies the gate; see codex-gate.yaml.
+#
+# KEYLESS: no ANTHROPIC_API_KEY anywhere. The job requests a GitHub OIDC
+# token (audience https://api.anthropic.com) and the Anthropic SDK inside
+# Claude Code exchanges it via Workload Identity Federation -- the console
+# rule `bagel-claude-review` pins acceptance to THIS repo's default-branch
+# runs (issue_comment jobs always run in default-branch context, so their
+# sub claim is repo:Extelligence-ai/bagel:ref:refs/heads/main). GitHub JWTs
+# live ~5 minutes and are single-use at exchange, so a background loop
+# refreshes the token file for reviews that outlive one minted token.
+#
+# Requires four NON-SECRET repository variables (Settings -> Variables):
+#   ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID,
+#   ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID
+# (identifiers only -- useless without a JWT GitHub will only sign for
+# this repo's own workflow runs).
+#
+# Prompt-injection defense: the PR content Claude reads is untrusted, so it
+# gets NO posting capability at all -- every prior attempt to let the model
+# post (raw `gh pr review`, then a narrowed wrapper script) still let an
+# injected prompt control what got published and when, because the model's
+# own Bash tool was the thing doing the posting (see PR #235 review
+# discussion). Claude has NO Bash tool grant of any kind, not even a
+# read-only one: a job with `id-token: write` gets ACTIONS_ID_TOKEN_REQUEST_
+# TOKEN/URL injected into every step's process environment unconditionally
+# (there is no per-step opt-out), so even `gh pr diff`/`gh pr view` prefixes
+# let an injected prompt build a command that expands those -- or any other
+# ambient env var -- into an argument, capture whatever a tool's output or
+# error message echoes back, and smuggle it into claude-review-body.md below
+# the stamp line the posting step actually checks. A trusted step below
+# (`Prefetch the PR diff and metadata`, no model involved) runs `gh pr diff`/
+# `gh pr view` itself and writes the results to ./pr-context/ before Claude
+# ever starts; Claude only Reads that plus ./pr-head/**, and Writes its
+# findings to ./claude-review-body.md -- that is the full extent of what it
+# can do. Read(path)/Glob(path) rules are enforced by Claude Code; Write and
+# Grep path rules are best-effort, but with no Bash tool at all there is no
+# shell for the model to run `env`, expand a `$VAR`, or otherwise observe
+# the process environment through, regardless of what credentials happen to
+# sit in it. A separate, deterministic shell step with no model in the loop
+# then validates that claude-review-body.md exists and starts with the
+# exact "Reviewed commit: <sha>" stamp for the real head commit, and only
+# then posts it with `gh pr review`. A missing or malformed file means
+# nothing gets posted and the job fails visibly. The OIDC identity file
+# lives under runner.temp -- outside any path Claude can read -- as further
+# defense-in-depth, though the model can no longer publish anything or run
+# any command regardless of what it reads. Both checkouts also set
+# persist-credentials: false: actions/checkout defaults to writing the
+# job-scoped GitHub token into .git/config, and pr-head/.git/config sits
+# right inside the directory Claude's Read/Grep/Glob rules can reach --
+# --disallowedTools also carries a Read(**/.git/**) deny rule as a second
+# layer in case a scoping rule is ever bypassed.
+#
+# Identity: the posting step authenticates with the CODEX_TRIGGER_TOKEN
+# secret (the same maintainer-owned fine-grained PAT codex-rerequest.yaml
+# uses), not claude-code-action's exchanged GitHub App token and not
+# GITHUB_TOKEN, so the review is authored by that maintainer's own GitHub
+# account -- an identity no workflow (including one added by a PR) can mint
+# without the secret, which fork/PR contexts never receive. That's also why
+# codex-gate.yaml can trust it: unlike github-actions[bot], it isn't a login
+# any same-repo workflow could stamp for itself. PAT-authored events aren't
+# subject to GITHUB_TOKEN's workflow-run suppression either, so this review
+# fires pull_request_review normally and the gate re-runs on its own -- see
+# codex-gate.yaml. If CODEX_TRIGGER_TOKEN isn't set, the step still posts
+# (via GITHUB_TOKEN, as github-actions[bot]) so the finding isn't silently
+# dropped, but logs a `::warning::` that codex-gate.yaml won't accept that
+# login -- fail-open on posting, fail-closed on trust.
+name: claude-review
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '@claude review') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+    steps:
+      - name: Point the identity token file outside the workspace
+        # runner.temp, not /tmp: outside the workspace and outside any path
+        # Claude's scoped Read/Glob rules can reach (see claude_args below).
+        # The `runner` context isn't available in a job-level `env:` block,
+        # so resolve it here (RUNNER_TEMP is always set for every step) and
+        # export it via GITHUB_ENV for the rest of the job.
+        run: echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/gha-jwt" >> "$GITHUB_ENV"
+      - name: Resolve the PR head
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          echo "head_sha=$(gh api repos/$REPO/pulls/$PR --jq .head.sha)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        # No `ref:` -> base branch at workspace root, per the action's own
+        # security guidance: an untrusted PR head must never land at the
+        # workspace root of a secret-bearing job. The PR head is checked out
+        # into a subdirectory below and handed to Claude via --add-dir.
+        # persist-credentials: false for consistency with the pr-head
+        # checkout below -- this one isn't in Claude's read scope, but
+        # there's no reason to leave a credential on disk either.
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          fetch-depth: 0
+          path: pr-head
+          # actions/checkout defaults to persist-credentials: true, which
+          # writes the job-scoped GitHub token into pr-head/.git/config --
+          # squarely inside the directory Claude's Read/Grep/Glob rules are
+          # allowed to read. An injected prompt could read it and smuggle it
+          # out below a valid stamp line in claude-review-body.md, since the
+          # posting step only checks the first line before publishing the
+          # rest verbatim. false here means there's no token on disk to read.
+          persist-credentials: false
+      - name: Prefetch the PR diff and metadata (trusted, no model)
+        # Claude gets no Bash tool at all (see header comment), so this
+        # trusted step does the only two `gh` calls Claude used to make
+        # itself and writes their output to plain files for Claude to Read.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          mkdir -p pr-context
+          gh pr diff "$PR" --repo "$REPO" > pr-context/pr.diff
+          gh pr view "$PR" --repo "$REPO" \
+            --json title,body,author,baseRefName,headRefName,additions,deletions,changedFiles \
+            > pr-context/pr-view.json
+      - name: Keep a fresh OIDC token in the identity file
+        run: |
+          set -uo pipefail
+          fetch() {
+            local tmp
+            # Create the temp file next to the target so the final mv is an
+            # atomic same-filesystem rename.
+            tmp="$(mktemp "${ANTHROPIC_IDENTITY_TOKEN_FILE}.XXXXXX")"
+            if curl -sS -f -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+                "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+                | jq -er .value > "$tmp"; then
+              mv "$tmp" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+            else
+              echo "::warning::OIDC token refresh failed; keeping last valid identity token" >&2
+              rm -f "$tmp"
+            fi
+          }
+          fetch
+          # GitHub JWTs expire in ~5 min and each is single-use at exchange;
+          # refresh the file so the SDK's re-exchange always finds a fresh one.
+          # On a failed refresh, fetch() leaves the previous valid token file
+          # untouched instead of clobbering it with an empty/null response.
+          ( while true; do sleep 180; fetch; done ) &
+      - name: Claude reviews the PR
+        uses: anthropics/claude-code-action@v1
+        with:
+          prompt: >-
+            Review pull request #${{ github.event.issue.number }} in this repository
+            (head commit ${{ steps.pr.outputs.head_sha }}). The diff is already
+            fetched at ./pr-context/pr.diff and the PR metadata at
+            ./pr-context/pr-view.json -- read those, and read any file you need
+            ONLY under ./pr-head at the PR's head -- never read or search outside
+            those two locations. You have no Bash tool; do not attempt to run any
+            command. Hunt for real defects: correctness, data loss, concurrency,
+            security, contract breaks. Ignore style. Then WRITE your findings to
+            the file ./claude-review-body.md (create or overwrite it) -- do not
+            attempt to post or publish anything yourself. A separate,
+            deterministic step (no model involved) reads that file and posts it
+            as the PR review. The file's FIRST LINE must be exactly:
+            "Claude review -- Reviewed commit: ${{ steps.pr.outputs.head_sha }}"
+            followed by your findings ranked by severity (or "No findings that
+            block merge." if clean).
+          # No Bash tool of any kind -- see the header comment for why even a
+          # read-only `gh pr diff`/`gh pr view` prefix was a credential-
+          # exfiltration path via ambient env vars the runner injects into
+          # every step regardless of what this allowlist permits. Read(path)/
+          # Glob(path) specifiers in --allowedTools are consulted by Claude
+          # Code (docs.claude.com/en/docs/claude-code/permissions);
+          # Grep(path) specifiers are only a "best-effort" match and are not
+          # one of the documented enforced exceptions, so Grep is closed the
+          # other way: a Read deny rule also gates Grep/Glob's target
+          # directory, so --disallowedTools blocks the credential paths
+          # outright regardless of which read tool is used. There is no
+          # posting tool of ANY kind in this allowlist either -- because any
+          # tool that lets the model publish something is exploitable by a
+          # prompt-injected PR: it controls what gets posted and when. Claude
+          # can only read pr-head/pr-context and write its findings to a
+          # file; whether that file is ever published is entirely up to the
+          # deterministic step below.
+          claude_args: >-
+            --add-dir pr-head
+            --allowedTools Read(./pr-head/**),Grep(./pr-head/**),Glob(./pr-head/**),Read(./pr-context/**),Write(./claude-review-body.md)
+            --disallowedTools Read(//tmp/**),Read(/${{ runner.temp }}/**),Read(**/.git/**)
+            --max-turns 40
+      - name: Post Claude's review (deterministic -- no model in this step)
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_TRIGGER_TOKEN || github.token }}
+          HAVE_PAT: ${{ secrets.CODEX_TRIGGER_TOKEN != '' }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          file=claude-review-body.md
+          stamp="Claude review -- Reviewed commit: $HEAD_SHA"
+          if [ ! -f "$file" ]; then
+            echo "::error::$file was not produced by the review step; posting nothing."
+            exit 1
+          fi
+          first_line="$(head -n 1 -- "$file")"
+          if [ "$first_line" != "$stamp" ]; then
+            echo "::error::$file's first line does not match the expected stamp for head commit $HEAD_SHA; posting nothing."
+            echo "::error::expected: $stamp"
+            echo "::error::got:      $first_line"
+            exit 1
+          fi
+          if [ "$HAVE_PAT" != "true" ]; then
+            echo "::warning::CODEX_TRIGGER_TOKEN is not set; posting this review as github-actions[bot] via GITHUB_TOKEN. codex-gate.yaml does not trust that login, so this review will NOT satisfy the gate. Add the secret (fine-grained PAT, this repo, Pull requests: write) to restore trust and auto-retrigger."
+          fi
+          gh pr review "$PR" --repo "$REPO" --comment --body-file "$file"
