@@ -32,11 +32,18 @@ class SourceFactory(abc.ABC):
     def uuid(self) -> str:
         """A unique identifier for the data source."""
 
-    @property
-    def cache_identity(self) -> str:
-        """Fingerprint source content and interpretation, including timestamp options."""
+    def cache_identity(self, source_uuid: str | None = None) -> str:
+        """Fingerprint source content and interpretation, including timestamp options.
+
+        Args:
+            source_uuid: Precomputed value of `self.uuid`, reused so callers that
+                also need the raw uuid (e.g. for the cache path) don't hash the
+                source content a second time. Computed here if omitted.
+
+        """
+        source_uuid = self.uuid if source_uuid is None else source_uuid
         payload = json.dumps(
-            [type(self).__module__, self.uuid, self.metadata], sort_keys=True, default=str
+            [type(self).__module__, source_uuid, self.metadata], sort_keys=True, default=str
         )
         return hashlib.sha256(payload.encode()).hexdigest()
 

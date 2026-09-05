@@ -186,3 +186,33 @@ def test_cache_hit_does_not_require_writable_lock_file(
     monkeypatch.setattr(filelock.FileLock, "acquire", deny_acquire)
     result = cache.arrow_relation(path, schema, lambda: _batches(999), True)
     assert result.fetchall() == [(1,)]
+
+
+def test_to_duckdb_hashes_source_content_once_per_lookup(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`cache_identity` and the cache path must share one content fingerprint.
+
+    `factory.cache_identity` already hashes every source byte via `factory.uuid`;
+    a second, separate call to `factory.uuid` to build the cache path doubles
+    the I/O on every lookup, cache hits included.
+    """
+    from src.message.pyarrow.csv import MessageDataset
+    from src.topic.pyarrow.csv import TopicRegistry
+
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+    calls: list[pathlib.Path] = []
+    original = base.FileBasedSourceFactory._md5_hash
+
+    def counting(self: base.FileBasedSourceFactory, file_path: pathlib.Path) -> str:
+        calls.append(file_path)
+        return original(self, file_path)
+
+    monkeypatch.setattr(base.FileBasedSourceFactory, "_md5_hash", counting)
+
+    factory = SourceFactory(SAMPLE)
+    registry = TopicRegistry()
+    dataset = MessageDataset()
+    dataset.to_duckdb(factory, registry)
+
+    assert len(calls) == 1
