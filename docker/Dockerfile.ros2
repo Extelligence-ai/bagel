@@ -67,6 +67,7 @@ EXPOSE ${JUPYTER_PORT}
 COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
 COPY --chown=${USERNAME}:${USERNAME} run.py ./run.py
 COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
+COPY --chown=${USERNAME}:${USERNAME} demo.py ./demo.py
 COPY --chown=${USERNAME}:${USERNAME} src ./src
 # MCAP as a first-class format (no ROS required)
 
