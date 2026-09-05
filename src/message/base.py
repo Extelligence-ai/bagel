@@ -161,8 +161,9 @@ class MessageDataset(abc.ABC):
         schema = self._schema(
             factory, registry, topics or registry.available_topics(factory.build())
         )
+        source_uuid = factory.uuid
         seeds = [
-            factory.cache_identity,
+            factory.cache_identity(source_uuid),
             type(self).__module__,
             *(topics or [str(None)]),
             str(start_seconds),
@@ -170,7 +171,7 @@ class MessageDataset(abc.ABC):
             str(ffill),
             _schema_fingerprint(schema),
         ]
-        arrow_file = artifacts.arrow_file(factory.uuid, seeds, "topics")
+        arrow_file = artifacts.arrow_file(source_uuid, seeds, "topics")
 
         def batches() -> Iterator[pa.RecordBatch]:
             data_source = factory.build()
@@ -179,6 +180,19 @@ class MessageDataset(abc.ABC):
             yield from self._record_batches(messages, schema, ffill)
 
         return cache.arrow_relation(arrow_file, schema, batches, self._use_cache)
+
+    def bounds(self, factory: SourceFactory, registry: TopicRegistry) -> tuple[float, float]:
+        """Return the source's overall timestamp bounds, aggregated over all topics.
+
+        Subclasses whose `to_duckdb` expands to every table/measurement when `topics`
+        is omitted (databases, e.g. Postgres/InfluxDB) should override this with a
+        source-specific aggregate over eligible timestamp streams instead of relying
+        on the default full-relation scan below.
+        """
+        relation = self.to_duckdb(factory, registry)
+        timestamp = settings.TIMESTAMP_SECONDS_COLUMN_NAME
+        row = relation.aggregate(f'min("{timestamp}"), max("{timestamp}")').fetchone()
+        return (float(row[0]), float(row[1])) if row and row[0] is not None else (0.0, 0.0)
 
     def _schema(
         self,

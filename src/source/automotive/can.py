@@ -206,10 +206,9 @@ class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
         self._log = CanLog(path=path, dbc=dbc)
         self._dbc_digest = self._md5_hash(pathlib.Path(dbc))
 
-    @property
-    def cache_identity(self) -> str:
+    def cache_identity(self, source_uuid: str | None = None) -> str:
         """Include the loaded DBC's scaling and decoding rules in cached results."""
-        return super().cache_identity + self._dbc_digest
+        return super().cache_identity(source_uuid) + self._dbc_digest
 
     @property
     def metadata(self) -> dict[str, Any]:

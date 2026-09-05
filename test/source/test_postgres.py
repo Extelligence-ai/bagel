@@ -13,7 +13,11 @@ import os
 import pytest
 
 from src.di.types import data_source
+from src.message import postgres as message_postgres
+from src.query import connection
 from src.source import postgres
+from src.source.context import SourceContext
+from src.topic.postgres import TopicRegistry
 
 PG_URL = os.environ.get("BAGEL_POSTGRES_TEST_URL")
 
@@ -77,6 +81,46 @@ def test_timestamp_column_missing_raises_actionable_error(
     )
     with pytest.raises(ValueError, match="timestamp_columns"):
         database.timestamp_column("readings")
+
+
+def test_bounds_skips_tables_without_a_detectable_timestamp_column(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A table lacking a timestamp column must not block bounds() on the others.
+
+    Regression for PR #237 review (src/source/context.py:50): `SourceContext.bounds()`
+    called `to_duckdb()` with no `topics`, so it expanded to every table via
+    `_topic_select`, which calls `timestamp_column()` unconditionally -- raising
+    for any unrelated table lacking a detectable timestamp column even though only
+    the eligible tables matter for the source's overall bounds.
+    """
+    monkeypatch.setattr(postgres, "attach", lambda url: "pg_test")
+    monkeypatch.setattr(
+        postgres.PostgresDatabase, "relation_name", lambda self, topic: f'"{topic}"'
+    )
+    monkeypatch.setattr(
+        postgres.PostgresDatabase,
+        "tables",
+        lambda self: [("public", "events"), ("public", "opaque")],
+    )
+
+    connection().execute("CREATE OR REPLACE TABLE events (t TIMESTAMP, v INTEGER)")
+    connection().execute(
+        "INSERT INTO events VALUES "
+        "(TIMESTAMP '2024-01-01 00:00:00', 1), (TIMESTAMP '2024-01-01 00:02:00', 2)"
+    )
+    connection().execute("CREATE OR REPLACE TABLE opaque (v INTEGER)")
+    connection().execute("INSERT INTO opaque VALUES (1), (2)")
+
+    factory = postgres.SourceFactory(path="postgres://h/db")
+    context = SourceContext(
+        factory=factory, registry=TopicRegistry(), dataset=message_postgres.MessageDataset()
+    )
+
+    start, end = context.bounds()
+
+    assert start == pytest.approx(1704067200.0)  # 2024-01-01T00:00:00Z
+    assert end == pytest.approx(1704067320.0)  # 2024-01-01T00:02:00Z
 
 
 # -- live database ------------------------------------------------------------------

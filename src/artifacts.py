@@ -82,10 +82,39 @@ def evict_arrow_cache() -> int:
     rebuild on demand, so deletion is always safe. Called before each new cache
     write; the incoming file may overshoot the cap until the next write evicts.
     Returns the number of files deleted; no-op when CACHE_MAX_BYTES is 0.
+
+    The inventory-and-delete pass runs under one cache-wide, nonblocking lock so
+    two concurrent callers never each compute a total against a stale snapshot
+    and delete more entries between them than the cap requires; a caller that
+    loses the race backs off and returns 0, leaving eviction to the pass already
+    running. Per-entry locks are still used for the actual deletes so eviction
+    keeps skipping entries a reader or writer currently holds.
     """
     limit_bytes = settings.CACHE_MAX_BYTES
     if not limit_bytes:
         return 0
+    data_directory = pathlib.Path(settings.CACHE_DIRECTORY) / "data"
+    data_directory.mkdir(parents=True, exist_ok=True)
+    try:
+        with filelock.FileLock(str(data_directory / ".eviction.lock"), timeout=0):
+            deleted = _evict_arrow_cache_locked(limit_bytes)
+    except filelock.Timeout:
+        return 0  # another eviction pass is already in flight
+    if deleted:
+        logging.warning(
+            "Evicted %d cached arrow file(s) to keep the query cache under %d bytes "
+            "(CACHE_MAX_BYTES; 0 disables eviction)",
+            deleted,
+            limit_bytes,
+        )
+    return deleted
+
+
+def _evict_arrow_cache_locked(limit_bytes: int) -> int:
+    """Delete oldest-by-access cached files until under `limit_bytes`.
+
+    Callers must hold the cache-wide eviction lock; see `evict_arrow_cache`.
+    """
     entries = []
     for file in cached_arrow_files():
         try:
@@ -105,13 +134,6 @@ def evict_arrow_cache() -> int:
             continue
         total -= size
         deleted += 1
-    if deleted:
-        logging.warning(
-            "Evicted %d cached arrow file(s) to keep the query cache under %d bytes "
-            "(CACHE_MAX_BYTES; 0 disables eviction)",
-            deleted,
-            limit_bytes,
-        )
     return deleted
 
 
