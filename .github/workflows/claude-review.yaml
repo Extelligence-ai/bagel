@@ -21,9 +21,12 @@
 #
 # Prompt-injection defense: the PR content Claude reads is untrusted, so its
 # reads are path-scoped to the two checkouts (Read/Glob path specifiers) and
-# its `gh` access is limited to read/review verbs only; the OIDC identity
-# file lives under runner.temp -- outside any path Claude can read -- as
-# defense-in-depth in case a scoping rule is bypassed.
+# its `gh` access is limited to read-only verbs plus a narrow review-posting
+# wrapper (scripts/post-claude-review.sh) that only accepts an inline body
+# string -- unlike raw `gh pr review`, it has no `--body-file`/`-F` escape
+# hatch `gh` could use to read and publish an arbitrary local file (see PR
+# #235 review discussion). The OIDC identity file lives under runner.temp --
+# outside any path Claude can read -- as defense-in-depth on top of that.
 name: claude-review
 on:
   issue_comment:
@@ -103,12 +106,15 @@ jobs:
             Review pull request #${{ github.event.issue.number }} in this repository
             (head commit ${{ steps.pr.outputs.head_sha }}). Fetch the diff with
             `gh pr diff ${{ github.event.issue.number }}` and read any file you need
-            under ./pr-head at the PR's head. Hunt for real defects: correctness,
-            data loss, concurrency, security, contract breaks. Ignore style. Then
-            submit ONE pull-request review via
-            `gh pr review ${{ github.event.issue.number }} --comment --body "..."`
-            whose body STARTS with the exact line:
-            "Claude review -- Reviewed commit: ${{ steps.pr.outputs.head_sha }}"
+            ONLY under ./pr-head at the PR's head -- never read or search outside
+            that directory. Hunt for real defects: correctness, data loss,
+            concurrency, security, contract breaks. Ignore style. Then submit ONE
+            pull-request review by running
+            `./.github/scripts/post-claude-review.sh ${{ github.event.issue.number }} "..."`
+            with exactly two arguments -- the PR number and the review body as a
+            plain inline string. Never pass a file path as the body argument and
+            never invoke `gh pr review` directly. The body STARTS with the exact
+            line: "Claude review -- Reviewed commit: ${{ steps.pr.outputs.head_sha }}"
             followed by your findings ranked by severity (or "No findings that
             block merge." if clean).
           # Read(path)/Glob(path) specifiers in --allowedTools are consulted
@@ -117,9 +123,13 @@ jobs:
           # one of the documented enforced exceptions, so Grep is closed the
           # other way: a Read deny rule also gates Grep/Glob's target
           # directory, so --disallowedTools blocks the credential paths
-          # outright regardless of which read tool is used.
+          # outright regardless of which read tool is used. `gh pr review` is
+          # NOT in the allowlist -- posting goes through
+          # post-claude-review.sh, which only accepts an inline body string
+          # and has no --body-file/-F equivalent `gh` could use to read and
+          # publish an arbitrary local file.
           claude_args: >-
             --add-dir pr-head
-            --allowedTools Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Read(./**),Grep(./**),Glob(./**)
+            --allowedTools Bash(gh pr diff:*),Bash(gh pr view:*),Bash(./.github/scripts/post-claude-review.sh:*),Read(./pr-head/**),Grep(./pr-head/**),Glob(./pr-head/**)
             --disallowedTools Read(//tmp/**),Read(/${{ runner.temp }}/**)
             --max-turns 40
