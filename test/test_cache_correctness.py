@@ -125,3 +125,64 @@ def test_eviction_skips_locked_entry(monkeypatch: pytest.MonkeyPatch) -> None:
     with filelock.FileLock(str(path) + ".lock"):
         assert artifacts.evict_arrow_cache() == 0
     assert artifacts.evict_arrow_cache() == 1
+
+
+def test_concurrent_eviction_passes_are_serialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two racing eviction passes must not each independently over-evict.
+
+    Without a cache-wide eviction lock, two callers can each inventory the same
+    over-limit cache using their own local running total, skip files the other
+    is mid-deleting, and each delete different entries -- evicting far more
+    than the single pass required. Serializing on one lock file makes a second,
+    concurrent pass back off (return 0) instead of computing against stale
+    sizes.
+    """
+    data_directory = pathlib.Path(settings.CACHE_DIRECTORY) / "data"
+    path = data_directory / "source_id=test/a.arrow"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"123")
+    monkeypatch.setattr(settings, "CACHE_MAX_BYTES", 1)
+    # Simulate another eviction pass already in flight by holding the
+    # cache-wide eviction lock ourselves.
+    with filelock.FileLock(str(data_directory / ".eviction.lock")):
+        assert artifacts.evict_arrow_cache() == 0
+    assert path.exists()
+    assert artifacts.evict_arrow_cache() == 1
+
+
+def test_cache_hit_is_served_even_when_entry_exceeds_cache_max_bytes(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single oversized entry must not evict-then-rebuild on every lookup."""
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+    monkeypatch.setattr(settings, "CACHE_MAX_BYTES", 1)
+    path = tmp_path / "data" / "source_id=abc" / "topics_x.arrow"
+    schema = next(_batches(1)).schema
+    calls = []
+
+    def batches() -> Iterator[pa.RecordBatch]:
+        calls.append(True)
+        yield from _batches(1)
+
+    cache.arrow_relation(path, schema, batches, True)
+    assert len(calls) == 1
+
+    result = cache.arrow_relation(path, schema, batches, True)
+    assert result.fetchall() == [(1,)]
+    assert len(calls) == 1  # served from cache, not rebuilt
+
+
+def test_cache_hit_does_not_require_writable_lock_file(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read-only cache mount must still serve a cache hit for an existing entry."""
+    path = tmp_path / "snapshot.arrow"
+    schema = next(_batches(1)).schema
+    cache.arrow_relation(path, schema, lambda: _batches(1), True)
+
+    def deny_acquire(self: filelock.FileLock, *_a: object, **_k: object) -> None:
+        raise OSError("Read-only file system")
+
+    monkeypatch.setattr(filelock.FileLock, "acquire", deny_acquire)
+    result = cache.arrow_relation(path, schema, lambda: _batches(999), True)
+    assert result.fetchall() == [(1,)]
