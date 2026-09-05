@@ -44,4 +44,8 @@ class SourceContext:
         """Return whole-source bounds, not just the event topic's observed span."""
         if isinstance(self.factory, BoundedSourceFactory):
             return self.factory.start_seconds, self.factory.end_seconds
-        return self.dataset.bounds(self.factory, self.registry)
+        # self.dataset is MessageDataset, which sits outside this file's strict
+        # mypy allowlist (follow_imports = "skip"); mypy therefore treats the
+        # whole class -- and this call's return -- as Any. Cast at this DI
+        # boundary the same way build() already does for factory/registry/dataset.
+        return cast(tuple[float, float], self.dataset.bounds(self.factory, self.registry))
