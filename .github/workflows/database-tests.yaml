@@ -19,7 +19,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready --health-interval 5s
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
           --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -50,4 +50,6 @@ jobs:
           if-no-files-found: error
       - name: Stop disposable InfluxDB
         if: always()
-        run: docker rm -f bagel-ci-influx
+        run: |
+          docker logs bagel-ci-influx
+          docker rm -f bagel-ci-influx

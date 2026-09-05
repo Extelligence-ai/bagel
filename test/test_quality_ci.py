@@ -1,9 +1,23 @@
 """Regression checks for the gates that guard quality themselves."""
 
+from contextlib import nullcontext
+from unittest.mock import Mock
+
 import pytest
 
+from scripts import seed_databases
 from scripts.audit_dependencies import vulnerabilities
 from scripts.check_coverage import check_report, expected_files
+
+
+def test_influx_startup_connection_reset_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("POSTGRES_CONTAINER", "ci-owned-container")
+    monkeypatch.setattr(seed_databases.subprocess, "run", Mock())
+    monkeypatch.setattr(seed_databases.time, "sleep", Mock())
+    request = Mock(side_effect=[ConnectionResetError("starting"), nullcontext()])
+    monkeypatch.setattr(seed_databases.urllib.request, "urlopen", request)
+    seed_databases.main()
+    assert request.call_count == 2
 
 
 def test_expected_coverage_inputs_include_every_matrix_entry() -> None:
