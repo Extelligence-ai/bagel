@@ -10,13 +10,24 @@ name: codex-gate
 # Codex app ignores bot-authored triggers, comment "@codex review" manually
 # and the gate turns green when the review lands.
 #
-# Claude's reviews are authored by claude[bot] -- claude-code-action@v1 uses
-# its own exchanged GitHub App installation token by default (no GH_TOKEN
-# override in claude-review.yaml), not the workflow's GITHUB_TOKEN. GitHub
-# suppresses new workflow runs for events created with a repo's GITHUB_TOKEN,
-# but that suppression does not apply to a separate GitHub App's token, so a
-# claude[bot]-authored review still fires pull_request_review and re-triggers
-# this gate normally -- no outage-fallback special-casing needed.
+# Claude's reviews are posted by a deterministic, non-model shell step in
+# claude-review.yaml (see that file's header) authenticated with the
+# workflow's own GITHUB_TOKEN, so they're authored by github-actions[bot],
+# not claude[bot] -- the model itself is given no posting capability at all,
+# because any tool that lets it publish something is exploitable by a
+# prompt-injected PR (see PR #235 review discussion). Trust here rests on
+# claude-review.yaml's own controls -- its comment trigger is restricted to
+# OWNER/MEMBER/COLLABORATOR, and its posting step independently validates
+# the "Reviewed commit: <sha>" stamp against the real head commit before
+# ever calling `gh pr review` -- not on the github-actions[bot] login by
+# itself; `claude[bot]` stays in the accepted-logins list below too, in case
+# a future revision restores direct App-token posting.
+#
+# GitHub suppresses new workflow runs for events created with a repo's
+# GITHUB_TOKEN, so a github-actions[bot]-authored review from claude-review.yaml
+# does NOT fire pull_request_review and won't auto-retrigger this gate --
+# same caveat as the auto-trigger comment above: comment "@codex review" (or
+# push a new commit) to re-run the gate once the review has landed.
 
 on:
   pull_request:
@@ -44,7 +55,7 @@ jobs:
           reviewed_shas() {
             {
               gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
-                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "claude[bot]") | .body' || true
+                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "claude[bot]" or .user.login == "github-actions[bot]") | .body' || true
               gh api "repos/$REPO/issues/$PR/comments" --paginate \
                 --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body' || true
             } | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \

@@ -19,14 +19,27 @@
 # (identifiers only -- useless without a JWT GitHub will only sign for
 # this repo's own workflow runs).
 #
-# Prompt-injection defense: the PR content Claude reads is untrusted, so its
-# reads are path-scoped to the two checkouts (Read/Glob path specifiers) and
-# its `gh` access is limited to read-only verbs plus a narrow review-posting
-# wrapper (scripts/post-claude-review.sh) that only accepts an inline body
-# string -- unlike raw `gh pr review`, it has no `--body-file`/`-F` escape
-# hatch `gh` could use to read and publish an arbitrary local file (see PR
-# #235 review discussion). The OIDC identity file lives under runner.temp --
-# outside any path Claude can read -- as defense-in-depth on top of that.
+# Prompt-injection defense: the PR content Claude reads is untrusted, so it
+# gets NO posting capability at all -- every prior attempt to let the model
+# post (raw `gh pr review`, then a narrowed wrapper script) still let an
+# injected prompt control what got published and when, because the model's
+# own Bash tool was the thing doing the posting (see PR #235 review
+# discussion). Instead: Claude's `gh` access is read-only (`gh pr diff`,
+# `gh pr view`), its Read/Grep/Glob reads are scoped to ./pr-head/**, and it
+# writes its findings to ./claude-review-body.md via the Write tool -- that
+# is the full extent of what it can do. A separate, deterministic shell step
+# with no model in the loop then validates that the file exists and starts
+# with the exact "Reviewed commit: <sha>" stamp for the real head commit,
+# and only then posts it with `gh pr review`. A missing or malformed file
+# means nothing gets posted and the job fails visibly. The OIDC identity
+# file lives under runner.temp -- outside any path Claude can read -- as
+# further defense-in-depth, though the model can no longer publish anything
+# regardless of what it reads.
+#
+# Trade-off: the posting step runs as a plain shell step authenticated with
+# GITHUB_TOKEN, not through claude-code-action's exchanged GitHub App token,
+# so the review is authored by github-actions[bot], not claude[bot]. See the
+# note in codex-gate.yaml.
 name: claude-review
 on:
   issue_comment:
@@ -108,13 +121,13 @@ jobs:
             `gh pr diff ${{ github.event.issue.number }}` and read any file you need
             ONLY under ./pr-head at the PR's head -- never read or search outside
             that directory. Hunt for real defects: correctness, data loss,
-            concurrency, security, contract breaks. Ignore style. Then submit ONE
-            pull-request review by running
-            `./.github/scripts/post-claude-review.sh ${{ github.event.issue.number }} "..."`
-            with exactly two arguments -- the PR number and the review body as a
-            plain inline string. Never pass a file path as the body argument and
-            never invoke `gh pr review` directly. The body STARTS with the exact
-            line: "Claude review -- Reviewed commit: ${{ steps.pr.outputs.head_sha }}"
+            concurrency, security, contract breaks. Ignore style. Then WRITE your
+            findings to the file ./claude-review-body.md (create or overwrite it) --
+            do not run `gh pr review`, do not run any other Bash command, and do not
+            attempt to post or publish anything yourself. A separate, deterministic
+            step (no model involved) reads that file and posts it as the PR review.
+            The file's FIRST LINE must be exactly:
+            "Claude review -- Reviewed commit: ${{ steps.pr.outputs.head_sha }}"
             followed by your findings ranked by severity (or "No findings that
             block merge." if clean).
           # Read(path)/Glob(path) specifiers in --allowedTools are consulted
@@ -123,13 +136,37 @@ jobs:
           # one of the documented enforced exceptions, so Grep is closed the
           # other way: a Read deny rule also gates Grep/Glob's target
           # directory, so --disallowedTools blocks the credential paths
-          # outright regardless of which read tool is used. `gh pr review` is
-          # NOT in the allowlist -- posting goes through
-          # post-claude-review.sh, which only accepts an inline body string
-          # and has no --body-file/-F equivalent `gh` could use to read and
-          # publish an arbitrary local file.
+          # outright regardless of which read tool is used. There is no
+          # posting tool of ANY kind in this allowlist -- no `gh pr review`,
+          # no wrapper script -- because any tool that lets the model publish
+          # something is exploitable by a prompt-injected PR: it controls
+          # what gets posted and when. Claude can only write its findings to
+          # a file; whether that file is ever published is entirely up to
+          # the deterministic step below.
           claude_args: >-
             --add-dir pr-head
-            --allowedTools Bash(gh pr diff:*),Bash(gh pr view:*),Bash(./.github/scripts/post-claude-review.sh:*),Read(./pr-head/**),Grep(./pr-head/**),Glob(./pr-head/**)
+            --allowedTools Bash(gh pr diff:*),Bash(gh pr view:*),Read(./pr-head/**),Grep(./pr-head/**),Glob(./pr-head/**),Write(./claude-review-body.md)
             --disallowedTools Read(//tmp/**),Read(/${{ runner.temp }}/**)
             --max-turns 40
+      - name: Post Claude's review (deterministic -- no model in this step)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          file=claude-review-body.md
+          stamp="Claude review -- Reviewed commit: $HEAD_SHA"
+          if [ ! -f "$file" ]; then
+            echo "::error::$file was not produced by the review step; posting nothing."
+            exit 1
+          fi
+          first_line="$(head -n 1 -- "$file")"
+          if [ "$first_line" != "$stamp" ]; then
+            echo "::error::$file's first line does not match the expected stamp for head commit $HEAD_SHA; posting nothing."
+            echo "::error::expected: $stamp"
+            echo "::error::got:      $first_line"
+            exit 1
+          fi
+          gh pr review "$PR" --repo "$REPO" --comment --body-file "$file"
