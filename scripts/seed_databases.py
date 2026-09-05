@@ -3,7 +3,6 @@
 import os
 import subprocess
 import time
-import urllib.error
 import urllib.request
 
 
@@ -41,7 +40,7 @@ def main() -> None:
         try:
             with urllib.request.urlopen(request, timeout=5):  # noqa: S310 -- fixed localhost CI service
                 return
-        except (urllib.error.URLError, TimeoutError):
+        except OSError:
             if attempt == attempts - 1:
                 raise
             time.sleep(2)
