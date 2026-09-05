@@ -18,6 +18,12 @@
 #   ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID
 # (identifiers only -- useless without a JWT GitHub will only sign for
 # this repo's own workflow runs).
+#
+# Prompt-injection defense: the PR content Claude reads is untrusted, so its
+# reads are path-scoped to the two checkouts (Read/Glob path specifiers) and
+# its `gh` access is limited to read/review verbs only; the OIDC identity
+# file lives under runner.temp -- outside any path Claude can read -- as
+# defense-in-depth in case a scoping rule is bypassed.
 name: claude-review
 on:
   issue_comment:
@@ -41,8 +47,14 @@ jobs:
       ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
       ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
       ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
-      ANTHROPIC_IDENTITY_TOKEN_FILE: /tmp/gha-jwt
     steps:
+      - name: Point the identity token file outside the workspace
+        # runner.temp, not /tmp: outside the workspace and outside any path
+        # Claude's scoped Read/Glob rules can reach (see claude_args below).
+        # The `runner` context isn't available in a job-level `env:` block,
+        # so resolve it here (RUNNER_TEMP is always set for every step) and
+        # export it via GITHUB_ENV for the rest of the job.
+        run: echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$RUNNER_TEMP/gha-jwt" >> "$GITHUB_ENV"
       - name: Resolve the PR head
         id: pr
         env:
@@ -66,7 +78,9 @@ jobs:
           set -uo pipefail
           fetch() {
             local tmp
-            tmp="$(mktemp)"
+            # Create the temp file next to the target so the final mv is an
+            # atomic same-filesystem rename.
+            tmp="$(mktemp "${ANTHROPIC_IDENTITY_TOKEN_FILE}.XXXXXX")"
             if curl -sS -f -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
                 "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
                 | jq -er .value > "$tmp"; then
@@ -97,7 +111,15 @@ jobs:
             "Claude review -- Reviewed commit: ${{ steps.pr.outputs.head_sha }}"
             followed by your findings ranked by severity (or "No findings that
             block merge." if clean).
+          # Read(path)/Glob(path) specifiers in --allowedTools are consulted
+          # by Claude Code (docs.claude.com/en/docs/claude-code/permissions);
+          # Grep(path) specifiers are only a "best-effort" match and are not
+          # one of the documented enforced exceptions, so Grep is closed the
+          # other way: a Read deny rule also gates Grep/Glob's target
+          # directory, so --disallowedTools blocks the credential paths
+          # outright regardless of which read tool is used.
           claude_args: >-
             --add-dir pr-head
-            --allowedTools Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Read,Grep,Glob
+            --allowedTools Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Read(./**),Grep(./**),Glob(./**)
+            --disallowedTools Read(//tmp/**),Read(/${{ runner.temp }}/**)
             --max-turns 40
