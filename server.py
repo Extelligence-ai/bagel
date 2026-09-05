@@ -3,6 +3,7 @@
 import hashlib
 import logging
 import pathlib
+from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
@@ -12,7 +13,7 @@ import yaml
 from poml import poml
 
 from settings import settings
-from src import artifacts, mcp_compat
+from src import artifacts, mcp_compat, query
 from src.agent import capabilities as agent_capabilities
 from src.di import module
 from src.di.types.base_module import BaseModule
@@ -31,6 +32,7 @@ from src.pipeline import (
 )
 from src.pipeline.tasks.waffle import snap as waffle_snap
 from src.sink import startup
+from src.source.context import SourceContext
 
 server = mcp_compat.create_server(
     name="Bagel MCP Server",
@@ -222,16 +224,11 @@ def query_messages(  # noqa: PLR0913
             ... )
 
     """
-    ds_type = resolve(path)
-    factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    source = SourceContext.build(path, args)
+    relation = source.dataset.to_duckdb(
+        source.factory, source.registry, [topic], start_seconds, end_seconds
     )
-    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
-    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
-
-    relation = dataset.to_duckdb(factory, registry, [topic], start_seconds, end_seconds)
-    duckdb.register(topic, relation)
-    result = duckdb.sql(sql_statement)
+    result = query.sql(relation, topic, sql_statement)
     return result.to_df().to_dict(orient="records")
 
 
@@ -695,22 +692,23 @@ def preview_pipeline(  # noqa: PLR0913
             ...                  "linear_acceleration_x < -10", pre_seconds=10, post_seconds=10)
 
     """
-    ds_type = resolve(path)
-    factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
-    )
-    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
-    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
-
-    relation = dataset.to_duckdb(factory, registry, [event_topic])
+    source = SourceContext.build(path, args)
+    bounds = source.bounds()
+    relation = source.dataset.to_duckdb(source.factory, source.registry, [event_topic])
     ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
-    rows = relation.project(f"{ts_column} AS ts, ({predicate}) AS hit").fetchall()
-
-    timestamps = [float(row[0]) for row in rows]
-    span_seconds = (max(timestamps) - min(timestamps)) if timestamps else 0.0
+    rows = windows.relation_rows(
+        relation.project(f"{ts_column} AS ts, ({predicate}) AS hit").order("ts")
+    )
+    span_seconds = bounds[1] - bounds[0]
 
     plan = windows.plan_reduction(
-        rows, pre_seconds, post_seconds, span_seconds, min_gap_seconds=debounce_seconds
+        rows,
+        pre_seconds,
+        post_seconds,
+        span_seconds,
+        min_gap_seconds=debounce_seconds,
+        bounds=bounds,
+        ordered=True,
     )
     return {
         "event_count": len(plan["events"]),
@@ -994,7 +992,8 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
     produced = pipeline.run_all()
     return {
         "pipeline": pipeline.name,
-        "status": "completed",
+        "status": pipeline.summary.status,
+        "runs": asdict(pipeline.summary),
         "artifacts": [str(path) for path in produced],
     }
 

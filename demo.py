@@ -24,10 +24,10 @@ import statistics
 import sys
 from typing import Any
 
-import duckdb
 import pandas as pd
 
 from settings import settings
+from src import query
 from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.data_source import DataSource, resolve
@@ -292,7 +292,6 @@ def _field_expr(topic: str, field_path: list[str]) -> str:
 def _query_field(ctx: Context, topic: str, field_path: list[str]) -> pd.DataFrame:
     """Return a (t, value) dataframe for one field of one topic, t relative to log start."""
     relation = ctx.dataset.to_duckdb(ctx.factory, ctx.registry, [topic])
-    duckdb.register(topic, relation)
     expr = _field_expr(topic, field_path)
     # expr/topic are escaped identifiers (see _quote_ident); TIMESTAMP_COL is
     # from settings, never raw user input.
@@ -300,7 +299,12 @@ def _query_field(ctx: Context, topic: str, field_path: list[str]) -> pd.DataFram
         f"SELECT {TIMESTAMP_COL} AS ts, {expr} AS value "  # noqa: S608
         f"FROM {_quote_ident(topic)} ORDER BY {TIMESTAMP_COL}"
     )
-    df = duckdb.sql(sql).df()
+    # query.sql scopes the registration to this relation's own connection
+    # (see src/query.py): the dataset's relation may live on a different
+    # DuckDB connection than the module-global `duckdb`, so registering it
+    # there and querying via `duckdb.sql` would raise "created by another
+    # Connection" (or silently touch the wrong table on a busier process).
+    df = query.sql(relation, topic, sql).df()
     df["t"] = df["ts"] - ctx.start_seconds
     df["value"] = df["value"].astype(float)
     return df

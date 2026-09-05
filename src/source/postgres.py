@@ -8,7 +8,6 @@ The data source `path` is a standard connection URL, e.g.
 ``postgres://user:pass@host:5432/dbname``.
 """
 
-import functools
 import re
 import uuid
 from typing import Any
@@ -18,6 +17,7 @@ import duckdb
 from pydantic import BaseModel, Field
 
 from src.di import module
+from src.query import connection
 from src.source.redact import REDACTED, redact_url, scrub_secrets
 
 # Matches a `user:password@` fragment embedded anywhere in arbitrary text (e.g. an
@@ -59,19 +59,18 @@ def attach_name(url: str) -> str:
     return "pg_" + uuid.uuid5(uuid.NAMESPACE_URL, url).hex[:12]
 
 
-@functools.lru_cache
 def attach(url: str) -> str:
-    """Attach the database read-only on the global DuckDB connection (once per URL).
+    """Attach the database read-only on the calling thread's DuckDB connection.
 
     Returns:
         The DuckDB catalog name of the attached database.
 
     """
-    duckdb.install_extension("postgres")
-    duckdb.load_extension("postgres")
+    connection().install_extension("postgres")
+    connection().load_extension("postgres")
     name = attach_name(url)
     safe_url = url.replace("'", "''")
-    duckdb.execute(f"ATTACH IF NOT EXISTS '{safe_url}' AS {name} (TYPE postgres, READ_ONLY)")
+    connection().execute(f"ATTACH IF NOT EXISTS '{safe_url}' AS {name} (TYPE postgres, READ_ONLY)")
     return name
 
 
@@ -90,11 +89,15 @@ class PostgresDatabase(BaseModel):
     def tables(self) -> list[tuple[str, str]]:
         """Return (schema, table) pairs of the user tables in the database."""
         excluded = ", ".join(f"'{schema}'" for schema in EXCLUDED_SCHEMAS)
-        rows = duckdb.execute(
-            f"SELECT schema_name, table_name FROM duckdb_tables() "  # noqa: S608
-            f"WHERE database_name = '{self.catalog}' AND schema_name NOT IN ({excluded}) "
-            f"ORDER BY schema_name, table_name"
-        ).fetchall()
+        rows = (
+            connection()
+            .execute(
+                f"SELECT schema_name, table_name FROM duckdb_tables() "  # noqa: S608
+                f"WHERE database_name = '{self.catalog}' AND schema_name NOT IN ({excluded}) "
+                f"ORDER BY schema_name, table_name"
+            )
+            .fetchall()
+        )
         return [(schema, table) for schema, table in rows]
 
     def topic_of(self, schema: str, table: str) -> str:
@@ -109,7 +112,7 @@ class PostgresDatabase(BaseModel):
 
     def columns(self, topic: str) -> list[tuple[str, str]]:
         """Return (column name, DuckDB type) pairs for a topic's table."""
-        rows = duckdb.execute(f"DESCRIBE {self.relation_name(topic)}").fetchall()
+        rows = connection().execute(f"DESCRIBE {self.relation_name(topic)}").fetchall()
         return [(row[0], row[1]) for row in rows]
 
     def timestamp_column(self, topic: str) -> str:
@@ -221,9 +224,13 @@ class SourceFactory:
         tables = []
         for schema, table in database.tables():
             topic = database.topic_of(schema, table)
-            (count,) = duckdb.execute(
-                f"SELECT COUNT(*) FROM {database.relation_name(topic)}"  # noqa: S608
-            ).fetchone()
+            (count,) = (
+                connection()
+                .execute(
+                    f"SELECT COUNT(*) FROM {database.relation_name(topic)}"  # noqa: S608
+                )
+                .fetchone()
+            )
             tables.append(
                 {
                     "topic": topic,

@@ -11,10 +11,10 @@ Both pieces here are pure (no ROS), so they are unit tested directly; the sink b
 
 from collections import deque
 
-import duckdb
 import pyarrow as pa
 
 from settings import settings
+from src import query
 
 
 class LiveEventTrigger:
@@ -104,6 +104,6 @@ def evaluate_predicate(topic: str, struct: pa.StructType, message: dict, predica
             topic: pa.array([message], type=struct),
         }
     )
-    relation = duckdb.from_arrow(table)
+    relation = query.from_arrow(table)
     row = relation.project(f"({predicate}) AS hit").fetchone()
     return bool(row[0]) if row and row[0] is not None else False

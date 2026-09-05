@@ -2,6 +2,7 @@
 
 import abc
 import hashlib
+import json
 import pathlib
 import uuid
 from typing import Any, Final
@@ -30,6 +31,21 @@ class SourceFactory(abc.ABC):
     @abc.abstractmethod
     def uuid(self) -> str:
         """A unique identifier for the data source."""
+
+    def cache_identity(self, source_uuid: str | None = None) -> str:
+        """Fingerprint source content and interpretation, including timestamp options.
+
+        Args:
+            source_uuid: Precomputed value of `self.uuid`, reused so callers that
+                also need the raw uuid (e.g. for the cache path) don't hash the
+                source content a second time. Computed here if omitted.
+
+        """
+        source_uuid = self.uuid if source_uuid is None else source_uuid
+        payload = json.dumps(
+            [type(self).__module__, source_uuid, self.metadata], sort_keys=True, default=str
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()
 
     @property
     @abc.abstractmethod
@@ -105,7 +121,12 @@ class FileBasedSourceFactory(SourceFactory):
             if self.path.is_file()
             else [f for f in sorted(self.path.glob("**/*")) if f.is_file()]
         )
-        hashes = [self._md5_hash(f) for f in files]
+        hashes = [
+            f"{f.relative_to(self.path)}:{self._md5_hash(f)}"
+            if self.path.is_dir()
+            else self._md5_hash(f)
+            for f in files
+        ]
         return str(uuid.uuid5(uuid.NAMESPACE_OID, "_".join(hashes)))
 
     @property
@@ -142,5 +163,6 @@ class FileBasedSourceFactory(SourceFactory):
         """Calculate the MD5 hash of a file."""
         hash_func = hashlib.new("md5")  # noqa: S324
         with open(file_path, "rb") as f:
-            hash_func.update(f.read(MD5_READ_SIZE))
+            while chunk := f.read(MD5_READ_SIZE):
+                hash_func.update(chunk)
         return hash_func.hexdigest()

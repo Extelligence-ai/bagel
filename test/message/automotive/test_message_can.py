@@ -2,7 +2,6 @@
 
 import pathlib
 
-import duckdb
 import pytest
 
 can = pytest.importorskip("can", reason="python-can is optional (uv sync --group automotive)")
@@ -101,10 +100,10 @@ def test_sql_over_decoded_physical_values(capture: tuple[pathlib.Path, pathlib.P
     factory, registry, dataset = _provide(capture)
 
     relation = dataset.to_duckdb(factory, registry, ["EngineData"])
-    duckdb.register("engine", relation)
-    row = duckdb.sql(
+    row = relation.query(
+        "engine",
         "SELECT MAX(\"EngineData\"['EngineSpeed']) AS top, "
-        "MIN(\"EngineData\"['EngineSpeed']) AS low FROM engine"
+        "MIN(\"EngineData\"['EngineSpeed']) AS low FROM engine",
     ).fetchone()
     assert row == (3000.0, 2100.0)  # physical values: DBC scaling applied
 

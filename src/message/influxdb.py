@@ -15,6 +15,7 @@ import pyarrow as pa
 from settings import settings
 from src.di import module
 from src.message import base
+from src.query import connection, from_arrow
 from src.source.base import SourceFactory
 from src.source.influxdb import InfluxDatabase
 from src.source.postgres import quote_identifier
@@ -63,11 +64,35 @@ class MessageDataset(base.MessageDataset):
             f"{quote_identifier(name)} := {quote_identifier(name)}"
             for name in arrow_table.schema.names
         )
-        relation = duckdb.from_arrow(arrow_table)
+        relation = from_arrow(arrow_table)
         return relation.project(
             f'epoch("time")::DOUBLE AS "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}", '
             f"struct_pack({packed}) AS {quote_identifier(topic)}"
         )
+
+    def bounds(self, factory: SourceFactory, registry: TopicRegistry) -> tuple[float, float]:
+        """Aggregate MIN/MAX time per measurement instead of downloading every row.
+
+        Unlike `to_duckdb()` (which downloads and struct-packs every measurement's
+        full rows to build a relation), this only needs each measurement's min/max
+        `time`, computed by InfluxDB itself. `epoch()` on the Arrow result matches
+        the seconds conversion `_topic_relation` uses for the full relation.
+        """
+        data_source = factory.build()
+        lo: float | None = None
+        hi: float | None = None
+        for topic in registry.available_topics(data_source):
+            arrow_table = data_source.client.query(
+                f'SELECT MIN(time) AS lo, MAX(time) AS hi FROM "{topic}"'  # noqa: S608
+            )
+            if arrow_table.num_rows == 0:
+                continue
+            row = from_arrow(arrow_table).aggregate("epoch(min(lo)), epoch(max(hi))").fetchone()
+            if row is None or row[0] is None:
+                continue
+            lo = float(row[0]) if lo is None else min(lo, float(row[0]))
+            hi = float(row[1]) if hi is None else max(hi, float(row[1]))
+        return (lo, hi) if lo is not None and hi is not None else (0.0, 0.0)
 
     def to_duckdb(  # noqa: PLR0913
         self,
@@ -89,11 +114,11 @@ class MessageDataset(base.MessageDataset):
             # union() on projections with differing struct columns lines up by position,
             # so register each relation and combine with UNION ALL BY NAME in SQL.
             alias = f"influx_{abs(hash((data_source.database, topic))) % 10**8}"
-            duckdb.register(alias, relation.arrow())
+            connection().register(alias, relation.arrow())
             select = f'SELECT * FROM "{alias}"'  # noqa: S608
             combined = select if combined is None else f"{combined} UNION ALL BY NAME {select}"
 
-        return duckdb.sql(f'{combined} ORDER BY "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}"')
+        return connection().sql(f'{combined} ORDER BY "{settings.TIMESTAMP_SECONDS_COLUMN_NAME}"')
 
     def _messages(
         self,
