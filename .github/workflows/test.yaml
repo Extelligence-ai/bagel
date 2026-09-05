@@ -13,9 +13,28 @@ on:
 permissions:
   contents: read
 
+# PR runs: key by ref (stable per PR: refs/pull/<n>/merge) and cancel a
+# superseded push to the SAME pull request -- that SHOULD cancel, it just
+# wastes CI on a commit nobody will look at again.
+#
+# Every other trigger (workflow_call from publish.yaml on a push to main,
+# merge_group, workflow_dispatch): key by github.sha instead. Each push to
+# main now gets its own concurrency group, so two overlapping publish runs'
+# validate-tests calls into this reusable workflow can never collide and
+# cancel each other -- release gating for one SHA no longer depends on a
+# shared group where a second commit's push could zero out the first
+# commit's still-running validation before its `docker` job ever runs (the
+# same drop class just fixed in publish.yaml's own concurrency group,
+# surfacing one layer down in the reusable workflow it calls -- see that
+# workflow's comment for the doc citations on GitHub's queueing behavior).
+# Because the group is already unique per SHA here, cancel-in-progress is
+# false in this branch: nothing else should ever share the group in the
+# normal case, and if this workflow is somehow re-invoked twice for the
+# identical SHA (e.g. a manual re-run), both should run to completion
+# rather than one being dropped.
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: tests-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   docker:

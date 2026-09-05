@@ -13,9 +13,15 @@ on:
 permissions:
   contents: read
 
+# Same design as test.yaml's concurrency group (see its comment for the
+# full rationale and doc citations): PR runs cancel a superseded push to
+# the same PR (keyed by ref, which SHOULD cancel); every other trigger
+# (workflow_call from publish.yaml, merge_group, workflow_dispatch) is
+# keyed by github.sha so two overlapping releases' validate-lint calls can
+# never collide and cancel each other.
 concurrency:
-  group: lint-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: lint-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ruff:
