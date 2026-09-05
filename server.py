@@ -1,14 +1,11 @@
 """Entry point for the Bagel MCP server."""
 
-import hashlib
 import logging
 import pathlib
 from dataclasses import asdict
-from datetime import datetime
 from typing import Any
 
 import duckdb
-import filelock
 import yaml
 from poml import poml
 
@@ -561,48 +558,6 @@ def save_agent_capability(name: str, content: str, overwrite: bool = False) -> d
 
 
 @server.tool(
-    title="Delete a user capability",
-    description=(
-        "Delete a capability previously saved with `save_agent_capability`, by the "
-        "exact, full `name` `list_agent_capabilities` reports (`user/`-prefixed) -- "
-        "a bare slug is rejected, since a user capability's name can shadow a builtin "
-        "of the same stem. Only user-saved capabilities can be deleted -- builtins "
-        "shipped with Bagel refuse with a clear message. An unknown name raises "
-        "rather than silently no-op-ing, listing the user capabilities that do exist."
-    ),
-    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
-)
-def delete_capability(name: str) -> dict[str, str]:
-    """Delete one user-authored capability by its full name.
-
-    Args:
-        name (str): The capability to delete, exactly as `list_agent_capabilities`
-            reports it (`user/`-prefixed, e.g. `user/battery-triage`). A bare slug
-            (`battery-triage`) is rejected -- see Raises.
-
-    Returns:
-        dict[str, str]: The deleted capability's `name` (`user/`-prefixed) and `path`.
-
-    Raises:
-        InvalidCapabilityError: If `name` lacks the `user/` prefix (whether or
-            not it names a builtin -- only the full `user/`-prefixed name is
-            accepted, since a user capability can shadow a builtin of the same
-            stem), is not a valid capability slug, would resolve outside the
-            user-capabilities directory, or does not exist -- validated before
-            any file is touched, so a rejected call deletes nothing.
-
-    Examples:
-        As an LLM prompt:
-            Delete the capability I saved as "battery-triage".
-
-        As a Python call:
-            >>> delete_capability("user/battery-triage")
-
-    """
-    return agent_capabilities.delete_capability(name)
-
-
-@server.tool(
     title="List pipeline capabilities",
     description=(
         "List the tasks and gates available to compose a data pipeline, including "
@@ -722,70 +677,6 @@ def preview_pipeline(  # noqa: PLR0913
     }
 
 
-def _pipeline_summary(text: str, yaml_file: pathlib.Path) -> str:
-    """One-line summary of a saved pipeline: task count, site/asset, cadence.
-
-    Cheap: reuses the YAML already read for the file's `name`/`path` entry --
-    no second pass over the pipeline. Falls back to the file's last-modified
-    time when the content doesn't parse as a pipeline config (e.g. a
-    hand-edited or unrelated file dropped into the directory), the same
-    fallback the tool-design review called out for anything non-trivial to
-    summarize.
-    """
-
-    def _fallback() -> str:
-        modified = datetime.fromtimestamp(yaml_file.stat().st_mtime).isoformat(timespec="seconds")
-        return f"(unrecognized pipeline file; modified {modified})"
-
-    try:
-        config = yaml.safe_load(text)
-    except yaml.YAMLError:
-        return _fallback()
-    if not isinstance(config, dict):
-        return _fallback()
-
-    try:
-        tasks = config.get("tasks")
-        task_count = len(tasks) if isinstance(tasks, list) else 0
-        site, asset = config.get("site"), config.get("asset")
-        cadence = config.get("cadence") if isinstance(config.get("cadence"), dict) else {}
-        when = cadence.get("when")
-
-        pieces = [f"{task_count} task{'s' if task_count != 1 else ''}"]
-        # str()-coerce: a hand-edited pipeline can give site/asset a non-string
-        # value (e.g. `site: 123`), which would otherwise raise TypeError from
-        # str.join and crash listing (review #224).
-        target = "/".join(str(part) for part in (site, asset) if part)
-        if target:
-            pieces.append(f"for {target}")
-        if when:
-            pieces.append(f"({when})")
-        return " ".join(pieces) + "."
-    except (TypeError, AttributeError):
-        return _fallback()
-
-
-def _pipeline_lock(directory: pathlib.Path) -> filelock.FileLock:
-    """Return the cross-process lock serializing save/delete for `directory`.
-
-    Mirrors ``agent_capabilities._save_lock``: the lock file lives under
-    ``CACHE_DIRECTORY``, never inside `directory` itself (which `save_pipeline`
-    can point at a caller-chosen location), so a planted lock-named symlink
-    there can't be followed by the lock implementation before any path check
-    runs. Keyed by the resolved directory so concurrent `save_pipeline` and
-    `delete_pipeline` calls against the same directory (in practice, the
-    trusted `settings.PIPELINES_DIRECTORY` default) serialize against each
-    other -- otherwise a delete can unlink a file after `save_pipeline` opens
-    it but before the write completes, or two deletes can both pass the
-    existence check and one raise an unexpected `FileNotFoundError` (review
-    #224).
-    """
-    locks = pathlib.Path(settings.CACHE_DIRECTORY) / "locks"
-    locks.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha256(str(directory.resolve()).encode("utf-8")).hexdigest()[:16]
-    return filelock.FileLock(str(locks / f"pipelines-{digest}.lock"))
-
-
 @server.tool(
     title="Save a pipeline to a YAML file",
     description=(
@@ -794,7 +685,7 @@ def _pipeline_lock(directory: pathlib.Path) -> filelock.FileLock:
     ),
     annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
-def save_pipeline(config: dict[str, Any], name: str, directory: str | None = None) -> str:
+def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines") -> str:
     """Write a pipeline configuration to a YAML file.
 
     Args:
@@ -802,11 +693,8 @@ def save_pipeline(config: dict[str, Any], name: str, directory: str | None = Non
             accepts and `run.py` loads): `name`, `site`, `asset`, `path`, `allow_failure`,
             `cadence`, and `tasks`.
         name (str): The pipeline file name (without extension), in lower_snake_case.
-        directory (str | None, optional): Directory to write the file into. Created if
-            missing. Defaults to `settings.PIPELINES_DIRECTORY` -- the same directory
-            `list_pipelines` and `delete_pipeline` operate on -- read live so a caller
-            explicitly wanting a different directory can still pass one for this write,
-            though only the trusted default is ever discoverable or deletable by name.
+        directory (str, optional): Directory to write the file into. Created if missing.
+            Defaults to "pipelines".
 
     Returns:
         str: The path to the written YAML file.
@@ -824,142 +712,12 @@ def save_pipeline(config: dict[str, Any], name: str, directory: str | None = Non
     if not artifacts.is_lower_snake_case(name):
         raise ValueError(f"Pipeline name '{name}' must be lower_snake_case.")
 
-    output_directory = pathlib.Path(
-        directory if directory is not None else settings.PIPELINES_DIRECTORY
-    )
+    output_directory = pathlib.Path(directory)
     output_directory.mkdir(parents=True, exist_ok=True)
     output_file = output_directory / f"{name}.yaml"
-    # Serialized with delete_pipeline's existence-check + unlink under the same
-    # lock, so a concurrent save and delete of the same name cannot race.
-    with _pipeline_lock(output_directory):
-        with open(output_file, "w") as stream:
-            yaml.safe_dump(config, stream, sort_keys=False)
+    with open(output_file, "w") as stream:
+        yaml.safe_dump(config, stream, sort_keys=False)
     return str(output_file)
-
-
-@server.tool(
-    title="List saved pipelines",
-    description=(
-        "List the pipeline YAML files saved by `save_pipeline` in the trusted pipelines "
-        "directory (`settings.PIPELINES_DIRECTORY`): each entry's `name`, `path`, and a "
-        "one-line `summary` (task count, site/asset, and cadence). Use this to discover "
-        "what has already been saved before reusing, editing, or deleting it -- instead "
-        "of guessing file names."
-    ),
-    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
-)
-def list_pipelines() -> list[dict[str, str]]:
-    """List the pipeline YAML files saved directly under the trusted pipelines directory.
-
-    Reads `settings.PIPELINES_DIRECTORY` -- the same directory `save_pipeline`
-    defaults to and `delete_pipeline` is confined to -- so a name reported
-    here is always one `delete_pipeline` can act on. There is no `directory`
-    argument: an MCP caller cannot point this at an arbitrary path.
-
-    Returns:
-        list[dict[str, str]]: One entry per `*.yaml` file directly inside the
-            directory (not recursive), sorted by `name`: `name` (the file
-            stem, the same value `delete_pipeline` accepts), `path`, and a
-            one-line `summary`.
-
-    Examples:
-        As an LLM prompt:
-            What pipelines have I saved?
-
-        As a Python call:
-            >>> list_pipelines()
-
-    """
-    root = pathlib.Path(settings.PIPELINES_DIRECTORY)
-    if not root.is_dir():
-        return []
-    entries = [
-        {
-            "name": yaml_file.stem,
-            "path": str(yaml_file),
-            "summary": _pipeline_summary(
-                yaml_file.read_text(encoding="utf-8", errors="replace"), yaml_file
-            ),
-        }
-        for yaml_file in root.glob("*.yaml")
-        # is_symlink() excludes a *.yaml symlink whose target is outside the
-        # trusted root: is_file() alone follows it, so read_text() would read
-        # and summarize a file this listing has no business exposing -- and
-        # one delete_pipeline refuses anyway, since its containment check
-        # resolves the same symlink (review #224).
-        if yaml_file.is_file() and not yaml_file.is_symlink()
-    ]
-    entries.sort(key=lambda entry: entry["name"])
-    return entries
-
-
-@server.tool(
-    title="Delete a saved pipeline",
-    description=(
-        "Delete exactly one pipeline YAML file previously written by `save_pipeline`, "
-        "by the same `name` `list_pipelines` reports. Confined to the trusted pipelines "
-        "directory (`settings.PIPELINES_DIRECTORY`) -- there is no `directory` argument, "
-        "so this can never be pointed at an arbitrary path -- and a name that would "
-        "resolve outside it is refused before anything is touched. Deleting an unknown "
-        "name raises rather than silently no-op-ing, listing the names that do exist -- "
-        "so a second delete of the same name also raises."
-    ),
-    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
-)
-def delete_pipeline(name: str) -> dict[str, str]:
-    """Delete one saved pipeline YAML file by name, from the trusted pipelines directory.
-
-    Only `settings.PIPELINES_DIRECTORY` -- the same directory `save_pipeline`
-    defaults to and `list_pipelines` reads from -- is ever touched; there is
-    no `directory` argument an MCP caller could aim elsewhere. Identity is
-    fully validated -- name syntax, then containment within that directory --
-    before anything is unlinked, so a rejected call deletes nothing.
-
-    Args:
-        name (str): The pipeline's name, i.e. its file stem (without `.yaml`),
-            exactly as `list_pipelines` reports it. Must be a plain file name:
-            no path separators.
-
-    Returns:
-        dict[str, str]: The deleted pipeline's `name` and `path`.
-
-    Raises:
-        ValueError: If `name` contains a path separator or would otherwise
-            resolve outside the pipelines directory (path traversal, e.g.
-            "../x", or a symlink escaping it) -- checked before any file is
-            touched -- or if no pipeline named `name` exists, in which case
-            the error lists the names that do.
-
-    Examples:
-        As an LLM prompt:
-            Delete the saved pipeline "csv_smoke".
-
-        As a Python call:
-            >>> delete_pipeline("csv_smoke")
-
-    """
-    root = pathlib.Path(settings.PIPELINES_DIRECTORY)
-    if "/" in name or "\\" in name or name in (".", ".."):
-        raise ValueError(f"Invalid pipeline name {name!r}: must be a plain file name, not a path.")
-
-    target = root / f"{name}.yaml"
-    if not target.resolve().is_relative_to(root.resolve()):
-        raise ValueError(
-            f"Refusing to delete {name!r}: it resolves to {target.resolve()}, "
-            f"outside the pipelines directory {root.resolve()}."
-        )
-
-    # Serialized with save_pipeline's write under the same lock, so a
-    # concurrent save and delete of the same name cannot race.
-    with _pipeline_lock(root):
-        if not target.is_file():
-            available = sorted(entry["name"] for entry in list_pipelines())
-            detail = f"Available: {available}" if available else "No pipelines are saved there."
-            raise ValueError(f"No saved pipeline named {name!r}. {detail}")
-
-        target.unlink()
-
-    return {"name": name, "path": str(target)}
 
 
 @server.tool(

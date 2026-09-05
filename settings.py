@@ -35,13 +35,6 @@ class Settings(BaseSettings):
     # capabilities survive container restarts. Missing directory = builtins only.
     USER_CAPABILITIES_DIRECTORY: str = str(pathlib.Path.home() / ".bagel" / "capabilities")
 
-    # Directory saved pipelines are written to by save_pipeline (its default
-    # target) and the ONLY directory list_pipelines / delete_pipeline read
-    # from and delete from. The single source of truth for "the trusted
-    # pipelines root": those two tools accept no directory argument, so an
-    # MCP caller cannot point deletion at an arbitrary path (review #224).
-    PIPELINES_DIRECTORY: str = "pipelines"
-
     # YAML manifest of live subscriptions (and their standing pipelines) to
     # establish when the server starts, so they survive container restarts.
     # If unset or missing, no startup subscriptions are made.
