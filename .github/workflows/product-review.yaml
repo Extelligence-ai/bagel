@@ -105,6 +105,7 @@ jobs:
           fetch
           ( while true; do sleep 180; fetch || true; done ) &
       - name: Product Completeness Agent inspects the PR
+        continue-on-error: true  # advisory: an agent/auth failure must never red-X the PR
         uses: anthropics/claude-code-action@v1
         with:
           prompt: >-
@@ -135,14 +136,14 @@ jobs:
         run: |
           body="product-review-body.md"
           if [ ! -s "$body" ]; then
-            echo "::error::Product agent produced no report file."
-            exit 1
+            echo "::warning::No product-review report produced (agent auth not configured yet, or the agent step failed). Advisory step skipped — the PR is NOT blocked."
+            exit 0
           fi
           first="$(head -n1 "$body")"
           expected="Product completeness review -- commit ${HEAD_SHA}"
           if [ "$first" != "$expected" ]; then
-            echo "::error::Report file missing/incorrect header (got: $first)"
-            exit 1
+            echo "::warning::Report header malformed (got: $first); skipping the post rather than blocking the PR."
+            exit 0
           fi
           # Advisory PR comment (issue comment), not a review — never gates merge.
           gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$body" >/dev/null
