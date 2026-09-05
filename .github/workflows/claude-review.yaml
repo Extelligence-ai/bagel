@@ -4,9 +4,20 @@
 # marker the AI-review gate recognizes. Either reviewer (Codex or Claude)
 # satisfies the gate; see codex-gate.yaml.
 #
-# Requires the ANTHROPIC_API_KEY repository secret. Maintainer-only trigger
-# (author_association check) so external commenters cannot spend API credit
-# or influence the gate.
+# KEYLESS: no ANTHROPIC_API_KEY anywhere. The job requests a GitHub OIDC
+# token (audience https://api.anthropic.com) and the Anthropic SDK inside
+# Claude Code exchanges it via Workload Identity Federation -- the console
+# rule `bagel-claude-review` pins acceptance to THIS repo's default-branch
+# runs (issue_comment jobs always run in default-branch context, so their
+# sub claim is repo:Extelligence-ai/bagel:ref:refs/heads/main). GitHub JWTs
+# live ~5 minutes and are single-use at exchange, so a background loop
+# refreshes the token file for reviews that outlive one minted token.
+#
+# Requires four NON-SECRET repository variables (Settings -> Variables):
+#   ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID,
+#   ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID
+# (identifiers only -- useless without a JWT GitHub will only sign for
+# this repo's own workflow runs).
 name: claude-review
 on:
   issue_comment:
@@ -16,6 +27,7 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  id-token: write
 
 jobs:
   review:
@@ -24,6 +36,12 @@ jobs:
       contains(github.event.comment.body, '@claude review') &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+      ANTHROPIC_IDENTITY_TOKEN_FILE: /tmp/gha-jwt
     steps:
       - name: Resolve the PR head
         id: pr
@@ -37,10 +55,20 @@ jobs:
         with:
           ref: ${{ steps.pr.outputs.head_sha }}
           fetch-depth: 0
+      - name: Keep a fresh OIDC token in the identity file
+        run: |
+          fetch() {
+            curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+              | jq -r .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+          }
+          fetch
+          # GitHub JWTs expire in ~5 min and each is single-use at exchange;
+          # refresh the file so the SDK's re-exchange always finds a fresh one.
+          ( while true; do sleep 180; fetch || true; done ) &
       - name: Claude reviews the PR
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: >-
             Review pull request #${{ github.event.issue.number }} in this repository
             (head commit ${{ steps.pr.outputs.head_sha }}). Fetch the diff with
