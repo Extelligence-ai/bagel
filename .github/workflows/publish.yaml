@@ -11,10 +11,43 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: publish-main
-  cancel-in-progress: false
-
+# No concurrency group on this workflow: overlapping publish runs are left
+# to run in parallel rather than serialized against each other.
+#
+# A `publish-main` group (cancel-in-progress: false) was tried first, but
+# GitHub's documented default keeps at most one PENDING run per concurrency
+# group: once a publish is running and a second push is pending, a third
+# push cancels and replaces that still-pending run -- silently dropping the
+# second commit's release, the same failure mode as the 2026-08-19
+# dropped-event incident referenced above (that one lost the *push event*;
+# this would lose the *queued run*; same end result -- a version whose
+# images never publish). This holds regardless of cancel-in-progress, which
+# only governs already-RUNNING jobs, not pending ones. Verified against
+# GitHub's docs: https://docs.github.com/en/actions/using-jobs/using-concurrency
+# -- "By default, any existing pending job or workflow in the same
+# concurrency group will be canceled and the new queued job or workflow
+# will take its place."
+#
+# GitHub Actions has since added `queue: max`, which keeps up to 100 pending
+# runs and executes them one at a time in FIFO order -- exactly what this
+# workflow needs, and it would additionally avoid two overlapping runs
+# racing to tag the mutable `:latest` pointer. It is NOT used here because
+# `queue` is unrecognized by actionlint as of the latest release (v1.7.12)
+# and by the v1.7.7 pinned in this repo's types-and-workflows job --
+# `actionlint .github/workflows/publish.yaml` fails with
+# `unexpected key "queue" for "concurrency" section`. Revisit once
+# actionlint's schema catches up.
+#
+# Given that constraint, no group beats a group with the `queue: single`
+# default: every push's publish must eventually run, and dropping a queued
+# release silently is worse than the risks of running in parallel. The
+# remaining risks are bounded: per-version publication is protected by the
+# `docker manifest inspect` immutability check already in the docker job
+# (redundant concurrent pushes of the same not-yet-published version are
+# idempotent, not corrupting), and a `:latest` pointer that a slower
+# overlapping run leaves briefly behind the newest commit is self-healing --
+# the next push to main republishes it forward again. Pushes to main are
+# infrequent enough that this overlap is rare in practice.
 jobs:
   # A `workflow_dispatch` recovery run (see the comment above) has no PR, merge
   # group, or push `before` SHA for dependency-audit.yaml to fall back on, so it

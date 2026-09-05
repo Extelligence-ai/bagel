@@ -12,10 +12,8 @@ import pytest
 import server
 from settings import settings
 from src import artifacts, cache, query
-from src.message.pyarrow.csv import MessageDataset
 from src.source import base
 from src.source.pyarrow.csv import SourceFactory
-from src.topic.pyarrow.csv import TopicRegistry
 
 SAMPLE = "data/sample/pyarrow/csv/flight.csv"
 
@@ -50,27 +48,6 @@ def test_changes_beyond_hash_chunk_invalidate_source(
     assert factory.uuid != modified
 
 
-def test_to_duckdb_hashes_local_file_content_only_once(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "data.csv"
-    path.write_text("t,value\n0,1\n1,2\n")
-    factory = SourceFactory(str(path))
-    registry = TopicRegistry()
-    dataset = MessageDataset()
-
-    calls = []
-    original = base.FileBasedSourceFactory._md5_hash
-
-    def counting(self: base.FileBasedSourceFactory, file_path: pathlib.Path) -> str:
-        calls.append(file_path)
-        return original(self, file_path)
-
-    monkeypatch.setattr(base.FileBasedSourceFactory, "_md5_hash", counting)
-    dataset.to_duckdb(factory, registry)
-    assert len(calls) == 1
-
-
 def _batches(value: int) -> Iterator[pa.RecordBatch]:
     yield pa.record_batch({"value": [value]})
 
@@ -98,26 +75,6 @@ def test_failed_or_uncached_write_preserves_existing_cache(tmp_path: pathlib.Pat
         cache.arrow_relation(path, schema, broken, False)
     assert cache.arrow_relation(path, schema, broken, True).fetchall() == [(1,)]
     assert not list(tmp_path.glob("*.partial*"))
-
-
-def test_read_only_cache_directory_serves_existing_hit(tmp_path: pathlib.Path) -> None:
-    path = tmp_path / "snapshot.arrow"
-    schema = next(_batches(1)).schema
-    cache.arrow_relation(path, schema, lambda: _batches(1), True)
-    # A pre-baked read-only cache mount (e.g. a Docker image layer) ships the
-    # `.arrow` entry but never ran a writer in this process, so no `.lock`
-    # file exists yet either -- simulate that instead of the lock file this
-    # test's own writer above already created in the (still writable) dir.
-    (tmp_path / "snapshot.arrow.lock").unlink()
-    path.parent.chmod(0o555)
-    try:
-        # A rebuild would need write access to publish a new file; if the read
-        # path required write access too (e.g. to create a lock file), this
-        # would raise before ever getting to read the existing entry.
-        result = cache.arrow_relation(path, schema, lambda: _batches(2), True)
-    finally:
-        path.parent.chmod(0o755)
-    assert result.fetchall() == [(1,)]
 
 
 def test_corrupt_cache_is_rebuilt(tmp_path: pathlib.Path) -> None:

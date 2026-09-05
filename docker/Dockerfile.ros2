@@ -66,7 +66,6 @@ EXPOSE ${JUPYTER_PORT}
 # Copy common source code
 COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
 COPY --chown=${USERNAME}:${USERNAME} run.py ./run.py
-COPY --chown=${USERNAME}:${USERNAME} demo.py ./demo.py
 COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
 COPY --chown=${USERNAME}:${USERNAME} src ./src
 # MCAP as a first-class format (no ROS required)
@@ -104,11 +103,6 @@ COPY --chown=${USERNAME}:${USERNAME} test/pipeline/__init__.py ./test/pipeline/_
 COPY --chown=${USERNAME}:${USERNAME} test/pipeline/integration ./test/pipeline/integration
 
 RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test; fi
-
-# `docker run <image> demo [path]` runs the 60-second hello-world instead of
-# the server; anything else (no args, or another command) is unaffected.
-COPY --chown=${USERNAME}:${USERNAME} docker/entrypoint.sh ./entrypoint.sh
-ENTRYPOINT ["./entrypoint.sh"]
 
 # By default, the Bagel MCP server will be launched
 CMD ["uv", "run", "server.py", "--transport", "sse"]

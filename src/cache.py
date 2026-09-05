@@ -49,11 +49,7 @@ def arrow_relation(
     evicted and rebuilt on every lookup (eviction only runs on the write path).
 
     Failed writes never replace a valid entry. Uncached reads use a private file
-    and do not invalidate another reader's cached result. A cache hit is read
-    without acquiring the lock first: a read-only cache mount (no write access to
-    the cache directory, so it cannot hold `.lock` files either) must still be
-    able to serve existing entries, and concurrent readers should not serialize
-    behind a lock they don't need.
+    and do not invalidate another reader's cached result.
     """
     if use_cache and path.exists():
         result = _cache_hit(path)
