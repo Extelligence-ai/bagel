@@ -54,6 +54,32 @@ control loop.
 - **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
 - **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues).
 
+## 🥯 Try it in 60 seconds
+
+No MCP client, no LLM, no config: run the same deterministic checks against a
+bundled sample log and get a robot-health report card straight to your
+terminal.
+
+```bash
+docker run -it --rm ghcr.io/extelligence-ai/bagel/px4:latest demo
+```
+
+```
+sample.ulg - 41.5s, 2018 messages, 77 topics
+
+Power      ⚠️  min 21.07V, largest drop 2.37V at ~t=+4.8s, end 23.45V (battery_status_0)
+IMU        ✅  accel_z stddev 1.6x the log baseline at ~t=+36.8s (sensor_combined_0)
+GPS        —  skipped: no GPS topic
+Data gaps  ✅  no gap > 1.05x median interval (checked battery_status_0, sensor_combined_0)
+...
+```
+
+The ROS2 images (`ros2-kilted`, `ros2-jazzy`, `ros2-iron`, `ros2-humble`) run
+`demo` the same way, against a lighter bundled sample (`px4` is the one that
+ships with a flight log rich enough to show every check). Point it at your
+own log with `demo /path/to/log` (mount it with `-v` first), or keep reading
+for the full MCP setup below.
+
 ## ⚡️ Quickstart
 
 > [!TIP]
