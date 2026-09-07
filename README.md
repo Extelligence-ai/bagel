@@ -2,6 +2,10 @@
   <img src="./doc/assets/bagel_logo_light_mode.png" width="560">
 </p>
 
+<p align="center">
+  <strong>Bits to atoms.<br>Atoms to bits.</strong>
+</p>
+
 <h1 align="center">
   <a href="https://github.com/Extelligence-ai/bagel/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square">
