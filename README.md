@@ -2,6 +2,10 @@
   <img src="./doc/assets/bagel_logo_light_mode.png" width="560">
 </p>
 
+<p align="center">
+  <strong>Bits to atoms.<br>Atoms to bits.</strong>
+</p>
+
 <h1 align="center">
   <a href="https://github.com/Extelligence-ai/bagel/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square">
@@ -53,6 +57,32 @@ control loop.
 - **Dockerized environments**: No local dependencies required.
 - **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
 - **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues).
+
+## 🥯 Try it in 60 seconds
+
+No MCP client, no LLM, no config: run the same deterministic checks against a
+bundled sample log and get a robot-health report card straight to your
+terminal.
+
+```bash
+docker run -it --rm ghcr.io/extelligence-ai/bagel/px4:latest demo
+```
+
+```
+sample.ulg - 41.5s, 2018 messages, 77 topics
+
+Power      ⚠️  min 21.07V, largest drop 2.37V at ~t=+4.8s, end 23.45V (battery_status_0)
+IMU        ✅  accel_z stddev 1.6x the log baseline at ~t=+36.8s (sensor_combined_0)
+GPS        —  skipped: no GPS topic
+Data gaps  ✅  no gap > 1.05x median interval (checked battery_status_0, sensor_combined_0)
+...
+```
+
+The ROS2 images (`ros2-kilted`, `ros2-jazzy`, `ros2-iron`, `ros2-humble`) run
+`demo` the same way, against a lighter bundled sample (`px4` is the one that
+ships with a flight log rich enough to show every check). Point it at your
+own log with `demo /path/to/log` (mount it with `-v` first), or keep reading
+for the full MCP setup below.
 
 ## ⚡️ Quickstart
 
@@ -156,19 +186,33 @@ Can’t find your LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/
 
 </details>
 
-## 🔌 Claude Code plugin
+## 🔌 Agent plugins (Claude Code and Codex)
 
-Bagel ships a Claude Code plugin: four skills that teach Claude when and how
+Bagel ships an agent plugin: four skills that teach the agent when and how
 to drive the server (log triage, pipeline authoring, live sinks, visualization
-export) plus the MCP connection, wired automatically.
+export) plus the MCP connection, wired automatically. The same `plugin/`
+directory serves both Claude Code and OpenAI Codex.
 
 ```
 /plugin marketplace add Extelligence-ai/bagel
 /plugin install bagel@bagel
 ```
 
+Codex and ChatGPT users: install bagel from the
+[OpenAI Plugins Directory](https://chatgpt.com/plugins/plugins_6a8623a0fe288191833ee0ca3fa883e7)
+(one click), or clone the repo and add it as a plugin marketplace (the repo
+carries `.agents/plugins/marketplace.json`). Directory installs bundle the
+skills only, so also connect the server once in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.bagel]
+url = "http://localhost:8000/mcp"
+```
+
+Repo-marketplace and Claude Code installs wire this connection automatically.
+
 Then start the container for your data format (see Quickstart): the plugin
-connects to `http://localhost:8000/sse` by default. Any other MCP client can
+connects to `http://localhost:8000/mcp` by default. Any other MCP client can
 discover the same workflows server-side via the `list_agent_capabilities` tool.
 
 ## Keep what matters, drop the rest
@@ -209,7 +253,7 @@ depends entirely on your workload.
 | **Drones**   | PX4, ArduPilot, Betaflight     |
 | **Automotive** | ASAM MDF4 (`.mf4`), CAN captures (`.blf`/`.asc` + DBC) · *beta* |
 | **IoT**      | MQTT (live, Sparkplug B), PostgreSQL / TimescaleDB, InfluxDB 3 |
-| **Hardware state** | [WaffleForm](./doc/runbooks/waffle.md) snapshots (`.waffleform.yaml`), auto-detected via waffle-iron · *experimental* |
+| **Hardware state** | [WaffleForm](./doc/runbooks/waffle.md) snapshots (`.waffleform.yaml`), auto-detected via waffle-iron · *beta* |
 
 ## 🆚 Bagel vs. the Tools You Already Use
 
@@ -241,6 +285,8 @@ You can ask Bagel almost anything. For example:
 > I think the robot hit a pothole. Can you check for sudden deceleration on the z-axis to confirm?
 
 > Every time the drone decelerates harder than -10 m/s², keep 10 seconds before and after. Drop everything else.
+
+> Did anything change on this robot since last week?
 
 Time to put Bagel to the test: can it catch a drone doing barrel rolls? Spoiler: 🎉 It totally can.
 
@@ -315,6 +361,24 @@ Result:
 meow 🐱 4 topics 🐱💤🎯
 ```
 
+### Teach it your own tricks (no rebuild)
+
+Bagel discovers your own capabilities from `~/.bagel/capabilities/`:
+
+- **In conversation:** do a workflow once, then say *"save that as a
+  capability called battery-triage"* — Claude calls `save_agent_capability`
+  and it's reusable in any future session.
+- **As a file:** drop a markdown file with your steps (or a
+  [POML](https://github.com/microsoft/poml) file, if you want parameterized
+  templates — see `src/agent/compose/pipeline.poml` for the house style)
+  into `~/.bagel/capabilities/`.
+
+Either way it shows up in `list_agent_capabilities` as `user/<name>` and runs
+with `run_poml_capability` — from Claude Code, Claude Desktop, or any MCP
+client. Teams: keep the directory in your own git repo and sync it to every
+robot; it's just files. On Linux, run `mkdir -p ~/.bagel/capabilities` once
+before starting the container so the mount is owned by you, not root.
+
 ## 📚 Guides
 
 - [Natural-language pipelines](./doc/runbooks/pipelines.md) · the model: a cadence, gates,
@@ -351,9 +415,6 @@ Rough edges we know about, so you don't find them the hard way:
   event-window duration over total duration: quiet recordings reduce dramatically,
   eventful ones much less. The figures in this README are illustrative demo output,
   not a measured benchmark.
-- **SSE is the documented transport.** Streamable HTTP is already wired
-  (`MCP_TRANSPORT=streamable-http`), but compose does not forward the setting and
-  no client runbook covers it yet, so SSE is the supported path today (#168).
 - **No authentication on the MCP endpoint.** By design it binds to localhost only;
   treat it like a database socket and see [SECURITY.md](./SECURITY.md) before
   sharing it beyond your machine.

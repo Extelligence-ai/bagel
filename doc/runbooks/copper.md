@@ -8,6 +8,23 @@ JSON-encoded channels and jsonschema schemas, which Bagel's generic MCAP path
 ingests natively. One channel per task, fully typed columns, no ROS required
 (the `apache-arrow` container is enough).
 
+## Start Bagel (no ROS image needed)
+
+Copper's MCAP exports go through Bagel's generic Arrow path, so the lightest
+container is enough:
+
+```bash
+git clone https://github.com/Extelligence-ai/bagel.git && cd bagel
+docker compose run --service-ports apache-arrow
+```
+
+Connect your MCP client to `http://localhost:8000/sse` (for Claude Code:
+`claude mcp add --transport sse bagel http://localhost:8000/sse`; the bundled
+plugin wires this automatically). Then try the committed sample before your
+own logs:
+
+> Summarize ./data/sample/copper/imu_probe.mcap
+
 ## One-time setup in your Copper app
 
 Copper apps conventionally ship a log-extractor binary next to the app. Three
@@ -85,8 +102,18 @@ FROM "/filter"
   iterations where that task produced no payload (e.g. sinks). They are safe to
   ignore for analysis.
 - **Raw `.copper` files**: Bagel recognizes them by magic bytes and raises an
-  error pointing back to this workflow.
+  error pointing back to this workflow. Real logs are slab families
+  (`robot_0.copper`, `robot_1.copper`, ...) with `robot.copper` symlinked to
+  the first slab; the logreader takes the base name and finds the rest.
 
 A reference sample produced by a real Copper app (synthetic IMU pipeline) is
 committed at `data/sample/copper/imu_probe.mcap` and exercised by
 `test/pipeline/test_copper_mcap.py`.
+
+This whole workflow is verified against copper-rs's own `cu_caterpillar`
+example end to end: an 8 second run produced a 2.3 GB slab family, exported to
+a 19 GB MCAP (90 million messages, 17 channels), and Bagel summarized it in
+under 2 seconds and answered windowed SQL over it. Two reproduction notes:
+a fresh copper-rs clone expects sibling repos checked out next to it to build,
+and the caterpillar logreader needs only the `mcap` feature of `cu29-export`
+(the `python` feature wants a linkable libpython).

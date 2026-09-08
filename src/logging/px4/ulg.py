@@ -6,6 +6,7 @@ import pyarrow as pa
 from settings import settings
 from src.di import module
 from src.logging import base
+from src.query import from_arrow
 from src.source.base import SourceFactory
 from src.topic.base import TopicRegistry
 
@@ -56,7 +57,7 @@ class LoggingDataset(base.LoggingDataset):
                 }
             )
         table = pa.Table.from_pylist(records, schema=schema)
-        return duckdb.from_arrow(table)
+        return from_arrow(table)
 
 
 def register() -> None:

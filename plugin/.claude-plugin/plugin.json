@@ -1,7 +1,7 @@
 {
   "name": "bagel",
   "description": "Skills and MCP connection for Bagel: query rosbags, MCAP, CAN, MDF4, PX4/ArduPilot/Betaflight logs and live robot data in plain language; author event-windowed data-reduction pipelines; export to Rerun, Lichtblick, PlotJuggler, and LeRobot.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Extelligence",
     "url": "https://github.com/Extelligence-ai/bagel"

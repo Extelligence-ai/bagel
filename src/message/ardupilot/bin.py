@@ -30,8 +30,20 @@ class MessageDataset(base.MessageDataset):
             yield msg.get_type(), msg._timestamp, msg
 
     def _to_json(self, message: DFReader.DFMessage, struct: pa.StructType) -> dict[str, Any]:
-        """Cast a DFMessage into a JSON-serializable dictionary."""
-        return message.to_dict()
+        """Cast a DFMessage into a JSON-serializable dictionary.
+
+        ``char[]`` fields (format ``Z``/``n``/``N``) are strings in the schema;
+        pymavlink hands back ``bytes`` for values it could not decode, so decode
+        them here (replacement characters, NULs stripped) rather than failing
+        the whole batch.
+        """
+        return {key: _text(value) for key, value in message.to_dict().items()}
+
+
+def _text(value: object) -> object:
+    if isinstance(value, bytes | bytearray):
+        return bytes(value).decode("utf-8", errors="replace").rstrip("\x00")
+    return value
 
 
 def register() -> None:

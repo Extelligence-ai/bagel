@@ -16,7 +16,7 @@ import yaml
 
 from settings import settings
 from src.pipeline import live
-from src.pipeline.base import Cadence, Frequency, OnEvent, Pipeline, Unit
+from src.pipeline.base import Cadence, Frequency, OnceAtEnd, OnEvent, Pipeline, Unit
 
 
 def _topic_uuid(topic: str) -> str:
@@ -227,6 +227,8 @@ class TopicBufferWriter:
     def _should_run(
         self, cadence: Cadence, message_count: int, last_run_at: float | None, asof_seconds: float
     ) -> bool:
+        if isinstance(cadence.when, OnceAtEnd):
+            return False
         if last_run_at is None:
             return True
 

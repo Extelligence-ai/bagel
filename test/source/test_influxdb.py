@@ -10,13 +10,19 @@ gated on `BAGEL_INFLUXDB_TEST_URL`, e.g.:
 """
 
 import os
+from datetime import datetime
 
 import pytest
 
 pytest.importorskip("influxdb_client_3")
 
+import pyarrow as pa
+
 from src.di.types import data_source
+from src.message import influxdb as message_influxdb
 from src.source import influxdb
+from src.source.context import SourceContext
+from src.topic.influxdb import TopicRegistry
 
 INFLUX_URL = os.environ.get("BAGEL_INFLUXDB_TEST_URL")
 
@@ -56,6 +62,52 @@ def test_parse_url_requires_database() -> None:
 def test_parse_url_requires_influxdb_scheme() -> None:
     with pytest.raises(ValueError, match="influxdb://"):
         influxdb.parse_url("postgres://h/db")
+
+
+def test_bounds_uses_aggregate_queries_not_full_row_downloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """bounds() must not download every row of every measurement.
+
+    Regression for PR #237 review (src/source/context.py:50): `SourceContext.bounds()`
+    called `to_duckdb()` with no `topics`, which downloads and struct-packs every row
+    of every measurement (`_topic_arrow`'s `SELECT * FROM ... ORDER BY time`) merely
+    to compute two numbers.
+    """
+    queries: list[str] = []
+
+    class _FakeInfluxClient:
+        def query(self, sql: str) -> pa.Table:
+            queries.append(sql)
+            if "information_schema.tables" in sql:
+                return pa.table({"table_name": ["readings"]})
+            return pa.table(
+                {
+                    "lo": pa.array([datetime(2024, 1, 1, 0, 0, 0)], type=pa.timestamp("us")),
+                    "hi": pa.array([datetime(2024, 1, 1, 0, 2, 0)], type=pa.timestamp("us")),
+                }
+            )
+
+    monkeypatch.setattr(
+        influxdb.InfluxDatabase, "client", property(lambda self: _FakeInfluxClient())
+    )
+    data_source = influxdb.InfluxDatabase(host="http://h:8181", database="telemetry", token="")
+
+    class _StubFactory:
+        def build(self) -> influxdb.InfluxDatabase:
+            return data_source
+
+    context = SourceContext(
+        factory=_StubFactory(),  # not a BoundedSourceFactory, so bounds() must query
+        registry=TopicRegistry(),
+        dataset=message_influxdb.MessageDataset(),
+    )
+
+    start, end = context.bounds()
+
+    assert start == pytest.approx(1704067200.0)  # 2024-01-01T00:00:00Z
+    assert end == pytest.approx(1704067320.0)  # 2024-01-01T00:02:00Z
+    assert not any("SELECT *" in query for query in queries)
 
 
 # -- live database ------------------------------------------------------------------

@@ -29,6 +29,19 @@ class Settings(BaseSettings):
     # Directory for caching intermediate artifacts
     CACHE_DIRECTORY: str = str(pathlib.Path.home() / ".cache" / "bagel")
 
+    # Directory of user-authored capabilities (.poml or .md files) discovered by
+    # list_agent_capabilities alongside the builtins and writable via the
+    # save_agent_capability tool. Mounted from the host in compose.yaml so
+    # capabilities survive container restarts. Missing directory = builtins only.
+    USER_CAPABILITIES_DIRECTORY: str = str(pathlib.Path.home() / ".bagel" / "capabilities")
+
+    # Directory saved pipelines are written to by save_pipeline (its default
+    # target) and the ONLY directory list_pipelines / delete_pipeline read
+    # from and delete from. The single source of truth for "the trusted
+    # pipelines root": those two tools accept no directory argument, so an
+    # MCP caller cannot point deletion at an arbitrary path (review #224).
+    PIPELINES_DIRECTORY: str = "pipelines"
+
     # YAML manifest of live subscriptions (and their standing pipelines) to
     # establish when the server starts, so they survive container restarts.
     # If unset or missing, no startup subscriptions are made.
@@ -105,9 +118,11 @@ class Settings(BaseSettings):
     # Port of the MCP server
     MCP_SERVER_PORT: int = 8000
 
-    # MCP transport: "sse" (current default, matches the README quickstart) or
-    # "streamable-http" (the newer transport; both are supported by MCP SDK v1 and v2)
-    MCP_TRANSPORT: str = "sse"
+    # MCP transport: "both" (default) serves legacy SSE at /sse and streamable
+    # HTTP at /mcp on one port, so SSE-configured clients and streamable-only
+    # clients (Codex's native MCP client) connect without configuration (#168).
+    # Set "sse" or "streamable-http" to pin a single transport.
+    MCP_TRANSPORT: str = "both"
 
 
 settings = Settings()

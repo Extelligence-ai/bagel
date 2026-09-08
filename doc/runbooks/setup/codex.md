@@ -8,13 +8,16 @@ But first, make sure the Bagel MCP server is already running in a separate termi
 
 If not, follow the [⚡️ Quickstart](../../../README.md#️-quickstart) guide to start it.
 
-You can check if it’s running by visiting [http://localhost:8000/sse](http://localhost:8000/sse)
-in your browser. You should see output like:
+You can check it is running:
 
+```bash
+curl -si http://localhost:8000/mcp -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' | head -1
 ```
-event: endpoint
-data: /messages/?session_id=d3daa0110c1041dead46bc6646dc4dc7
-```
+
+You should see `HTTP/1.1 200 OK`.
 
 ## 🛠️ Install Codex
 
@@ -33,54 +36,24 @@ Verify the installation:
 codex --version
 ```
 
-You should see output like:
-
-```bash
-codex-cli 0.31.0
-```
-
 Visit the [Codex CLI doc](https://developers.openai.com/codex/cli/) for more details.
-
-## 🛠️ Install mcp-proxy
-
-Because Bagel uses SSE transport and Codex currently supports only stdio transport,
-we need an adapter: [mcp-proxy](https://github.com/sparfenyuk/mcp-proxy).
-
-To install `mcp-proxy`, first [install](https://docs.astral.sh/uv/getting-started/installation/)
-`uv` (skip this step if already installed):
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Then run:
-
-```bash
-uv tool install mcp-proxy
-```
-
-Verify the installation:
-
-```bash
-mcp-proxy --version
-```
-
-You should see output like:
-
-```bash
-mcp-proxy 0.8.2
-```
 
 ## 🔗 Connect Bagel
 
-To add the Bagel MCP server to Codex, open `~/.codex/config.toml` and add:
+Codex speaks MCP's streamable HTTP transport natively, and Bagel serves it at
+`/mcp` by default: no proxy or adapter needed. The easiest path is the bundled
+plugin: run Codex inside this repository and install `bagel` from `/plugins`
+(the repo carries the marketplace entry).
+
+To connect manually instead, open `~/.codex/config.toml` and add:
 
 ```toml
 [mcp_servers.bagel]
-command = "mcp-proxy"
-args = ["http://localhost:8000/sse"]
-env = { "API_KEY" = "<YOUR_OPENAI_API_KEY>" }
+url = "http://localhost:8000/mcp"
 ```
+
+If you changed `MCP_SERVER_PORT` (for example because another service holds
+8000), use that port in the URL.
 
 Now confirm the connection. Launch Codex and run:
 
@@ -88,19 +61,11 @@ Now confirm the connection. Launch Codex and run:
 /mcp list
 ```
 
-You should see output like:
-
-```bash
-🔌  MCP Tools
-
-  • Server: bagel
-    • Command: mcp-proxy http://localhost:8000/sse
-    • Tools: ...
-```
+You should see the `bagel` server with its tools.
 
 For more details on connecting MCP servers to Codex, see the
 [Codex on GitHub](https://github.com/openai/codex/blob/main/docs/config.md#mcp_servers).
 
 ## 🎉 Congrats! You are all set.
 
-Still having trouble? 🤦 It’s not your fault. [File a ticket](https://github.com/Extelligence-ai/bagel/issues) and let us know.
+Still having trouble? 🤦 It's not your fault. [File a ticket](https://github.com/Extelligence-ai/bagel/issues) and let us know.

@@ -6,6 +6,7 @@ import duckdb
 import pyarrow as pa
 
 from settings import settings
+from src import query
 from src.message.base import MessageDataset
 from src.source.base import SourceFactory
 from src.topic.base import TopicRegistry
@@ -96,4 +97,4 @@ class TopicBasedLoggingDataset(LoggingDataset, MessageDataset):
                 }
             )
         table = pa.Table.from_pylist(records, schema=schema)
-        return duckdb.from_arrow(table)
+        return query.from_arrow(table)

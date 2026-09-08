@@ -1,4 +1,4 @@
-"""Flows over external matcha-ext recordings with known anomalies."""
+"""Flows over external recordings with known anomalies."""
 
 import pathlib
 

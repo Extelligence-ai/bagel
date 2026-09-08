@@ -29,7 +29,7 @@ jobs:
       id-token: write # mint the OIDC token mcp-publisher exchanges
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install mcp-publisher
         run: |
           curl -fsSL -o mcp-publisher.tar.gz \
@@ -46,7 +46,10 @@ jobs:
       - name: Verify listing
         run: |
           sleep 5
-          curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=extelligence" \
-            | grep -q "io.github.Extelligence-ai/bagel" \
-            && echo "Listed on the official MCP registry." \
-            || { echo "Server not found in registry search"; exit 1; }
+          if curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=extelligence" \
+            | grep -q "io.github.Extelligence-ai/bagel"; then
+            echo "Listed on the official MCP registry."
+          else
+            echo "Server not found in registry search"
+            exit 1
+          fi

@@ -41,7 +41,7 @@ uv sync --dev
 
 ### Pre-commit Hooks
 
-Before pushing any commits, we require you to run the pre-commit hooks defined in [.pre-commit-configs.yaml](https://www.google.com/search?q=.pre-commit-configs.yaml). If you're new to pre-commit hooks, please refer to the [pre-commit documentation](https://pre-commit.com/). The hooks we enforce primarily focus on linting and formatting.
+Before pushing any commits, run the hooks in [.pre-commit-config.yaml](.pre-commit-config.yaml). They enforce linting and formatting. See [quality contracts and CI rollout](doc/runbooks/quality.md) for test dependencies, coverage, type checks, and required repository settings.
 
 To set up the pre-commit hooks for the first time, run these commands from the repository root:
 
@@ -58,6 +58,9 @@ We use [`ruff`](https://docs.astral.sh/ruff/) for linting Python code. Run it wi
 
 ```sh
 uv run ruff check ./
+uv run ruff format --check
+uv sync --locked --group quality
+uv run --no-sync mypy
 ```
 
 For Dockerfiles, we use [hadolint](https://github.com/hadolint/hadolint). Run it with:

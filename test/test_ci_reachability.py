@@ -50,9 +50,7 @@ def _host_job_files() -> set[str]:
 def _tested_dockerfiles() -> set[pathlib.Path]:
     """Dockerfiles backing services that actually run pytest in test.yaml.
 
-    apache-arrow and iot images are built elsewhere with DEV_MODE=false and
-    never run the suite, so a file copied only by their Dockerfiles is NOT
-    CI-reachable (Copilot on #163).
+    Only entries in the test matrix count; building alone is insufficient.
     """
     workflow = yaml.safe_load(
         pathlib.Path(".github/workflows/test.yaml").read_text(encoding="utf-8")
@@ -104,13 +102,11 @@ def test_host_job_paths_exist() -> None:
 
 
 def test_image_files_only_counts_images_that_run_pytest() -> None:
-    """Copilot on #163: apache-arrow and iot images are built but never run
-    pytest (absent from test.yaml's matrix), so files copied only by their
-    Dockerfiles must not count as CI-reachable."""
+    """Arrow and IoT must run tests, not merely build production images."""
     tested = {str(dockerfile) for dockerfile in _tested_dockerfiles()}
     assert tested, "expected at least one pytest-running dockerfile"
-    assert "docker/Dockerfile.arrow" not in tested
-    assert "docker/Dockerfile.iot" not in tested
+    assert "docker/Dockerfile.arrow" in tested
+    assert "docker/Dockerfile.iot" in tested
     assert "docker/Dockerfile.ros2" in tested
 
 

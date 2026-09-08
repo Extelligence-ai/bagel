@@ -4,10 +4,10 @@ Each user table is a topic. Schemas come straight from DuckDB's view of the atta
 table (a LIMIT-0 query's Arrow schema), so types are exact with no mapping tables.
 """
 
-import duckdb
 import pyarrow as pa
 
 from src.di import module
+from src.query import connection
 from src.source.postgres import PostgresDatabase
 from src.topic import base
 
@@ -31,17 +31,25 @@ class TopicRegistry(base.TopicRegistry):
     def message_count(self, topic: str, data_source: PostgresDatabase) -> int:
         """Return the number of rows for the given topic."""
         self._require_topic(topic, data_source)
-        (count,) = duckdb.execute(
-            f"SELECT COUNT(*) FROM {data_source.relation_name(topic)}"  # noqa: S608
-        ).fetchone()
+        (count,) = (
+            connection()
+            .execute(
+                f"SELECT COUNT(*) FROM {data_source.relation_name(topic)}"  # noqa: S608
+            )
+            .fetchone()
+        )
         return count
 
     def struct(self, topic: str, data_source: PostgresDatabase) -> pa.StructType:
         """Return the PyArrow StructType for the given topic (all columns)."""
         self._require_topic(topic, data_source)
-        empty = duckdb.sql(
-            f"SELECT * FROM {data_source.relation_name(topic)} LIMIT 0"  # noqa: S608
-        ).arrow()
+        empty = (
+            connection()
+            .sql(
+                f"SELECT * FROM {data_source.relation_name(topic)} LIMIT 0"  # noqa: S608
+            )
+            .arrow()
+        )
         return pa.struct(empty.schema)
 
     def describe(self, topic: str, data_source: PostgresDatabase) -> str:

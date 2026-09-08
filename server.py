@@ -1,15 +1,19 @@
 """Entry point for the Bagel MCP server."""
 
+import hashlib
 import logging
 import pathlib
+from dataclasses import asdict
+from datetime import datetime
 from typing import Any
 
 import duckdb
+import filelock
 import yaml
 from poml import poml
 
 from settings import settings
-from src import artifacts, mcp_compat
+from src import artifacts, mcp_compat, query
 from src.agent import capabilities as agent_capabilities
 from src.di import module
 from src.di.types.base_module import BaseModule
@@ -28,6 +32,7 @@ from src.pipeline import (
 )
 from src.pipeline.tasks.waffle import snap as waffle_snap
 from src.sink import startup
+from src.source.context import SourceContext
 
 server = mcp_compat.create_server(
     name="Bagel MCP Server",
@@ -56,6 +61,7 @@ server = mcp_compat.create_server(
         "and a list of available topics. "
         "Excludes: detailed topic definitions or actual messages."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Generate a structured summary of a data source.
@@ -107,6 +113,7 @@ def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[
         "Includes: short summary, DuckDB schema, original IDL definition, and "
         "guidelines for SQL queries. Excludes: actual topic data."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def describe_topic(
     path: str, topic: str, args: dict[str, Any] | None = None
@@ -171,6 +178,7 @@ def describe_topic(
         "Use this tool to answer user questions about message data, "
         "including filtering, aggregation, and downsampling."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def query_messages(  # noqa: PLR0913
     path: str,
@@ -216,16 +224,11 @@ def query_messages(  # noqa: PLR0913
             ... )
 
     """
-    ds_type = resolve(path)
-    factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    source = SourceContext.build(path, args)
+    relation = source.dataset.to_duckdb(
+        source.factory, source.registry, [topic], start_seconds, end_seconds
     )
-    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
-    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
-
-    relation = dataset.to_duckdb(factory, registry, [topic], start_seconds, end_seconds)
-    duckdb.register(topic, relation)
-    result = duckdb.sql(sql_statement)
+    result = query.sql(relation, topic, sql_statement)
     return result.to_df().to_dict(orient="records")
 
 
@@ -235,6 +238,7 @@ def query_messages(  # noqa: PLR0913
         "Extract INFO, WARN, and ERROR messages from a data source. "
         "Supports optional time filtering. Use for debugging or diagnostics."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def read_loggings(
     path: str,
@@ -290,6 +294,7 @@ def read_loggings(
         "Use this tool to inspect a live data stream and list the topics that "
         "can be subscribed to. Helpful before starting a subscription."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, open_world=True),
 )
 def list_live_topics(
     type_: str,
@@ -345,6 +350,9 @@ def list_live_topics(
         "for other tools (via the `path` argument in SourceFactory). Optionally attach a "
         "pipeline config to create a STANDING pipeline that runs on incoming messages -- "
         "e.g. an on_event cadence that captures and uploads a window around every anomaly."
+    ),
+    annotations=mcp_compat.tool_annotations(
+        read_only=False, idempotent=False, destructive=True, open_world=True
     ),
 )
 def subscribe_live_topics(  # noqa: PLR0913
@@ -416,31 +424,37 @@ def subscribe_live_topics(  # noqa: PLR0913
         "Discover available capabilities and their paths with "
         "`list_agent_capabilities`. The file specifies task instructions and "
         "output formats. Optional context values can be injected to customize "
-        "its behavior."
+        "its behavior. Capabilities may be POML (parameterizable via context) or markdown (static)."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def run_poml_capability(
     poml_path: str,
     poml_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Execute a structured capability from a POML file.
+    """Execute a structured capability from a POML or markdown file.
 
     Loads a `.poml` file containing instructions written in the POML
-    (Prompt-Oriented Markup Language) format. The file defines the task the
-    LLM should perform and how the output should be structured. This tool
-    produces a ready-to-use prompt for LLM execution.
+    (Prompt-Oriented Markup Language) format, or a `.md` file containing
+    static markdown instructions. The file defines the task the LLM should
+    perform and how the output should be structured. This tool produces a
+    ready-to-use prompt for LLM execution.
 
     Optionally, a context dictionary can be passed to substitute values in
-    the POML template, enabling dynamic parameterization.
+    the POML template, enabling dynamic parameterization. Markdown
+    capabilities have no template engine, so `poml_context` is rejected for
+    them rather than silently ignored.
 
     Args:
-        poml_path (str): Filesystem path to the `.poml` file containing the
-            capability definition.
+        poml_path (str): Filesystem path to the `.poml` or `.md` file
+            containing the capability definition.
         poml_context (dict[str, Any] | None, optional): Key-value pairs injected
             into the POML file to customize behavior. Defaults to None.
 
     Raises:
-        FileNotFoundError: If the `.poml` file cannot be found.
+        FileNotFoundError: If the file cannot be found.
+        InvalidCapabilityError: If `poml_context` is passed for a markdown
+            (`.md`) capability, which has no template engine to apply it to.
 
     Returns:
         list[dict[str, Any]]: A structured prompt representation, typically in the format:
@@ -458,17 +472,28 @@ def run_poml_capability(
     poml_file = pathlib.Path(poml_path)
     if not poml_file.exists():
         raise FileNotFoundError(poml_file)
+    if poml_file.suffix == ".md":
+        # Markdown capabilities are static instructions: no template engine,
+        # so parameterization is impossible rather than silently ignored.
+        if poml_context:
+            raise agent_capabilities.InvalidCapabilityError(
+                f"{poml_file} is a markdown capability; poml_context requires a POML file."
+            )
+        return [{"speaker": "human", "content": poml_file.read_text(encoding="utf-8")}]
     return poml(poml_file, context=poml_context)
 
 
 @server.tool(
     title="List agent capabilities",
     description=(
-        "List the predefined POML capabilities shipped with Bagel: each entry has "
-        "a `name`, a `path` to pass to `run_poml_capability`, and a one-line "
-        "`summary`. Use this to discover available capabilities instead of "
-        "guessing file paths."
+        "List every capability available to run: the predefined `.poml` capabilities "
+        "shipped with Bagel, plus any user-saved capabilities (`.poml` or `.md`, "
+        "named with a `user/` prefix) discovered under the user-capabilities "
+        "directory. Each entry has a `name`, a `path` to pass to "
+        "`run_poml_capability`, and a one-line `summary`. Use this to discover "
+        "available capabilities instead of guessing file paths."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def list_agent_capabilities() -> list[dict[str, str]]:
     """List the POML capability files shipped under ``src/agent``.
@@ -493,6 +518,91 @@ def list_agent_capabilities() -> list[dict[str, str]]:
 
 
 @server.tool(
+    title="Save a user capability",
+    description=(
+        "Save a reusable workflow as a named capability so it can be discovered "
+        "with `list_agent_capabilities` and run with `run_poml_capability` in any "
+        "future session. Content may be POML (validated before saving; supports "
+        "context parameterization) or plain markdown instructions. Writes only to "
+        "the user-capabilities directory; builtin capabilities cannot be modified."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
+)
+def save_agent_capability(name: str, content: str, overwrite: bool = False) -> dict[str, str]:
+    r"""Save a user-authored capability into the user-capabilities directory.
+
+    Args:
+        name (str): Capability slug (lowercase letters, digits, ``-``/``_``,
+            at most one ``/`` subdirectory level), e.g. ``fleet/battery-triage``.
+            The server chooses the file extension from the content.
+        content (str): The capability body — POML markup (starts with
+            ``<poml``) or markdown instructions.
+        overwrite (bool, optional): Replace an existing capability of the same
+            name. Defaults to False.
+
+    Returns:
+        dict[str, str]: The saved capability's ``name`` (``user/``-prefixed),
+            ``path``, and one-line ``summary`` — the same shape
+            ``list_agent_capabilities`` reports.
+
+    Raises:
+        InvalidCapabilityError: On an invalid name, empty content,
+            non-rendering POML, or a name collision without ``overwrite=True``.
+
+    Examples:
+        As an LLM prompt:
+            Save that workflow as a capability called battery-triage.
+
+        As a Python call:
+            >>> save_agent_capability("battery-triage", "# Battery triage\n\nSteps...")
+
+    """
+    return agent_capabilities.save_capability(name=name, content=content, overwrite=overwrite)
+
+
+@server.tool(
+    title="Delete a user capability",
+    description=(
+        "Delete a capability previously saved with `save_agent_capability`, by the "
+        "exact, full `name` `list_agent_capabilities` reports (`user/`-prefixed) -- "
+        "a bare slug is rejected, since a user capability's name can shadow a builtin "
+        "of the same stem. Only user-saved capabilities can be deleted -- builtins "
+        "shipped with Bagel refuse with a clear message. An unknown name raises "
+        "rather than silently no-op-ing, listing the user capabilities that do exist."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
+)
+def delete_capability(name: str) -> dict[str, str]:
+    """Delete one user-authored capability by its full name.
+
+    Args:
+        name (str): The capability to delete, exactly as `list_agent_capabilities`
+            reports it (`user/`-prefixed, e.g. `user/battery-triage`). A bare slug
+            (`battery-triage`) is rejected -- see Raises.
+
+    Returns:
+        dict[str, str]: The deleted capability's `name` (`user/`-prefixed) and `path`.
+
+    Raises:
+        InvalidCapabilityError: If `name` lacks the `user/` prefix (whether or
+            not it names a builtin -- only the full `user/`-prefixed name is
+            accepted, since a user capability can shadow a builtin of the same
+            stem), is not a valid capability slug, would resolve outside the
+            user-capabilities directory, or does not exist -- validated before
+            any file is touched, so a rejected call deletes nothing.
+
+    Examples:
+        As an LLM prompt:
+            Delete the capability I saved as "battery-triage".
+
+        As a Python call:
+            >>> delete_capability("user/battery-triage")
+
+    """
+    return agent_capabilities.delete_capability(name)
+
+
+@server.tool(
     title="List pipeline capabilities",
     description=(
         "List the tasks and gates available to compose a data pipeline, including "
@@ -500,6 +610,7 @@ def list_agent_capabilities() -> list[dict[str, str]]:
         "short summary. Use this before authoring a pipeline so the correct `module` "
         "and `args` are chosen instead of guessed."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def list_pipeline_capabilities(include_unavailable: bool = False) -> list[dict[str, Any]]:
     """List the tasks and gates that can be composed into a pipeline.
@@ -537,6 +648,7 @@ def list_pipeline_capabilities(include_unavailable: bool = False) -> list[dict[s
         "pre/post windows around them, merges overlaps, and reports how much data would "
         "be kept. Use this to audit a reduce/snippet pipeline before running it."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
 def preview_pipeline(  # noqa: PLR0913
     path: str,
@@ -580,22 +692,23 @@ def preview_pipeline(  # noqa: PLR0913
             ...                  "linear_acceleration_x < -10", pre_seconds=10, post_seconds=10)
 
     """
-    ds_type = resolve(path)
-    factory = module.provide(
-        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
-    )
-    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
-    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
-
-    relation = dataset.to_duckdb(factory, registry, [event_topic])
+    source = SourceContext.build(path, args)
+    bounds = source.bounds()
+    relation = source.dataset.to_duckdb(source.factory, source.registry, [event_topic])
     ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
-    rows = relation.project(f"{ts_column} AS ts, ({predicate}) AS hit").fetchall()
-
-    timestamps = [float(row[0]) for row in rows]
-    span_seconds = (max(timestamps) - min(timestamps)) if timestamps else 0.0
+    rows = windows.relation_rows(
+        relation.project(f"{ts_column} AS ts, ({predicate}) AS hit").order("ts")
+    )
+    span_seconds = bounds[1] - bounds[0]
 
     plan = windows.plan_reduction(
-        rows, pre_seconds, post_seconds, span_seconds, min_gap_seconds=debounce_seconds
+        rows,
+        pre_seconds,
+        post_seconds,
+        span_seconds,
+        min_gap_seconds=debounce_seconds,
+        bounds=bounds,
+        ordered=True,
     )
     return {
         "event_count": len(plan["events"]),
@@ -609,14 +722,79 @@ def preview_pipeline(  # noqa: PLR0913
     }
 
 
+def _pipeline_summary(text: str, yaml_file: pathlib.Path) -> str:
+    """One-line summary of a saved pipeline: task count, site/asset, cadence.
+
+    Cheap: reuses the YAML already read for the file's `name`/`path` entry --
+    no second pass over the pipeline. Falls back to the file's last-modified
+    time when the content doesn't parse as a pipeline config (e.g. a
+    hand-edited or unrelated file dropped into the directory), the same
+    fallback the tool-design review called out for anything non-trivial to
+    summarize.
+    """
+
+    def _fallback() -> str:
+        modified = datetime.fromtimestamp(yaml_file.stat().st_mtime).isoformat(timespec="seconds")
+        return f"(unrecognized pipeline file; modified {modified})"
+
+    try:
+        config = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return _fallback()
+    if not isinstance(config, dict):
+        return _fallback()
+
+    try:
+        tasks = config.get("tasks")
+        task_count = len(tasks) if isinstance(tasks, list) else 0
+        site, asset = config.get("site"), config.get("asset")
+        cadence = config.get("cadence") if isinstance(config.get("cadence"), dict) else {}
+        when = cadence.get("when")
+
+        pieces = [f"{task_count} task{'s' if task_count != 1 else ''}"]
+        # str()-coerce: a hand-edited pipeline can give site/asset a non-string
+        # value (e.g. `site: 123`), which would otherwise raise TypeError from
+        # str.join and crash listing (review #224).
+        target = "/".join(str(part) for part in (site, asset) if part)
+        if target:
+            pieces.append(f"for {target}")
+        if when:
+            pieces.append(f"({when})")
+        return " ".join(pieces) + "."
+    except (TypeError, AttributeError):
+        return _fallback()
+
+
+def _pipeline_lock(directory: pathlib.Path) -> filelock.FileLock:
+    """Return the cross-process lock serializing save/delete for `directory`.
+
+    Mirrors ``agent_capabilities._save_lock``: the lock file lives under
+    ``CACHE_DIRECTORY``, never inside `directory` itself (which `save_pipeline`
+    can point at a caller-chosen location), so a planted lock-named symlink
+    there can't be followed by the lock implementation before any path check
+    runs. Keyed by the resolved directory so concurrent `save_pipeline` and
+    `delete_pipeline` calls against the same directory (in practice, the
+    trusted `settings.PIPELINES_DIRECTORY` default) serialize against each
+    other -- otherwise a delete can unlink a file after `save_pipeline` opens
+    it but before the write completes, or two deletes can both pass the
+    existence check and one raise an unexpected `FileNotFoundError` (review
+    #224).
+    """
+    locks = pathlib.Path(settings.CACHE_DIRECTORY) / "locks"
+    locks.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(str(directory.resolve()).encode("utf-8")).hexdigest()[:16]
+    return filelock.FileLock(str(locks / f"pipelines-{digest}.lock"))
+
+
 @server.tool(
     title="Save a pipeline to a YAML file",
     description=(
         "Persist a pipeline configuration to a YAML file so it can be reused, edited, or "
         "run later with `run.py`. Returns the path to the written file."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
-def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines") -> str:
+def save_pipeline(config: dict[str, Any], name: str, directory: str | None = None) -> str:
     """Write a pipeline configuration to a YAML file.
 
     Args:
@@ -624,8 +802,11 @@ def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines
             accepts and `run.py` loads): `name`, `site`, `asset`, `path`, `allow_failure`,
             `cadence`, and `tasks`.
         name (str): The pipeline file name (without extension), in lower_snake_case.
-        directory (str, optional): Directory to write the file into. Created if missing.
-            Defaults to "pipelines".
+        directory (str | None, optional): Directory to write the file into. Created if
+            missing. Defaults to `settings.PIPELINES_DIRECTORY` -- the same directory
+            `list_pipelines` and `delete_pipeline` operate on -- read live so a caller
+            explicitly wanting a different directory can still pass one for this write,
+            though only the trusted default is ever discoverable or deletable by name.
 
     Returns:
         str: The path to the written YAML file.
@@ -643,12 +824,142 @@ def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines
     if not artifacts.is_lower_snake_case(name):
         raise ValueError(f"Pipeline name '{name}' must be lower_snake_case.")
 
-    output_directory = pathlib.Path(directory)
+    output_directory = pathlib.Path(
+        directory if directory is not None else settings.PIPELINES_DIRECTORY
+    )
     output_directory.mkdir(parents=True, exist_ok=True)
     output_file = output_directory / f"{name}.yaml"
-    with open(output_file, "w") as stream:
-        yaml.safe_dump(config, stream, sort_keys=False)
+    # Serialized with delete_pipeline's existence-check + unlink under the same
+    # lock, so a concurrent save and delete of the same name cannot race.
+    with _pipeline_lock(output_directory):
+        with open(output_file, "w") as stream:
+            yaml.safe_dump(config, stream, sort_keys=False)
     return str(output_file)
+
+
+@server.tool(
+    title="List saved pipelines",
+    description=(
+        "List the pipeline YAML files saved by `save_pipeline` in the trusted pipelines "
+        "directory (`settings.PIPELINES_DIRECTORY`): each entry's `name`, `path`, and a "
+        "one-line `summary` (task count, site/asset, and cadence). Use this to discover "
+        "what has already been saved before reusing, editing, or deleting it -- instead "
+        "of guessing file names."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def list_pipelines() -> list[dict[str, str]]:
+    """List the pipeline YAML files saved directly under the trusted pipelines directory.
+
+    Reads `settings.PIPELINES_DIRECTORY` -- the same directory `save_pipeline`
+    defaults to and `delete_pipeline` is confined to -- so a name reported
+    here is always one `delete_pipeline` can act on. There is no `directory`
+    argument: an MCP caller cannot point this at an arbitrary path.
+
+    Returns:
+        list[dict[str, str]]: One entry per `*.yaml` file directly inside the
+            directory (not recursive), sorted by `name`: `name` (the file
+            stem, the same value `delete_pipeline` accepts), `path`, and a
+            one-line `summary`.
+
+    Examples:
+        As an LLM prompt:
+            What pipelines have I saved?
+
+        As a Python call:
+            >>> list_pipelines()
+
+    """
+    root = pathlib.Path(settings.PIPELINES_DIRECTORY)
+    if not root.is_dir():
+        return []
+    entries = [
+        {
+            "name": yaml_file.stem,
+            "path": str(yaml_file),
+            "summary": _pipeline_summary(
+                yaml_file.read_text(encoding="utf-8", errors="replace"), yaml_file
+            ),
+        }
+        for yaml_file in root.glob("*.yaml")
+        # is_symlink() excludes a *.yaml symlink whose target is outside the
+        # trusted root: is_file() alone follows it, so read_text() would read
+        # and summarize a file this listing has no business exposing -- and
+        # one delete_pipeline refuses anyway, since its containment check
+        # resolves the same symlink (review #224).
+        if yaml_file.is_file() and not yaml_file.is_symlink()
+    ]
+    entries.sort(key=lambda entry: entry["name"])
+    return entries
+
+
+@server.tool(
+    title="Delete a saved pipeline",
+    description=(
+        "Delete exactly one pipeline YAML file previously written by `save_pipeline`, "
+        "by the same `name` `list_pipelines` reports. Confined to the trusted pipelines "
+        "directory (`settings.PIPELINES_DIRECTORY`) -- there is no `directory` argument, "
+        "so this can never be pointed at an arbitrary path -- and a name that would "
+        "resolve outside it is refused before anything is touched. Deleting an unknown "
+        "name raises rather than silently no-op-ing, listing the names that do exist -- "
+        "so a second delete of the same name also raises."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
+)
+def delete_pipeline(name: str) -> dict[str, str]:
+    """Delete one saved pipeline YAML file by name, from the trusted pipelines directory.
+
+    Only `settings.PIPELINES_DIRECTORY` -- the same directory `save_pipeline`
+    defaults to and `list_pipelines` reads from -- is ever touched; there is
+    no `directory` argument an MCP caller could aim elsewhere. Identity is
+    fully validated -- name syntax, then containment within that directory --
+    before anything is unlinked, so a rejected call deletes nothing.
+
+    Args:
+        name (str): The pipeline's name, i.e. its file stem (without `.yaml`),
+            exactly as `list_pipelines` reports it. Must be a plain file name:
+            no path separators.
+
+    Returns:
+        dict[str, str]: The deleted pipeline's `name` and `path`.
+
+    Raises:
+        ValueError: If `name` contains a path separator or would otherwise
+            resolve outside the pipelines directory (path traversal, e.g.
+            "../x", or a symlink escaping it) -- checked before any file is
+            touched -- or if no pipeline named `name` exists, in which case
+            the error lists the names that do.
+
+    Examples:
+        As an LLM prompt:
+            Delete the saved pipeline "csv_smoke".
+
+        As a Python call:
+            >>> delete_pipeline("csv_smoke")
+
+    """
+    root = pathlib.Path(settings.PIPELINES_DIRECTORY)
+    if "/" in name or "\\" in name or name in (".", ".."):
+        raise ValueError(f"Invalid pipeline name {name!r}: must be a plain file name, not a path.")
+
+    target = root / f"{name}.yaml"
+    if not target.resolve().is_relative_to(root.resolve()):
+        raise ValueError(
+            f"Refusing to delete {name!r}: it resolves to {target.resolve()}, "
+            f"outside the pipelines directory {root.resolve()}."
+        )
+
+    # Serialized with save_pipeline's write under the same lock, so a
+    # concurrent save and delete of the same name cannot race.
+    with _pipeline_lock(root):
+        if not target.is_file():
+            available = sorted(entry["name"] for entry in list_pipelines())
+            detail = f"Available: {available}" if available else "No pipelines are saved there."
+            raise ValueError(f"No saved pipeline named {name!r}. {detail}")
+
+        target.unlink()
+
+    return {"name": name, "path": str(target)}
 
 
 @server.tool(
@@ -658,6 +969,7 @@ def save_pipeline(config: dict[str, Any], name: str, directory: str = "pipelines
         "produced. Prefer running `preview_pipeline` first for event-driven reductions so "
         "the effect is audited before anything is written."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False, open_world=True),
 )
 def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
     """Build and run a pipeline, returning the artifacts it produced.
@@ -680,7 +992,8 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
     produced = pipeline.run_all()
     return {
         "pipeline": pipeline.name,
-        "status": "completed",
+        "status": pipeline.summary.status,
+        "runs": asdict(pipeline.summary),
         "artifacts": [str(path) for path in produced],
     }
 
@@ -693,6 +1006,7 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
         "source is reported but does not stop the batch. Returns per-source results and a "
         "summary. For an event reduction, preview a representative source first."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False, open_world=True),
 )
 def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, Any]:
     """Run a pipeline config against every matching data source.
@@ -730,6 +1044,7 @@ def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, An
         "already plotted and zoomed. Use after preview_pipeline to hand an event to a "
         "human for visual inspection."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
 def export_for_plotjuggler(  # noqa: PLR0913
     path: str,
@@ -801,6 +1116,7 @@ def export_for_plotjuggler(  # noqa: PLR0913
         "Rerun viewer. Use after preview_pipeline to hand an event to a human for "
         "visual inspection. Needs the optional rerun-sdk dependency (uv sync --group viz)."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
 def export_for_rerun(  # noqa: PLR0913
     path: str,
@@ -871,6 +1187,7 @@ def export_for_rerun(  # noqa: PLR0913
         "ranges pre-set. Works in Lichtblick (open source) and Foxglove, which share "
         "the layout format. Use after preview_pipeline to hand an event to a human."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
 def export_for_lichtblick(  # noqa: PLR0913
     path: str,
@@ -943,6 +1260,7 @@ def export_for_lichtblick(  # noqa: PLR0913
         "Beta: load-tests clean with the lerobot package; awaiting validation by "
         "real training runs."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
 def export_for_lerobot(  # noqa: PLR0913
     path: str,
@@ -1019,6 +1337,7 @@ def export_for_lerobot(  # noqa: PLR0913
         "CLI on PATH (cargo install waffle-iron). The WaffleForm it writes is "
         "immediately queryable as a data source."
     ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False),
 )
 def snap_hardware(directory: str = ".") -> dict[str, Any]:
     """Snapshot live hardware state via waffle-iron.

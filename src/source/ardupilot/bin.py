@@ -32,7 +32,7 @@ class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
         # gather message count, start and end seconds
         reader.rewind()
         self._start_seconds = reader.recv_msg()._timestamp
-        self._end_seconds = reader.last_timestamp()
+        self._end_seconds = last_timestamp_seconds(reader)
         self._total_message_count = sum(reader.counts)
 
         # gather PARM messages
@@ -86,6 +86,30 @@ class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
             return False, errors.InvalidFileExtensionError(".bin", self.path)
 
         return True, None
+
+
+def last_timestamp_seconds(reader: DFReader.DFReader_binary) -> float:
+    """Return the latest timestamp in the log.
+
+    ``DFReader_binary.last_timestamp()`` decodes only the record at the highest
+    file offset; on real logs that can be a trailing FMT/UNIT-style record with
+    no ``TimeUS``, which inherits the first timestamp and makes the log look
+    zero seconds long (issue #198). The last record of *each* type is at most a
+    few hundred cheap reads, so take the maximum over those instead.
+    """
+    latest: float | None = None
+    for type_id, offsets in enumerate(reader.offsets):
+        if reader.counts[type_id] == -1 or not offsets:
+            continue
+        reader.offset = offsets[-1]
+        message = reader.recv_msg()
+        if message is None:
+            continue
+        if latest is None or message._timestamp > latest:
+            latest = message._timestamp
+    if latest is None:
+        return reader.last_timestamp()
+    return latest
 
 
 def register() -> None:
