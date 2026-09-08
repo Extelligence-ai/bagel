@@ -57,9 +57,12 @@ def test_predicate_never_true_yields_nothing() -> None:
 
 def test_min_gap_seconds_defaults_to_zero() -> None:
     assert OnEvent(predicate="accel_x < -10").min_gap_seconds() == 0.0
-    assert OnEvent(
-        predicate="accel_x < -10", debounce=Lookback(last=3, unit=Unit.SECOND)
-    ).min_gap_seconds() == 3.0
+    assert (
+        OnEvent(
+            predicate="accel_x < -10", debounce=Lookback(last=3, unit=Unit.SECOND)
+        ).min_gap_seconds()
+        == 3.0
+    )
 
 
 def test_cadence_build_parses_on_event() -> None:
@@ -80,9 +83,7 @@ def test_cadence_build_parses_on_event() -> None:
 
 
 def test_cadence_build_on_event_without_debounce() -> None:
-    cadence = Cadence.build(
-        {"topic": "/imu", "when": {"on_event": {"predicate": "accel_x < -10"}}}
-    )
+    cadence = Cadence.build({"topic": "/imu", "when": {"on_event": {"predicate": "accel_x < -10"}}})
     assert isinstance(cadence.when, OnEvent)
     assert cadence.when.debounce is None
 

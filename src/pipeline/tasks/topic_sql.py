@@ -4,8 +4,7 @@ import logging
 import pathlib
 from enum import Enum
 
-import duckdb
-
+from src import query
 from src.di import module
 from src.pipeline import base, messages
 
@@ -44,8 +43,7 @@ class TopicSqlQuery(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
         relation = self.to_duckdb(
             topics=[self._topic], asof_seconds=asof_seconds, lookback=lookback
         )
-        duckdb.register(self._topic, relation)
-        result = duckdb.sql(self._statement)
+        result = query.sql(relation, self._topic, self._statement)
 
         output_file = self.artifact_path(asof_seconds, f".{self._output_format.value}")
 

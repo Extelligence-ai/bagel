@@ -78,6 +78,10 @@ def subscribe_with_pipeline(
                 f"subscribed topics: {topics}"
             )
 
+    # All-or-nothing admission: refuse the whole batch up front rather than
+    # subscribing a prefix and failing mid-loop (Codex review on #156).
+    sink.ensure_capacity(list(topics), overwrite=overwrite)
+
     for topic in topics:
         sink.subscribe(
             topic,
@@ -146,20 +150,10 @@ def start(manifest_file: str | pathlib.Path) -> list[dict[str, Any]]:
                     **(entry.get("args") or {}),
                 },
             )
-            topics = subscribe_with_pipeline(
-                sink, entry.get("topics"), entry.get("pipeline")
-            )
-            reports.append(
-                {"sink": sink_type.value, "status": "subscribed", "topics": topics}
-            )
-            logging.info(
-                "Startup subscription active: %s -> %s", sink_type.value, topics
-            )
+            topics = subscribe_with_pipeline(sink, entry.get("topics"), entry.get("pipeline"))
+            reports.append({"sink": sink_type.value, "status": "subscribed", "topics": topics})
+            logging.info("Startup subscription active: %s -> %s", sink_type.value, topics)
         except Exception as error:
-            logging.error(
-                "Startup subscription failed for sink '%s': %s", sink_type.value, error
-            )
-            reports.append(
-                {"sink": sink_type.value, "status": "failed", "error": str(error)}
-            )
+            logging.error("Startup subscription failed for sink '%s': %s", sink_type.value, error)
+            reports.append({"sink": sink_type.value, "status": "failed", "error": str(error)})
     return reports

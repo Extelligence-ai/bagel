@@ -120,7 +120,5 @@ def test_end_to_end_flattened_parquet(
     (artifact,) = result["artifacts"]
     table = duckdb.sql(f"SELECT * FROM '{artifact}'")
     assert "message/accel_x" in table.columns
-    (minimum,) = duckdb.sql(
-        f'SELECT MIN("message/accel_x") FROM \'{artifact}\''
-    ).fetchone()
+    (minimum,) = duckdb.sql(f"SELECT MIN(\"message/accel_x\") FROM '{artifact}'").fetchone()
     assert minimum == -13.0

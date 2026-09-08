@@ -25,8 +25,20 @@ PALETTE = ("#1f77b4", "#d62728", "#1ac938", "#ff7f0e", "#f14cc1", "#9467bd", "#1
 
 MAX_CURVES = 8
 
-_NUMERIC_PREFIXES = ("TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UTINYINT",
-                     "USMALLINT", "UINTEGER", "UBIGINT", "FLOAT", "DOUBLE", "DECIMAL")
+_NUMERIC_PREFIXES = (
+    "TINYINT",
+    "SMALLINT",
+    "INTEGER",
+    "BIGINT",
+    "HUGEINT",
+    "UTINYINT",
+    "USMALLINT",
+    "UINTEGER",
+    "UBIGINT",
+    "FLOAT",
+    "DOUBLE",
+    "DECIMAL",
+)
 
 
 def _numeric_columns(relation: duckdb.DuckDBPyRelation) -> list[str]:

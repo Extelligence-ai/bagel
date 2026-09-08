@@ -43,7 +43,6 @@ def _resample(
     selects = ", ".join(f"flat.{quote_identifier(s)}" for s in signals)
     ts = quote_identifier(settings.TIMESTAMP_SECONDS_COLUMN_NAME)
     frames = int((end_seconds - start_seconds) * fps) + 1
-    duckdb.register("flat_view", flat)
     query = (
         f"WITH grid AS (SELECT {start_seconds} + (i / {fps}::DOUBLE) AS grid_t "  # noqa: S608 -- identifiers quoted, values are typed numbers
         f"FROM generate_series(0, {frames - 1}) AS t(i)) "
@@ -51,7 +50,7 @@ def _resample(
         f"ASOF LEFT JOIN flat_view AS flat ON grid.grid_t >= flat.{ts} "
         f"ORDER BY grid.grid_t"
     )
-    rows = duckdb.sql(query).fetchall()
+    rows = flat.query("flat_view", query).fetchall()
     return [dict(zip(["grid_t", *signals], row, strict=True)) for row in rows]
 
 

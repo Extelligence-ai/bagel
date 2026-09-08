@@ -8,7 +8,7 @@ But first, make sure the Bagel MCP server is already running in a separate termi
 
 If not, follow the [⚡️ Quickstart](../../../README.md#️-quickstart) guide to start it.
 
-You can check if it’s running by visiting [http://0.0.0.0:8000/sse](http://0.0.0.0:8000/sse)
+You can check if it’s running by visiting [http://localhost:8000/sse](http://localhost:8000/sse)
 in your browser. You should see output like:
 
 ```
@@ -47,7 +47,7 @@ for more details.
 Add the Bagel MCP server to Claude Code:
 
 ```bash
-claude mcp add --transport sse bagel http://0.0.0.0:8000/sse
+claude mcp add --transport sse bagel http://localhost:8000/sse
 ```
 
 Confirm the connection:
@@ -63,7 +63,7 @@ bagel:
   Scope: Local config (private to you in this project)
   Status: ✓ Connected
   Type: sse
-  URL: http://0.0.0.0:8000/sse
+  URL: http://localhost:8000/sse
 ```
 
 For more details on connecting MCP servers to Claude Code, see the

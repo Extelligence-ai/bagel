@@ -99,11 +99,16 @@ def write_mcap(relation: duckdb.DuckDBPyRelation, mcap_file: pathlib.Path) -> No
 
 def build_layout(
     paths: list[str],
-    x_range: tuple[float, float],
     y_range: tuple[float, float],
     tab_title: str,
 ) -> str:
-    """Build a Lichtblick layout JSON string with one pre-framed Plot panel."""
+    """Build a Lichtblick layout JSON string with one pre-framed Plot panel.
+
+    The X axis carries no explicit bounds: Lichtblick's ``timestamp`` axis is
+    elapsed seconds since playback start, so absolute-epoch bounds would park
+    the viewport far from the data. The exported MCAP contains only the kept
+    window, so the viewer's auto-fit frames it exactly.
+    """
     plot_id = "Plot!bagel"
     layout = {
         "configById": {
@@ -120,8 +125,6 @@ def build_layout(
                 "showPlotValuesInLegend": False,
                 "isSynced": True,
                 "xAxisVal": "timestamp",
-                "minXValue": x_range[0],
-                "maxXValue": x_range[1],
                 "minYValue": y_range[0],
                 "maxYValue": y_range[1],
                 "sidebarDimension": 240,
@@ -214,7 +217,6 @@ def export_window(  # noqa: PLR0913
     layout_file.write_text(
         build_layout(
             paths,
-            x_range=(start_seconds, end_seconds),
             y_range=(low - pad, high + pad),
             tab_title=name,
         )

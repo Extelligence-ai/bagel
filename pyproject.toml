@@ -1,6 +1,6 @@
 [project]
 name = "bagel"
-version = "2.0.0"
+version = "2.2.3"
 description = "Bagel MCP Server"
 authors = []
 requires-python = ">=3.10,<3.13"
@@ -30,15 +30,18 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "hypothesis >=6.100.0,<7.0.0",
     "ipykernel >=6.29.0,<7.0.0",
     "ipython >=8.0.0,<9.0.0",
     "jupyterlab >=4.4.0,<5.0.0",
     "matplotlib >=3.10.0,<4.0.0",
     "pre-commit >=4.2.0,<5.0.0",
     "pytest >=8.4.0,<9.0.0",
-    "pytest-timeout >=2.3.0,<3.0.0",
+    "pytest-cov >=5.0.0,<7.0.0",
+    "pytest-timeout >=2.4.0,<3.0.0",
     "ruff ==0.12.4",
 ]
+quality = ["mypy >=1.17.0,<2.0.0", "pip-audit >=2.9.0,<3.0.0"]
 cv = [
     "opencv-python >=4.0.0,<5.0.0",
     "pillow >=11.3.0,<12.0.0",
@@ -78,14 +81,28 @@ automotive = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-# Safety net: no single test may wedge the run (and CI) indefinitely. `thread`
-# works even when a test is blocked in a C extension or a socket read.
+addopts = "--strict-markers"
 timeout = 300
 timeout_method = "thread"
 markers = [
-    "network: hits a real network service; skipped unless its env gate is set",
-    "integration: exercises multiple components end to end",
+    "adversarial: malformed/fuzzed inputs and property-based tests",
+    "e2e: end-to-end flows driving the real server against fixtures",
+    "network: requires a disposable external service",
+    "integration: exercises multiple real components",
 ]
+filterwarnings = [
+    "error::pytest.PytestUnhandledThreadExceptionWarning",
+    # asammdf 7.x can fail during destruction of intentionally malformed fixtures.
+    # Keep it visible while allowing that third-party adversarial cleanup defect.
+    "default::pytest.PytestUnraisableExceptionWarning",
+]
+
+[tool.mypy]
+files = ["src/query.py", "src/source/context.py", "src/pipeline/results.py"]
+python_version = "3.10"
+strict = true
+follow_imports = "skip"
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
@@ -119,3 +136,17 @@ exclude = ["**/*.ipynb", "src/pipeline/tasks/cloudini/vendor/**"]
 
 [tool.ruff.lint.per-file-ignores]
 "./test/**/*.py" = ["S101", "S608", "D", "PLR2004"]  # S608: tests build SQL over their own tmp paths
+"./demo.py" = ["T20"]  # a CLI report card is meant to print
+
+[tool.coverage.run]
+source = ["src", "server", "run"]
+branch = true
+relative_files = true
+omit = ["*/__pycache__/*", "*_pb2.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[tool.coverage.paths]
+source = ["src", "/home/ubuntu/runtime/src"]

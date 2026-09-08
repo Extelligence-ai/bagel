@@ -50,9 +50,7 @@ def test_on_event_fires_once_per_rising_edge(tmp_path: pathlib.Path) -> None:
 def test_forward_window_delays_firing_until_post_data_arrived(
     tmp_path: pathlib.Path,
 ) -> None:
-    when = OnEvent(
-        predicate="imu['ax'] < -10", forward=Lookback(last=2, unit=Unit.SECOND)
-    )
+    when = OnEvent(predicate="imu['ax'] < -10", forward=Lookback(last=2, unit=Unit.SECOND))
     writer, pipeline = _writer(tmp_path, when)
 
     _feed(writer, [(0.0, -0.5), (1.0, -12.0), (2.0, -0.5)])
@@ -63,9 +61,7 @@ def test_forward_window_delays_firing_until_post_data_arrived(
 
 
 def test_flush_fires_events_still_awaiting_forward_window(tmp_path: pathlib.Path) -> None:
-    when = OnEvent(
-        predicate="imu['ax'] < -10", forward=Lookback(last=10, unit=Unit.SECOND)
-    )
+    when = OnEvent(predicate="imu['ax'] < -10", forward=Lookback(last=10, unit=Unit.SECOND))
     writer, pipeline = _writer(tmp_path, when)
 
     _feed(writer, [(0.0, -0.5), (5.0, -13.0), (6.0, -0.5)])

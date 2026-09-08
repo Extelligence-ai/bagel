@@ -9,6 +9,7 @@ from rclpy.serialization import serialize_message
 
 from src.di import module
 from src.pipeline import base, messages
+from src.pipeline.tasks import ros2_compat
 
 NANOSECOND = 1
 MICROSECOND = 1_000 * NANOSECOND
@@ -84,11 +85,11 @@ class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
             writer.open(storage_options, converter_options)
             for i, topic in enumerate(topics):
                 writer.create_topic(
-                    rosbag2_py.TopicMetadata(
-                        id=i,
-                        name=topic,
-                        type=self.registry.native_type_name(topic, data_source),
-                        serialization_format=self._output_serialization_format,
+                    ros2_compat.topic_metadata(
+                        i,
+                        topic,
+                        self.registry.native_type_name(topic, data_source),
+                        self._output_serialization_format,
                     )
                 )
             for topic, timestamp_seconds, message in messages:

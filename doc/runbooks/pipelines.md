@@ -5,8 +5,8 @@ Every pipeline starts as a sentence:
 > Every time the drone decelerates harder than -10 m/s², keep 10 seconds before and
 > after. Drop everything else.
 
-Bagel turns that into a small, auditable config — *when* to fire, *whether* to proceed,
-*what* to do — previews the effect before writing a byte, and can then run it once,
+Bagel turns that into a small, auditable config: *when* to fire, *whether* to proceed,
+*what* to do. It previews the effect before writing a byte, and can then run it once,
 across a whole fleet, or standing at the edge. Reduction is the flagship use, but it's
 one task among many: the same machinery exports PlotJuggler sessions, computes summaries
 on a schedule, and ships artifacts to the cloud.
@@ -35,7 +35,7 @@ tasks:                   # WHAT to do
 Artifacts land under `~/.bagel/artifacts/pipeline=<name>/...`, tagged with `site` and
 `asset` so fleet output stays sorted.
 
-### Cadence — when it fires
+### Cadence · when it fires
 
 | `when` | Fires | Example sentence |
 | --- | --- | --- |
@@ -43,11 +43,11 @@ Artifacts land under `~/.bagel/artifacts/pipeline=<name>/...`, tagged with `site
 | `{every: 5, unit: minutes}` | On a fixed schedule along the topic's timeline | "Every 5 minutes, ..." |
 | `{on_event: {predicate: ...}}` | On the rising edge of a SQL predicate, with optional `debounce` and `forward` windows | "Whenever the battery dips below 20%, ..." |
 
-`on_event` fires once per transition — a condition that stays true for 400 messages is
+`on_event` fires once per transition: a condition that stays true for 400 messages is
 one event, and `debounce` coalesces bursts. On live streams, `forward` waits long enough
 to capture the post-event window before firing.
 
-### Predicates — the one contract to learn
+### Predicates · the one contract to learn
 
 Topic columns are DuckDB `STRUCT`s, so fields are addressed as
 `"<topic>"['field']['subfield']`:
@@ -56,10 +56,10 @@ Topic columns are DuckDB `STRUCT`s, so fields are addressed as
 "/imu"['linear_acceleration']['x'] < -10
 ```
 
-Ask `describe_topic` for the exact field paths and units first — or just describe the
+Ask `describe_topic` for the exact field paths and units first, or just describe the
 event in words and let your LLM write the predicate; that's the point.
 
-### Gates and tasks — what it does
+### Gates and tasks · what it does
 
 A **gate** decides whether a fired pipeline proceeds (e.g. `SqlQuery`: run a boolean SQL
 check at the fire timestamp). **Tasks** do the work. Ask Bagel to
@@ -81,28 +81,28 @@ your install; today it includes:
 \* the `ros2.db3` and `ros1.bag` writers need rosbag CLIs, so they show up inside the
 ROS compose services.
 
-Tasks chain — this is one standing pipeline on a live stream:
+Tasks chain: this is one standing pipeline on a live stream:
 
 > Whenever the forklift brakes harder than -10 m/s², cut a ±10s snippet, upload it
 > to S3, and post "🚨 hard brake on {asset} at t={asof_seconds}" to the ops channel.
 
 ## The lifecycle
 
-1. **Preview** — `preview_pipeline` is a dry run: events found, seconds kept, nothing
+1. **Preview** · `preview_pipeline` is a dry run: events found, seconds kept, nothing
    written. Same discipline as auditing SQL before trusting the math.
-2. **Run** — `run_pipeline` builds and executes the config, returning artifact paths.
-3. **Save** — `save_pipeline` persists it as YAML (like
+2. **Run** · `run_pipeline` builds and executes the config, returning artifact paths.
+3. **Save** · `save_pipeline` persists it as YAML (like
    [`pipelines/hard_decel_reduce.yaml`](../../pipelines/hard_decel_reduce.yaml)) for
    review, version control, and `run.py pipelines/<name>.yaml`.
-4. **Scale out** — `run_pipeline_batch` runs one config over globs of sources
+4. **Scale out** · `run_pipeline_batch` runs one config over globs of sources
    (`logs/*.mcap`), isolating failures per source and returning a combined report.
-5. **Stand it up** — attach a pipeline to a live subscription
+5. **Stand it up** · attach a pipeline to a live subscription
    (`subscribe_live_topics`), or list it in `STARTUP_PIPELINES_FILE` so the edge
    container re-establishes it on every restart: record continuously, keep only what
    matters.
 
 ## Go deeper
 
-- [Event-driven data reduction](./data_reduction.md) — the flagship use, end to end
-- [PlotJuggler](./plotjuggler.md) — pre-framed sessions from pipeline outputs
-- [MQTT](./iot_mqtt.md) — standing pipelines on live IoT streams
+- [Event-driven data reduction](./data_reduction.md) · the flagship use, end to end
+- [PlotJuggler](./plotjuggler.md) · pre-framed sessions from pipeline outputs
+- [MQTT](./iot_mqtt.md) · standing pipelines on live IoT streams

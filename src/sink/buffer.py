@@ -16,7 +16,7 @@ import yaml
 
 from settings import settings
 from src.pipeline import live
-from src.pipeline.base import Cadence, Frequency, OnEvent, Pipeline, Unit
+from src.pipeline.base import Cadence, Frequency, OnceAtEnd, OnEvent, Pipeline, Unit
 
 
 def _topic_uuid(topic: str) -> str:
@@ -136,6 +136,11 @@ class TopicBufferWriter:
             )
 
     @property
+    def buffer_size_bytes(self) -> int | None:
+        """The configured maximum buffer size in bytes; None means unbounded."""
+        return self._buffer_size_bytes
+
+    @property
     def topic(self) -> str:
         """Topic name for the messages held by this buffer."""
         return self._topic
@@ -222,6 +227,8 @@ class TopicBufferWriter:
     def _should_run(
         self, cadence: Cadence, message_count: int, last_run_at: float | None, asof_seconds: float
     ) -> bool:
+        if isinstance(cadence.when, OnceAtEnd):
+            return False
         if last_run_at is None:
             return True
 

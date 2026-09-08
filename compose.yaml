@@ -13,9 +13,17 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+      # Containers must listen on all container interfaces for Docker port
+      # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
+      MCP_SERVER_HOST: 0.0.0.0
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -23,6 +31,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-jazzy:
@@ -39,9 +51,17 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+      # Containers must listen on all container interfaces for Docker port
+      # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
+      MCP_SERVER_HOST: 0.0.0.0
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -49,6 +69,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-iron:
@@ -65,9 +89,17 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+      # Containers must listen on all container interfaces for Docker port
+      # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
+      MCP_SERVER_HOST: 0.0.0.0
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -75,6 +107,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-humble:
@@ -91,9 +127,17 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+      # Containers must listen on all container interfaces for Docker port
+      # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
+      MCP_SERVER_HOST: 0.0.0.0
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -101,6 +145,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic:
@@ -117,14 +165,26 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+      # Containers must listen on all container interfaces for Docker port
+      # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
+      MCP_SERVER_HOST: 0.0.0.0
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic-cv:
@@ -141,14 +201,26 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+      # Containers must listen on all container interfaces for Docker port
+      # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
+      MCP_SERVER_HOST: 0.0.0.0
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   px4:
@@ -164,14 +236,26 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+      # Containers must listen on all container interfaces for Docker port
+      # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
+      MCP_SERVER_HOST: 0.0.0.0
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   ardupilot:
@@ -187,14 +271,26 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+      # Containers must listen on all container interfaces for Docker port
+      # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
+      MCP_SERVER_HOST: 0.0.0.0
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   betaflight:
@@ -210,14 +306,26 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+      # Containers must listen on all container interfaces for Docker port
+      # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
+      MCP_SERVER_HOST: 0.0.0.0
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   apache-arrow:
@@ -233,14 +341,26 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+      # Containers must listen on all container interfaces for Docker port
+      # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
+      MCP_SERVER_HOST: 0.0.0.0
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     volumes:
       # Artifacts (reduced bags, snippets, exports) land on the host, so desktop
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   iot:
@@ -256,9 +376,17 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT}
+      # Containers must listen on all container interfaces for Docker port
+      # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
+      MCP_SERVER_HOST: 0.0.0.0
     ports:
-      - "${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
-      - "${JUPYTER_PORT}:${JUPYTER_PORT}"
+      # Bound to localhost: the MCP endpoint is unauthenticated by design
+      # (SECURITY.md). Publishing to 0.0.0.0 would expose it to the LAN and
+      # bypass host firewalls. To share it deliberately, drop the 127.0.0.1
+      # prefix and put an authenticated proxy in front (#158).
+      - "127.0.0.1:${MCP_SERVER_PORT}:${MCP_SERVER_PORT}"
+      - "127.0.0.1:${JUPYTER_PORT}:${JUPYTER_PORT}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -266,6 +394,10 @@ services:
       # tools like PlotJuggler can open them directly. On Linux, run
       # `mkdir -p ~/.bagel/artifacts` once so the directory is owned by you.
       - ${HOME}/.bagel/artifacts:/home/ubuntu/.bagel/artifacts
+      # User-authored capabilities (.poml/.md) — discovered by
+      # list_agent_capabilities and written by save_agent_capability. On Linux,
+      # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
+      - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
       # - <path-to-local-data>:/home/ubuntu/data
 
   # Local LLM for a fully offline stack: your data AND your model never leave
@@ -275,7 +407,11 @@ services:
     image: ollama/ollama:latest
     profiles: ["local-llm"]
     ports:
-      - "11434:11434"
+      # Bound to localhost: like the MCP endpoint, the ollama LLM endpoint
+      # is unauthenticated. Publishing to 0.0.0.0 would expose it to the LAN.
+      # To share it deliberately, drop the 127.0.0.1 prefix and put an
+      # authenticated proxy in front (#158).
+      - "127.0.0.1:11434:11434"
     volumes:
       # Models are multi-GB; persist them across container restarts.
       - ${HOME}/.ollama:/root/.ollama

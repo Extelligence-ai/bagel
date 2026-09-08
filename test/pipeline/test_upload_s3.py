@@ -121,9 +121,7 @@ def test_filter_modified_at_uploads_only_files_in_window(tmp_path: pathlib.Path)
     task = UploadFilesToS3(bucket="bkt", source=str(tmp_path), filter_modified_at=True)
     client = _client()
     with patch("src.pipeline.tasks.upload.s3.boto3.client", return_value=client):
-        task.execute(
-            asof_seconds=1000.0, lookback=base.Lookback(last=60, unit=base.Unit.SECOND)
-        )
+        task.execute(asof_seconds=1000.0, lookback=base.Lookback(last=60, unit=base.Unit.SECOND))
 
     assert _uploaded_keys(client) == ["fresh.csv"]
 
@@ -148,9 +146,7 @@ def test_registry_discovers_upload_task() -> None:
     from src.pipeline import capabilities
 
     entries = capabilities.list_capabilities()
-    upload = next(
-        (e for e in entries if e["module"] == "src.pipeline.tasks.upload.s3"), None
-    )
+    upload = next((e for e in entries if e["module"] == "src.pipeline.tasks.upload.s3"), None)
     assert upload is not None
     assert upload["kind"] == "task"
     param_names = {p["name"] for p in upload["parameters"]}

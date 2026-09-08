@@ -1,0 +1,187 @@
+# Product Completeness Agent in CI.
+#
+# Runs the .github/agents/product-completeness-agent.md persona against a PR's
+# diff and posts an ADVISORY comment flagging product-shaped gaps (missing
+# inverses, dead ends, unobservable state) — the class correctness reviewers
+# miss. This is NOT a merge gate: product completeness is judgment, so it
+# comments, never blocks. Fires automatically on PRs that touch the
+# user-facing surface, and on demand via a "@product review" comment.
+#
+# Keyless, hardened exactly like claude-review.yaml (its own five security
+# rounds): the model gets read-only, path-scoped tools and can only WRITE one
+# output file; a subsequent no-model shell step validates and posts it under a
+# maintainer PAT. It reads contributor-controlled PR content, so it holds no
+# secret the model can reach, checks the PR head out to a subdirectory with
+# persist-credentials:false, and denies reads of /tmp, the runner temp, and
+# any .git.
+#
+# SETUP (one console step, mirrors the bagel-claude-review rule): the
+# auto-on-PR path presents a GitHub OIDC token whose `sub` is
+# `repo:Extelligence-ai/bagel:pull_request` — add a second federation rule
+# with that subject_prefix, same audience/service account
+# (bagel-ci-reviewer), so the exchange is accepted. The four
+# ANTHROPIC_* repo variables are already set. Until that rule exists the
+# auto path's token exchange fails closed (no comment posted, no leak); the
+# "@product review" comment path uses the default-branch context the existing
+# rule already covers.
+name: product-review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    # Must cover every surface the persona (.github/agents/product-completeness-agent.md)
+    # claims to grade: MCP tools + CLI entry (server.py, run.py), agent
+    # capabilities/.poml (src/agent/**), pipeline tasks/gates/discovery
+    # (src/pipeline/**), wire-contract/publish surfaces (src/sink/**), a
+    # user-settable knob (settings.py, compose.yaml), and the docs the
+    # persona checks for parity (protocol doc, runbooks, plugin skills). A
+    # gap here is a doc/contract-parity miss inside the agent itself (lens 6).
+    paths:
+      - "server.py"
+      - "run.py"
+      - "settings.py"
+      - "compose.yaml"
+      - "src/agent/**"
+      - "src/pipeline/**"
+      - "src/sink/**"
+      - "doc/fleet_protocol_v1.md"
+      - "doc/runbooks/**"
+      - "plugin/skills/**"
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  product-review:
+    # Auto on product-surface PRs from THIS repo (never fork PRs: they get a
+    # read-only token and must not reach WIF); or a maintainer's explicit
+    # "@product review" comment.
+    if: >-
+      (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        contains(github.event.comment.body, '@product review') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+    steps:
+      - name: Resolve the PR number and head
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            num=${{ github.event.issue.number }}
+          else
+            num=${{ github.event.pull_request.number }}
+          fi
+          echo "num=$num" >> "$GITHUB_OUTPUT"
+          pr_json="$(gh api "repos/$REPO/pulls/$num")"
+          echo "head_sha=$(echo "$pr_json" | jq -er .head.sha)" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$(echo "$pr_json" | jq -er .base.sha)" >> "$GITHUB_OUTPUT"
+      # Agent definition (the persona the reviewer OBEYS) is read from root,
+      # so root MUST be trusted base code -- never the PR merge ref. On a
+      # pull_request event actions/checkout defaults to refs/pull/N/merge,
+      # which contains the PR's changes: without pinning, a PR that edits
+      # product-completeness-agent.md would rewrite the reviewer's own
+      # instructions and have them executed against itself (prompt injection
+      # via the persona file). Pin to the base SHA; the fallback covers the
+      # comment-triggered path, which has no PR context.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          persist-credentials: false
+      # PR head into a subdirectory the model may read; no credentials in it.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: pr-head
+          fetch-depth: 0
+          persist-credentials: false
+      # `gh pr diff` reads the PR's LIVE current diff by number, with no
+      # commit-SHA argument -- if a push lands after head_sha is resolved
+      # above but before the model gets around to running it (agent turns can
+      # take minutes), it would inspect a newer revision's diff while
+      # ./pr-head and the posted report still say head_sha. Generate the diff
+      # ourselves, right now, pinned to the exact base/head SHAs already
+      # resolved and checked out, so the diff, the files the model reads, and
+      # the commit the report is stamped with all name the same tree.
+      - name: Generate the diff pinned to the checked-out head
+        run: |
+          git -C pr-head diff --no-color \
+            "${{ steps.pr.outputs.base_sha }}...${{ steps.pr.outputs.head_sha }}" \
+            > "${{ github.workspace }}/pr-diff.patch"
+      - name: Resolve the identity-token file path
+        run: echo "ANTHROPIC_IDENTITY_TOKEN_FILE=${RUNNER_TEMP}/gha-jwt" >> "$GITHUB_ENV"
+      - name: Keep a fresh OIDC token in the identity file
+        run: |
+          fetch() {
+            local tmp
+            tmp="$(mktemp "${ANTHROPIC_IDENTITY_TOKEN_FILE}.XXXXXX")"
+            if curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+                 "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+                 | jq -er .value > "$tmp"; then
+              mv "$tmp" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+            else
+              echo "::warning::OIDC token refresh failed; keeping last valid token"
+              rm -f "$tmp"
+            fi
+          }
+          fetch
+          ( while true; do sleep 180; fetch || true; done ) &
+      - name: Product Completeness Agent inspects the PR
+        continue-on-error: true  # advisory: an agent/auth failure must never red-X the PR
+        uses: anthropics/claude-code-action@v1
+        with:
+          prompt: >-
+            You are the Product Completeness Agent. Your full persona,
+            checklist, and required output format are defined in
+            ./.github/agents/product-completeness-agent.md at this checkout —
+            read it first and follow it exactly. Review the changed surface of
+            pull request #${{ steps.pr.outputs.num }} (head commit
+            ${{ steps.pr.outputs.head_sha }}): the diff is already generated
+            and pinned to that exact head at ./pr-diff.patch -- read it, and
+            read any file you need ONLY under ./pr-head at the PR's head. Do
+            not run `gh pr diff` yourself; it reads the PR's live diff and may
+            no longer match the head commit this report is stamped with. Then
+            WRITE your report
+            (in the persona's exact output format, its first line being
+            "Product completeness review -- commit ${{ steps.pr.outputs.head_sha }}")
+            to ./product-review-body.md and nothing else. Do not run
+            `gh pr review`, `gh pr comment`, or any command that posts.
+          claude_args: >-
+            --allowedTools Bash(gh pr view:*),Read(./**),Grep(./pr-head/**),Glob(./pr-head/**),Write(./product-review-body.md)
+            --disallowedTools Read(//tmp/**),Read(${{ runner.temp }}/**),Read(**/.git/**)
+            --max-turns 40
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Post the report (deterministic — no model in this step)
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_TRIGGER_TOKEN || github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.num }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          body="product-review-body.md"
+          if [ ! -s "$body" ]; then
+            echo "::warning::No product-review report produced (agent auth not configured yet, or the agent step failed). Advisory step skipped — the PR is NOT blocked."
+            exit 0
+          fi
+          first="$(head -n1 "$body")"
+          expected="Product completeness review -- commit ${HEAD_SHA}"
+          if [ "$first" != "$expected" ]; then
+            echo "::warning::Report header malformed (got: $first); skipping the post rather than blocking the PR."
+            exit 0
+          fi
+          # Advisory PR comment (issue comment), not a review — never gates merge.
+          gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@"$body" >/dev/null
+          echo "Posted product completeness review for $HEAD_SHA."

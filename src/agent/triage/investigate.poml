@@ -1,0 +1,56 @@
+<poml>
+    <task>
+        Investigate a robot log to find and extract the moments that matter, using
+        the fewest and cheapest tool calls that answer the user's question.
+        <stepwise-instructions>
+            <list listStyle="decimal">
+                <item>
+                    Start cheap: call `describe_data_source` on the path. This is
+                    inexpensive even for very large files. Note the topics, time
+                    range, and message counts. If the source needs extra arguments
+                    (a CAN capture needs `args={"dbc": "./path/to/file.dbc"}`), a
+                    typed error will say so - fix the arguments rather than
+                    retrying blindly.
+                </item>
+                <item>
+                    CSV/JSON sources exclude invalid files by default
+                    (`exclude_invalid_files=True`). If results look emptier than
+                    the user expects, say so and retry with
+                    `args={"exclude_invalid_files": false}` to surface the bad
+                    files - an empty-looking result may be missing data, not
+                    absent events.
+                </item>
+                <item>
+                    Call `describe_topic` on the one or two topics most relevant
+                    to the question to learn the DuckDB schema, field paths, and
+                    units. Topic columns are DuckDB `STRUCT`s: refer to nested
+                    fields as `topic['field']['subfield']`.
+                </item>
+                <item>
+                    Query narrow time windows, not the whole log: pass
+                    `start_seconds`/`end_seconds` to `query_messages` whenever the
+                    question allows it. Iterate: a coarse aggregate first (COUNT,
+                    MIN/MAX, bucketed averages) to locate interesting regions,
+                    then detailed queries inside those regions.
+                </item>
+                <item>
+                    When you have found the moments that matter, extract evidence
+                    around them instead of describing numbers: a snippet (one clip
+                    per event) or a GIF for camera topics. Report each artifact's
+                    output path to the user.
+                </item>
+                <item>
+                    If the investigation turns into "keep windows around every
+                    such event", switch to the pipeline capability
+                    (`compose/pipeline`) instead of extracting clips one at a
+                    time; for message-latency questions, the `diagnose/latency`
+                    capability has the recipe.
+                </item>
+            </list>
+        </stepwise-instructions>
+    </task>
+    <output-format>
+        Findings first (what happened and when), then the evidence artifacts with
+        their paths, then the queries used - so the user can rerun or refine them.
+    </output-format>
+</poml>

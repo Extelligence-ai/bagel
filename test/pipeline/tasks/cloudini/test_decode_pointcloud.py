@@ -16,7 +16,9 @@ WASM_PATH = "/tmp/cloudini.wasm"  # noqa: S108
 def test_empty_topics_raises() -> None:
     with pytest.raises(ValueError, match="at least one"):
         DecodePointCloudTask(
-            topics=[], output_directory="/tmp/out", wasm_path=WASM_PATH  # noqa: S108
+            topics=[],
+            output_directory="/tmp/out",  # noqa: S108
+            wasm_path=WASM_PATH,
         )
 
 
@@ -52,7 +54,9 @@ def test_global_flag_enabled(mock_settings: MagicMock) -> None:
 
 def test_extract_raw_data_from_dict() -> None:
     task = DecodePointCloudTask(
-        topics=["/lidar"], output_directory="/tmp/out", wasm_path=WASM_PATH  # noqa: S108
+        topics=["/lidar"],
+        output_directory="/tmp/out",  # noqa: S108
+        wasm_path=WASM_PATH,
     )
     assert task._extract_raw_data({"data": b"\x01\x02"}) == b"\x01\x02"
     assert task._extract_raw_data({"other": 1}) is None
@@ -60,7 +64,9 @@ def test_extract_raw_data_from_dict() -> None:
 
 def test_extract_raw_data_from_object() -> None:
     task = DecodePointCloudTask(
-        topics=["/lidar"], output_directory="/tmp/out", wasm_path=WASM_PATH  # noqa: S108
+        topics=["/lidar"],
+        output_directory="/tmp/out",  # noqa: S108
+        wasm_path=WASM_PATH,
     )
     msg = MagicMock()
     msg.data = b"\x03\x04"
@@ -69,7 +75,9 @@ def test_extract_raw_data_from_object() -> None:
 
 def test_extract_raw_data_from_list() -> None:
     task = DecodePointCloudTask(
-        topics=["/lidar"], output_directory="/tmp/out", wasm_path=WASM_PATH  # noqa: S108
+        topics=["/lidar"],
+        output_directory="/tmp/out",  # noqa: S108
+        wasm_path=WASM_PATH,
     )
     msg = MagicMock()
     msg.data = [1, 2, 3]
@@ -100,9 +108,11 @@ def test_execute_decodes_and_writes_npz(
     )
 
     mock_dataset = MagicMock()
-    mock_dataset._messages.return_value = iter([
-        ("/lidar/points", 1.0, {"data": b"\x00\x01"}),
-    ])
+    mock_dataset._messages.return_value = iter(
+        [
+            ("/lidar/points", 1.0, {"data": b"\x00\x01"}),
+        ]
+    )
     task._factory = MagicMock()
     task._registry = MagicMock()
     task._dataset = mock_dataset
@@ -138,9 +148,11 @@ def test_execute_decodes_and_writes_csv(
     )
 
     mock_dataset = MagicMock()
-    mock_dataset._messages.return_value = iter([
-        ("/lidar/points", 0.5, MagicMock(data=b"\xAB\xCD")),
-    ])
+    mock_dataset._messages.return_value = iter(
+        [
+            ("/lidar/points", 0.5, MagicMock(data=b"\xab\xcd")),
+        ]
+    )
     task._factory = MagicMock()
     task._registry = MagicMock()
     task._dataset = mock_dataset

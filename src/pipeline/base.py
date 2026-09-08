@@ -11,14 +11,14 @@ from typing import Any
 import boto3
 import botocore
 import duckdb
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from settings import settings
 from src import artifacts
 from src.di import module
-from src.di.types.base_module import BaseModule
-from src.di.types.data_source import resolve
 from src.pipeline import progress, windows
+from src.pipeline.results import RunSummary
+from src.source.context import SourceContext
 
 SECOND = 1
 MINUTE = 60 * SECOND
@@ -70,7 +70,7 @@ class Frequency(BaseModel):
 
     """
 
-    every: int
+    every: int = Field(gt=0, strict=True)
     unit: Unit
 
     def to_seconds(self) -> float:
@@ -87,7 +87,7 @@ class Lookback(BaseModel):
 
     """
 
-    last: int
+    last: int = Field(ge=0, strict=True)
     unit: Unit
 
     def to_seconds(self) -> float:
@@ -120,9 +120,17 @@ class OnEvent(BaseModel):
 
     """
 
-    predicate: str
+    predicate: str = Field(min_length=1)
     debounce: Lookback | None = None
     forward: Lookback | None = None
+
+    @field_validator("debounce", "forward")
+    @classmethod
+    def require_time_unit(cls, value: Lookback | None) -> Lookback | None:
+        """Event delays are elapsed time, not frame counts."""
+        if value is not None and value.unit == Unit.FRAME:
+            raise ValueError("Event debounce and forward windows require a time unit")
+        return value
 
     def min_gap_seconds(self) -> float:
         """Minimum seconds required between consecutive events; 0 if no debounce is set."""
@@ -147,7 +155,7 @@ class Cadence(BaseModel):
 
     """
 
-    topic: str
+    topic: str = Field(min_length=1)
     when: OnceAtEnd | Frequency | OnEvent
 
     @staticmethod
@@ -357,6 +365,38 @@ class ArtifactMixin:
         return path
 
 
+class PipelineConfig(BaseModel):
+    """Validate configuration before operators acquire resources or produce effects."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(pattern=r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
+    site: str = Field(pattern=r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
+    asset: str = Field(pattern=r"^[a-z0-9]+(?:_[a-z0-9]+)*$")
+    path: str = Field(min_length=1)
+    allow_failure: bool = Field(strict=True)
+    cadence: dict[str, Any]
+    gates: list[dict[str, Any]] = Field(default_factory=list)
+    tasks: list[dict[str, Any]]
+    source_args: dict[str, Any] = Field(default_factory=dict)
+    report_progress: bool = False
+
+
+def _shared_source_options(config: dict[str, Any]) -> dict[str, Any]:
+    """Normalize legacy setup options and reject conflicting source interpretations."""
+    options = dict(config["source_args"])
+    operators = [*config["gates"], *config["tasks"]]
+    for operator in operators:
+        if "lookback" in operator:
+            Lookback.build(operator["lookback"])
+        for key, value in operator.get("setup", {}).items():
+            if key in options and options[key] != value:
+                raise ValueError(f"Conflicting source option {key!r}; use shared source_args")
+            options[key] = value
+    for operator in operators:
+        operator["setup"] = {**options, **operator.get("setup", {})}
+    return options
+
+
 class Pipeline:
     """A data processing pipeline consisting of gates and tasks.
 
@@ -376,6 +416,7 @@ class Pipeline:
         gates: list[tuple[Gate, Lookback | None]],
         tasks: list[tuple[Task, Lookback | None]],
         report_progress: bool,
+        source_args: dict[str, Any] | None = None,
     ) -> None:
         """Initialize a Pipeline instance.
 
@@ -391,6 +432,7 @@ class Pipeline:
             tasks (list[tuple[Task, Lookback  |  None]]): List of task operators and their
                 lookback windows.
             report_progress (bool): Whether to report progress during artifact uploads.
+            source_args: Shared source decoding and timestamp options.
 
         """
         if not artifacts.is_lower_snake_case(name):
@@ -414,6 +456,8 @@ class Pipeline:
         self._report_progress = report_progress
         self._artifacts = []
         self._produced: list[pathlib.Path] = []
+        self._source_args = source_args or {}
+        self.summary = RunSummary()
 
     @property
     def name(self) -> str:
@@ -436,18 +480,12 @@ class Pipeline:
         return self._cadence
 
     def _asof_timestamps(self) -> Iterator[float]:
-        ds_type = resolve(self._path)
-
-        factory = module.provide(
-            f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": self._path}
-        )
-        registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", {})
-        dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+        source = SourceContext.build(self._path, self._source_args)
 
         logging.info("Gathering timestamps for pipeline '%s'...", self.name)
-        relation = dataset.to_duckdb(
-            factory=factory,
-            registry=registry,
+        relation = source.dataset.to_duckdb(
+            factory=source.factory,
+            registry=source.registry,
             topics=[self.cadence.topic],
             start_seconds=None,
             end_seconds=None,
@@ -456,17 +494,18 @@ class Pipeline:
             yield from self._event_timestamps(relation, self.cadence.when)
             return
 
-        rows = relation.project(settings.TIMESTAMP_SECONDS_COLUMN_NAME).fetchall()
-        timestamps = [float(row[0]) for row in rows]
-
-        if not timestamps:
-            return
-
         if isinstance(self.cadence.when, OnceAtEnd):
-            yield timestamps[-1]
+            row = relation.aggregate(f'max("{settings.TIMESTAMP_SECONDS_COLUMN_NAME}")').fetchone()
+            if row and row[0] is not None:
+                yield float(row[0])
         else:
             last_run_at = None
-            for i, timestamp_seconds in enumerate(timestamps):
+            timestamps = windows.relation_rows(
+                relation.project(settings.TIMESTAMP_SECONDS_COLUMN_NAME).order(
+                    settings.TIMESTAMP_SECONDS_COLUMN_NAME
+                )
+            )
+            for i, (timestamp_seconds,) in enumerate(timestamps):
                 match self.cadence.when.unit:
                     case Unit.FRAME:
                         if i % self.cadence.when.every == 0:
@@ -489,8 +528,10 @@ class Pipeline:
         Consecutive events closer together than the debounce window are coalesced.
         """
         ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
-        rows = relation.project(f"{ts_column} AS ts, ({when.predicate}) AS hit").fetchall()
-        yield from windows.rising_edges(rows, when.min_gap_seconds())
+        rows = windows.relation_rows(
+            relation.project(f"{ts_column} AS ts, ({when.predicate}) AS hit").order("ts")
+        )
+        yield from windows.iter_rising_edges(rows, when.min_gap_seconds())
 
     def run_at(self, asof_seconds: float) -> None:
         """Run the pipeline at the given timestamp (in seconds)."""
@@ -502,6 +543,7 @@ class Pipeline:
                         self._produced.extend(produced)
                     if task.upload and produced and self.can_upload_artifacts():
                         self._artifacts.extend(produced)
+                self.summary.succeeded += 1
                 logging.info(
                     "Pipeline '%s' executed when topic '%s' received message at %.4f seconds",
                     self.name,
@@ -509,6 +551,7 @@ class Pipeline:
                     asof_seconds,
                 )
             else:
+                self.summary.skipped += 1
                 logging.info(
                     "Pipeline '%s' skipped when topic '%s' received message at %.4f seconds",
                     self.name,
@@ -516,8 +559,10 @@ class Pipeline:
                     asof_seconds,
                 )
         except Exception as e:
+            self.summary.failed += 1
+            self.summary.errors.append(f"At {asof_seconds}: {type(e).__name__}: {e}")
             if not self._allow_failure:
-                raise e
+                raise
             logging.error(
                 "Pipeline '%s' failed when topic '%s' received message at %.4f seconds: %s",
                 self.name,
@@ -551,6 +596,10 @@ class Pipeline:
         if missing_keys:
             raise MissingRequiredKeyError(", ".join(missing_keys))
 
+        config = PipelineConfig.model_validate(config).model_dump()
+        cadence = Cadence.build(config["cadence"])
+        source_args = _shared_source_options(config)
+
         pipeline = config["name"]
         site = config["site"]
         asset = config["asset"]
@@ -580,10 +629,11 @@ class Pipeline:
             asset=asset,
             path=path,
             allow_failure=config["allow_failure"],
-            cadence=Cadence.build(config["cadence"]),
+            cadence=cadence,
             gates=gates,
             tasks=tasks,
             report_progress=config.get("report_progress", False),
+            source_args=source_args,
         )
 
     def can_upload_artifacts(self) -> bool:

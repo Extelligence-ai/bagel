@@ -3,12 +3,10 @@
 import duckdb
 
 from settings import settings
-from src.di import module
-from src.di.types.base_module import BaseModule
-from src.di.types.data_source import resolve
 from src.message.base import MessageDataset
 from src.pipeline import base
 from src.source.base import BoundedSourceFactory, SourceFactory
+from src.source.context import SourceContext
 from src.topic.base import TopicRegistry
 
 
@@ -36,15 +34,12 @@ class TopicMessageMixin:
 
     def setup(self, path: str, **kwargs) -> None:  # noqa: ANN003
         """Implement `base.Operator.setup`."""
-        ds_type = resolve(path)
-
-        factory_module = f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}"
-        registry_module = f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}"
-        dataset_module = f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}"
-
-        self._factory = module.provide(factory_module, {**kwargs, "path": path})
-        self._registry = module.provide(registry_module, {**kwargs})
-        self._dataset = module.provide(dataset_module, {**kwargs})
+        source = SourceContext.build(path, kwargs)
+        self._factory, self._registry, self._dataset = (
+            source.factory,
+            source.registry,
+            source.dataset,
+        )
 
     def to_duckdb(
         self,

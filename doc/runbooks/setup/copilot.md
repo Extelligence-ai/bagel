@@ -8,7 +8,7 @@ But first, make sure the Bagel MCP server is already running in a separate termi
 
 If not, follow the [⚡️ Quickstart](../../../README.md#️-quickstart) guide to start it.
 
-You can check if it’s running by visiting [http://0.0.0.0:8000/sse](http://0.0.0.0:8000/sse)
+You can check if it’s running by visiting [http://localhost:8000/sse](http://localhost:8000/sse)
 in your browser. You should see output like:
 
 ```
@@ -40,7 +40,7 @@ Click the **Add MCP Server...** icon on the top-right corner.
 
 From the dropdown menu, select **HTTP (HTTP or Server-Sent Events)**.
 
-Enter `http://0.0.0.0:8000/sse`, name it `"bagel"`, and set the scope to **Global**.
+Enter `http://localhost:8000/sse`, name it `"bagel"`, and set the scope to **Global**.
 
 This will add the Bagel MCP server to your VSCode configuration at `~/.config/Code/User/mcp.json`:
 
@@ -48,7 +48,7 @@ This will add the Bagel MCP server to your VSCode configuration at `~/.config/Co
 {
   "servers": {
     "bagel": {
-      "url": "http://0.0.0.0:8000/sse",
+      "url": "http://localhost:8000/sse",
       "type": "http"
     }
   },

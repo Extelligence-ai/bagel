@@ -3,10 +3,13 @@
 import base64
 import hashlib
 import json
+import logging
 import pathlib
 import re
 import uuid
 from datetime import datetime
+
+import filelock
 
 from settings import settings
 
@@ -66,6 +69,74 @@ def arrow_file(source_uuid: str, seeds: list[str], prefix: str) -> pathlib.Path:
     )
 
 
+def cached_arrow_files() -> list[pathlib.Path]:
+    """All cached .arrow query results (never sink buffers, repos, or artifacts)."""
+    data_directory = pathlib.Path(settings.CACHE_DIRECTORY) / "data"
+    return [file for file in data_directory.glob("source_id=*/**/*.arrow") if file.is_file()]
+
+
+def evict_arrow_cache() -> int:
+    """Delete oldest-by-access cached .arrow files until under CACHE_MAX_BYTES.
+
+    Cache entries are derived data keyed by (source, topics, window, ffill) and
+    rebuild on demand, so deletion is always safe. Called before each new cache
+    write; the incoming file may overshoot the cap until the next write evicts.
+    Returns the number of files deleted; no-op when CACHE_MAX_BYTES is 0.
+
+    The inventory-and-delete pass runs under one cache-wide, nonblocking lock so
+    two concurrent callers never each compute a total against a stale snapshot
+    and delete more entries between them than the cap requires; a caller that
+    loses the race backs off and returns 0, leaving eviction to the pass already
+    running. Per-entry locks are still used for the actual deletes so eviction
+    keeps skipping entries a reader or writer currently holds.
+    """
+    limit_bytes = settings.CACHE_MAX_BYTES
+    if not limit_bytes:
+        return 0
+    data_directory = pathlib.Path(settings.CACHE_DIRECTORY) / "data"
+    data_directory.mkdir(parents=True, exist_ok=True)
+    try:
+        with filelock.FileLock(str(data_directory / ".eviction.lock"), timeout=0):
+            deleted = _evict_arrow_cache_locked(limit_bytes)
+    except filelock.Timeout:
+        return 0  # another eviction pass is already in flight
+    if deleted:
+        logging.warning(
+            "Evicted %d cached arrow file(s) to keep the query cache under %d bytes "
+            "(CACHE_MAX_BYTES; 0 disables eviction)",
+            deleted,
+            limit_bytes,
+        )
+    return deleted
+
+
+def _evict_arrow_cache_locked(limit_bytes: int) -> int:
+    """Delete oldest-by-access cached files until under `limit_bytes`.
+
+    Callers must hold the cache-wide eviction lock; see `evict_arrow_cache`.
+    """
+    entries = []
+    for file in cached_arrow_files():
+        try:
+            stat = file.stat()
+        except OSError:
+            continue  # deleted by a concurrent process; nothing to account
+        entries.append((max(stat.st_atime, stat.st_mtime), stat.st_size, file))
+    total = sum(size for _, size, _ in entries)
+    deleted = 0
+    for _, size, file in sorted(entries):
+        if total <= limit_bytes:
+            break
+        try:
+            with filelock.FileLock(str(file) + ".lock", timeout=0):
+                file.unlink(missing_ok=True)
+        except filelock.Timeout:
+            continue
+        total -= size
+        deleted += 1
+    return deleted
+
+
 def sink_directory(sink_uuid: str) -> pathlib.Path:
     """Generate a directory path for storing data from a topic sink."""
     return pathlib.Path(settings.CACHE_DIRECTORY) / "data" / f"sink={sink_uuid}"
@@ -118,3 +189,19 @@ def artifact_s3_key(path: pathlib.Path) -> str:
     relative_path = path.relative_to(settings.ARTIFACT_DIRECTORY)
     s3_key = pathlib.Path(settings.ARTIFACT_DIRNAME) / relative_path
     return s3_key.as_posix()
+
+
+def directory_size_bytes(directory: str | pathlib.Path) -> int:
+    """Total size of all files under a directory; 0 if it does not exist."""
+    root = pathlib.Path(directory)
+    if not root.exists():
+        return 0
+    total = 0
+    for file in root.glob("**/*"):
+        if not file.is_file():
+            continue
+        try:
+            total += file.stat().st_size
+        except OSError:
+            continue  # deleted between glob and stat; nothing to account
+    return total
