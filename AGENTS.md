@@ -22,7 +22,7 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
 
 - Answers come from DuckDB SQL over real messages. Do not do the math yourself;
   ask Bagel and show the user the generated query.
-- Call `describe_source` first, and `describe_topic` before writing predicates
+- Call `describe_data_source` first, and `describe_topic` before writing predicates
   (field paths and units vary by source).
 - Reduction etiquette: `preview_pipeline` first, report detected events and
   kept seconds, get user confirmation, then `run_pipeline`.

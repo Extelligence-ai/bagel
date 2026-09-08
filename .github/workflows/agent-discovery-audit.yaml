@@ -1,0 +1,26 @@
+name: agent discovery audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 12 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  public-surfaces:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Collect public discovery evidence
+        run: python3 scripts/audit_agent_discovery.py --output discovery-audit
+      - name: Retain report and response bodies
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: agent-discovery-audit
+          path: discovery-audit
+          retention-days: 30
+          if-no-files-found: error
