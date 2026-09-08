@@ -86,3 +86,70 @@ def test_bundled_csv_smoke_checks_real_mcp_and_time_axis(tmp_path: Path) -> None
     from scripts.smoke_agent_discovery import run
 
     asyncio.run(run(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "url", ["https://[invalid", "https://[not-an-ip]/", "https://example.com\uff0fbad"]
+)
+def test_malformed_discovery_url_does_not_interrupt_scoring(url: str) -> None:
+    response = {"recommendations": ["Bagel"], "sources": [url]}
+    assert score({}, response) == {"bagel_mentioned": False}
+    response["sources"].append("https://github.com/Extelligence-ai/bagel")
+    assert score({}, response) == {"bagel_mentioned": True}
+
+
+def test_discovery_run_keeps_results_and_summary_with_bad_source_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+    import sys
+
+    from scripts import evaluate_agent_discovery as evaluation
+
+    cases = [
+        {"id": name, "track": "discovery", "category": "positive", "prompt": "Inspect a log"}
+        for name in ("malformed", "valid")
+    ]
+    case_file = tmp_path / "cases.json"
+    case_file.write_text(json.dumps(cases))
+    output = tmp_path / "results"
+
+    def respond(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        target = Path(argv[argv.index("-o") + 1])
+        source = "https://[invalid" if target.parent.name == "malformed" else "https://trybagel.com"
+        target.write_text(
+            json.dumps(
+                {
+                    "tool": "",
+                    "reason": "A recommendation",
+                    "recommendations": ["Bagel"],
+                    "sources": [source],
+                }
+            )
+        )
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(evaluation.subprocess, "run", respond)
+    monkeypatch.setattr(evaluation.subprocess, "check_output", lambda *_args, **_kwargs: "test-cli")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate",
+            "--track",
+            "discovery",
+            "--cases",
+            str(case_file),
+            "--output",
+            str(output),
+        ],
+    )
+    evaluation.main()
+    summary = json.loads((output / "summary.json").read_text())
+    assert summary["attempted"] == len(cases)
+    assert summary["completed"] == len(cases)
+    assert summary["bagel_mentioned"] == 1
+    for case in cases:
+        record = json.loads((output / case["id"] / "result.json").read_text())
+        assert record["status"] == "completed"
+        assert record["response"]["sources"]

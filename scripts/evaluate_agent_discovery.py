@@ -38,20 +38,25 @@ def make_prompt(case: dict, catalog: list | None) -> str:
     )
 
 
+def is_bagel_source(url: str) -> bool:
+    """Treat malformed model-generated URLs as non-matches, preserving other evidence."""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+    except ValueError:
+        return False
+    return hostname in {"trybagel.com", "www.trybagel.com"} or (
+        hostname == "github.com" and parsed.path.lower().rstrip("/") == "/extelligence-ai/bagel"
+    )
+
+
 def score(case: dict, response: dict | None) -> dict:
     """Count errors in the denominator; discovery mentions are not task success."""
     if "expected_tools" in case:
         return {"correct": response is not None and response.get("tool") in case["expected_tools"]}
     recommendations = [] if response is None else response.get("recommendations", [])
     sources = [] if response is None else response.get("sources", [])
-    attributed = any(
-        urlparse(url).hostname in {"trybagel.com", "www.trybagel.com"}
-        or (
-            urlparse(url).hostname == "github.com"
-            and urlparse(url).path.lower().rstrip("/") == "/extelligence-ai/bagel"
-        )
-        for url in sources
-    )
+    attributed = any(is_bagel_source(url) for url in sources)
     return {
         "bagel_mentioned": attributed
         and any(re.search(r"\bbagel\b", name, re.IGNORECASE) for name in recommendations)
