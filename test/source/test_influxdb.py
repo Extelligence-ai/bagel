@@ -113,6 +113,8 @@ def test_bounds_uses_aggregate_queries_not_full_row_downloads(
 # -- live database ------------------------------------------------------------------
 
 
+@pytest.mark.network
+@pytest.mark.integration
 @requires_db
 def test_end_to_end_over_live_influxdb() -> None:
     import server
@@ -141,6 +143,8 @@ def test_end_to_end_over_live_influxdb() -> None:
     assert rows[0]["max_temp"] is not None
 
 
+@pytest.mark.network
+@pytest.mark.integration
 @requires_db
 def test_preview_pipeline_detects_events_in_influxdb() -> None:
     import server
