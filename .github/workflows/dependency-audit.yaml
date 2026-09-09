@@ -32,8 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ inputs.base-ref || github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || github.sha }}
           path: audit-base
@@ -41,7 +41,7 @@ jobs:
             pyproject.toml
             uv.lock
           sparse-checkout-cone-mode: false
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.8.0"
           python-version: "3.12"
@@ -49,7 +49,7 @@ jobs:
         run: uv sync --locked --group quality
       - name: Reject new advisories and incomplete audits
         run: uv run --no-sync python scripts/audit_dependencies.py --base audit-base
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: dependency-advisories

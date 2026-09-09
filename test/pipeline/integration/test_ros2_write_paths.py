@@ -23,6 +23,8 @@ from src.pipeline import base  # noqa: E402
 
 from . import synth  # noqa: E402
 
+pytestmark = pytest.mark.integration
+
 SECOND_NS = 1_000_000_000
 
 PREDICATE = "\"/imu\"['linear_acceleration']['x'] < -10"

@@ -43,10 +43,11 @@ server = mcp_compat.create_server(
         "bags, MCAP, PX4/ArduPilot/Betaflight logs, CAN/MF4, live MQTT) by "
         "generating DuckDB SQL over the actual messages: never estimate a "
         "numeric answer yourself, and show the user the query you ran. "
-        "Workflow: describe_source first for an overview; describe_topic before "
+        "Workflow: describe_data_source first for an overview; describe_topic before "
         "writing any predicate (field paths and units differ per source). For "
         "event detection and data reduction, always preview_pipeline and report "
-        "events/kept-seconds before run_pipeline writes anything. Sample data "
+        "events/kept-seconds, then get user confirmation before run_pipeline writes anything. "
+        "Sample data "
         "for smoke tests lives in ./data/sample/. Outputs land under the "
         "artifacts directory and paths are returned by the tools."
     ),
@@ -56,10 +57,11 @@ server = mcp_compat.create_server(
 @server.tool(
     title="Describe a data source",
     description=(
-        "Summarize a data source without returning its messages. "
-        "Includes: a brief summary, basic metadata (start time, message count, config parameters), "
-        "and a list of available topics. "
-        "Excludes: detailed topic definitions or actual messages."
+        "Inspect a robotics, drone, or IoT log first: returns source metadata, available "
+        "topics, and instructions for summarizing them. Use describe_topic next for field "
+        "schemas before SQL. Does not return message rows or detect anomalies. Paths are "
+        "resolved on the Bagel server; runtime and schema support depend on the selected "
+        "service."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
@@ -109,9 +111,10 @@ def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[
 @server.tool(
     title="Describe a topic in a data source",
     description=(
-        "Generate a structured summary of a topic without returning its messages. "
-        "Includes: short summary, DuckDB schema, original IDL definition, and "
-        "guidelines for SQL queries. Excludes: actual topic data."
+        "Inspect one known topic before writing SQL or event predicates. Returns its DuckDB "
+        "schema, original message definition, and query instructions, without message rows. "
+        "Discover topic names with describe_data_source. Confirm units from the definition or "
+        "user; do not infer units from field names."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
@@ -173,10 +176,11 @@ def describe_topic(
 @server.tool(
     title="Query topic messages with SQL",
     description=(
-        "Run a DuckDB SQL query on messages from a single topic in a data source. "
-        "Returns the query results as structured dictionaries. "
-        "Use this tool to answer user questions about message data, "
-        "including filtering, aggregation, and downsampling."
+        "Answer quantitative questions with read-only DuckDB SQL over one topic: filtering, "
+        "aggregates, downsampling, and event evidence. Call describe_data_source and "
+        "describe_topic first; use the returned schema and show the SQL to the user. Returns "
+        "rows as dictionaries. Use read_loggings for textual diagnostics. Time bounds are "
+        "inclusive source timestamps in seconds, not offsets from the first message."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
@@ -235,8 +239,10 @@ def query_messages(  # noqa: PLR0913
 @server.tool(
     title="Read logging messages from a data source",
     description=(
-        "Extract INFO, WARN, and ERROR messages from a data source. "
-        "Supports optional time filtering. Use for debugging or diagnostics."
+        "Read textual INFO/WARN/ERROR diagnostics from a recorded source, optionally within "
+        "inclusive source-time bounds in seconds. Returns logging records, or an empty list "
+        "when no logging topics exist. Use query_messages for numerical signals, statistics, "
+        "and threshold detection; empty diagnostics do not prove a healthy log."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
@@ -291,8 +297,10 @@ def read_loggings(
 @server.tool(
     title="List available live topics",
     description=(
-        "Use this tool to inspect a live data stream and list the topics that "
-        "can be subscribed to. Helpful before starting a subscription."
+        "Discover topic names from a live broker or ROS bridge before subscribing. Supported "
+        "type_ values: mqtt, ros1.bridge, ros2.bridge. Requires a reachable service; specify "
+        "host and port when defaults do not fit. Returns topic names without starting a "
+        "persistent recording. Use describe_data_source for an existing recorded log."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, open_world=True),
 )
@@ -304,13 +312,13 @@ def list_live_topics(
 ) -> list[str]:
     """List available topics from a live data stream.
 
-    Connects to a live streaming service (e.g., ROS bridge, PX4 telemetry)
+    Connects to a live streaming service (e.g., ROS bridge, MQTT)
     and retrieves the list of topics that are currently available for
     subscription. This is typically used to discover which topics exist
     before calling `subscribe_live_topics`.
 
     Args:
-        type_ (str): The type of `TopicSink` to use (e.g., ROS1, ROS2, PX4). For the full
+        type_ (str): The type of `TopicSink` to use (ros1.bridge, ros2.bridge, mqtt). For the full
             list of supported types, see `TopicSink` in `src/di/types/topic_sink.py`.
         host (str | None, optional): Hostname of the live data stream service. If None,
             the default host is inferred.
@@ -345,11 +353,12 @@ def list_live_topics(
 @server.tool(
     title="Subscribe to live topic messages",
     description=(
-        "Use this tool to connect to a live data stream and subscribe to one or more topics. "
-        "Messages are written to a local sink directory, which can be used later as input "
-        "for other tools (via the `path` argument in SourceFactory). Optionally attach a "
-        "pipeline config to create a STANDING pipeline that runs on incoming messages -- "
-        "e.g. an on_event cadence that captures and uploads a window around every anomaly."
+        "Start a background subscription to mqtt, ros1.bridge, or ros2.bridge and persist "
+        "messages locally; returns the sink directory for subsequent analysis. Use "
+        "list_live_topics first. An optional pipeline runs continuously on incoming messages "
+        "and may write or upload artifacts. overwrite=True clears existing topic buffers. This "
+        "tool set has no stop/unsubscribe tool; manage lifecycle through the server process. "
+        "Not for inspecting an existing file."
     ),
     annotations=mcp_compat.tool_annotations(
         read_only=False, idempotent=False, destructive=True, open_world=True
@@ -420,11 +429,11 @@ def subscribe_live_topics(  # noqa: PLR0913
 @server.tool(
     title="Run a capability defined in a POML file",
     description=(
-        "Use this tool to run a predefined capability described in a `.poml` file. "
-        "Discover available capabilities and their paths with "
-        "`list_agent_capabilities`. The file specifies task instructions and "
-        "output formats. Optional context values can be injected to customize "
-        "its behavior. Capabilities may be POML (parameterizable via context) or markdown (static)."
+        "Load reusable agent instructions from a POML or Markdown file; returns a prompt for "
+        "the calling agent to follow. Discover paths with list_agent_capabilities. POML accepts "
+        "template context; Markdown rejects nonempty context. Loading the prompt does not "
+        "itself analyze data, execute a pipeline, or write reduction artifacts. Use "
+        "run_pipeline for an approved executable pipeline config."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
@@ -605,10 +614,10 @@ def delete_capability(name: str) -> dict[str, str]:
 @server.tool(
     title="List pipeline capabilities",
     description=(
-        "List the tasks and gates available to compose a data pipeline, including "
-        "each one's module path, kind (task or gate), constructor parameters, and a "
-        "short summary. Use this before authoring a pipeline so the correct `module` "
-        "and `args` are chosen instead of guessed."
+        "Discover available task and gate modules before authoring pipeline YAML. Returns "
+        "module paths, constructor parameters, summaries, and availability. These are "
+        "executable building blocks, not saved workflows: use list_pipelines for saved configs "
+        "and list_agent_capabilities for reusable agent instructions."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
@@ -643,10 +652,13 @@ def list_pipeline_capabilities(include_unavailable: bool = False) -> list[dict[s
 @server.tool(
     title="Preview an event-driven data reduction",
     description=(
-        "Dry-run an event-windowed reduction WITHOUT writing any files. Detects the "
-        "rising-edge events where a SQL predicate becomes true on a topic, builds "
-        "pre/post windows around them, merges overlaps, and reports how much data would "
-        "be kept. Use this to audit a reduce/snippet pipeline before running it."
+        "Preview an event-window reduction without writing artifacts. Inspect source and topic "
+        "schemas first, then provide a SQL boolean predicate and nonnegative pre/post seconds. "
+        "Detects false-to-true transitions, debounces nearby events, merges overlapping "
+        "windows, and returns event timestamps, intervals, total seconds, and kept "
+        "seconds/fraction. Report these results and obtain user confirmation before executing "
+        "the reduction with run_pipeline or run_pipeline_batch. Does not predict output byte "
+        "size."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )
@@ -965,9 +977,12 @@ def delete_pipeline(name: str) -> dict[str, str]:
 @server.tool(
     title="Run a pipeline",
     description=(
-        "Build and run a pipeline from a configuration and return the artifact paths it "
-        "produced. Prefer running `preview_pipeline` first for event-driven reductions so "
-        "the effect is audited before anything is written."
+        "Execute one pipeline config against its single config.path after configuration and "
+        "input validation. For event reductions, first call preview_pipeline, report events and "
+        "kept seconds, and obtain user confirmation. Returns pipeline status, run counts, and "
+        "artifact paths; inspect status for failures. Tasks may write files or contact external "
+        "services. Use save_pipeline to store without executing, or run_pipeline_batch for "
+        "multiple sources."
     ),
     annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False, open_world=True),
 )
@@ -1001,10 +1016,12 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
 @server.tool(
     title="Run a pipeline across many data sources (batch)",
     description=(
-        "Run one pipeline configuration against many data sources -- explicit paths or glob "
-        "patterns like 'logs/*'. Each source is processed independently; a failure on one "
-        "source is reported but does not stop the batch. Returns per-source results and a "
-        "summary. For an event reduction, preview a representative source first."
+        "Execute one pipeline config for multiple explicit source paths or globs, overriding "
+        "config.path for each source. Each source runs independently; returns per-source "
+        "statuses/errors and totals. For event reductions, preview each source to be reduced "
+        "and obtain confirmation of the batch scope before executing. Tasks may write files or "
+        "contact external services. Use run_pipeline for a single source. A glob matching "
+        "nothing is treated as a literal path."
     ),
     annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False, open_world=True),
 )
@@ -1038,11 +1055,11 @@ def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, An
 @server.tool(
     title="Export an event window for PlotJuggler",
     description=(
-        "Export a time window of topic data as a PlotJuggler session: a flattened CSV "
-        "(one scalar column per signal) plus a layout file with the curves pre-added "
-        "and the window pre-framed. Opening the returned command shows the event "
-        "already plotted and zoomed. Use after preview_pipeline to hand an event to a "
-        "human for visual inspection."
+        "Write a selected time window as flattened scalar CSV plus a PlotJuggler XML layout; "
+        "returns paths, plotted curves, and an opening command. Choose this for scalar plotting "
+        "in PlotJuggler, not native bag preservation. Inspect topic schemas and use inclusive "
+        "source timestamps in seconds. Automatically selects up to eight numeric curves unless "
+        "signals are specified. Requires the separate viewer to open; does not launch it."
     ),
     annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
@@ -1111,10 +1128,11 @@ def export_for_plotjuggler(  # noqa: PLR0913
 @server.tool(
     title="Export an event window for the Rerun viewer",
     description=(
-        "Export a time window of topic data as a Rerun recording (.rrd): every scalar "
-        "signal becomes a Rerun time series, so `rerun <file>` opens the event in the "
-        "Rerun viewer. Use after preview_pipeline to hand an event to a human for "
-        "visual inspection. Needs the optional rerun-sdk dependency (uv sync --group viz)."
+        "Write a selected time window as scalar time series in a Rerun .rrd recording; returns "
+        "its path, signals, and an opening command. Choose this when the user requests Rerun. "
+        "Requires rerun-sdk (uv sync --group viz) and a separate viewer. Inspect topic schemas "
+        "and use source timestamps in seconds. This exporter does not produce camera or 3D "
+        "scene replay and does not launch the viewer."
     ),
     annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
@@ -1182,10 +1200,11 @@ def export_for_rerun(  # noqa: PLR0913
 @server.tool(
     title="Export an event window for Lichtblick / Foxglove",
     description=(
-        "Export a time window of topic data as a Lichtblick session: an MCAP file "
-        "with JSON-encoded channels plus a layout with the plot series and time/value "
-        "ranges pre-set. Works in Lichtblick (open source) and Foxglove, which share "
-        "the layout format. Use after preview_pipeline to hand an event to a human."
+        "Write a selected time window as JSON-encoded MCAP plus a plot layout for Lichtblick or "
+        "Foxglove; returns paths, curves, and opening instructions. Choose this for those "
+        "viewers, not byte-preserving native ROS/CDR export. Inspect topic schemas and use "
+        "source timestamps in seconds. Automatically selects up to eight numeric plot curves "
+        "unless signals are specified. Requires a separate viewer; does not launch it."
     ),
     annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )
@@ -1253,12 +1272,12 @@ def export_for_lichtblick(  # noqa: PLR0913
 @server.tool(
     title="Export event windows as a LeRobot training dataset (beta)",
     description=(
-        "Export time windows as a LeRobotDataset v3.0 for robot-learning training: "
-        "each window becomes an episode, resampled to a uniform fps, with the given "
-        "signals composing feature vectors like observation.state and action. Use "
-        "after preview_pipeline to turn detected events into a curated dataset. "
-        "Beta: load-tests clean with the lerobot package; awaiting validation by "
-        "real training runs."
+        "Write selected event windows as a LeRobotDataset v3.0: one episode per window, scalar "
+        "signals grouped into feature vectors and resampled to a uniform fps using last "
+        "observation carried forward. Returns the dataset directory, episode/frame counts, and "
+        "loading instructions. Choose this for robot-learning dataset preparation, not "
+        "interactive viewing or model training. Beta: load compatibility tested; actual "
+        "training-run validation remains outstanding."
     ),
     annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
 )

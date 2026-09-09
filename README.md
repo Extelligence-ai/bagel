@@ -31,7 +31,7 @@
   </picture>
 </p>
 
-Bagel lets you ask questions about robotics, drone, and IoT data in plain English.
+Bagel by Extelligence lets you ask questions about robotics, drone, and IoT data in plain English.
 Every calculation over your message data is DuckDB SQL, not model guesswork, and
 Bagel shows you the query so you can audit it.
 
@@ -445,3 +445,9 @@ We hang out there regularly.
 ## 📄 License
 
 Bagel is open source under the [Apache License 2.0](./LICENSE).
+
+## Agent discovery and reproducible workflows
+
+For maintainers: [discovery audits and evaluation](./docs/agent-discovery/README.md),
+[listing maintenance](./docs/agent-discovery/listings.md), and
+[reproducible user reports](./docs/agent-discovery/community.md).

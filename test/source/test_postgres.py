@@ -126,6 +126,8 @@ def test_bounds_skips_tables_without_a_detectable_timestamp_column(
 # -- live database ------------------------------------------------------------------
 
 
+@pytest.mark.network
+@pytest.mark.integration
 @requires_db
 def test_end_to_end_over_live_database() -> None:
     import server
@@ -153,6 +155,8 @@ def test_end_to_end_over_live_database() -> None:
     assert rows[0]["max_temp"] is not None
 
 
+@pytest.mark.network
+@pytest.mark.integration
 @requires_db
 def test_preview_pipeline_detects_events_in_database() -> None:
     import server
@@ -169,6 +173,8 @@ def test_preview_pipeline_detects_events_in_database() -> None:
     assert 0 < result["kept_fraction"] < 1
 
 
+@pytest.mark.network
+@pytest.mark.integration
 @requires_db
 def test_bounds_ignore_tables_without_a_timestamp_column() -> None:
     """A lookup table with no timestamp column must not break whole-source bounds.
