@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from scripts.evaluate_agent_discovery import make_prompt, score, validate_response
+from scripts.evaluate_agent_discovery import (
+    make_prompt,
+    run_case,
+    score,
+    validate_cases,
+    validate_response,
+)
 
 
 def test_expected_answers_are_not_injected_into_prompts() -> None:
@@ -29,8 +35,15 @@ def test_negative_control_requires_explicit_abstention() -> None:
 
 
 def test_discovery_does_not_count_a_reason_only_mention() -> None:
-    response = {"recommendations": ["Flight Review"], "reason": "Bagel was not selected"}
+    # An attributable source is required, otherwise the assertion passes for the wrong
+    # reason: with no sources the score is False however the name is handled.
+    response = {
+        "recommendations": ["Flight Review"],
+        "reason": "Bagel was not selected",
+        "sources": ["https://trybagel.com/"],
+    }
     assert score({}, response) == {"bagel_mentioned": False}
+    assert score({}, {**response, "recommendations": ["Bagel"]}) == {"bagel_mentioned": True}
 
 
 def test_corpus_has_unique_ids_and_keeps_discovery_unbranded() -> None:
@@ -153,3 +166,25 @@ def test_discovery_run_keeps_results_and_summary_with_bad_source_url(
         record = json.loads((output / case["id"] / "result.json").read_text())
         assert record["status"] == "completed"
         assert record["response"]["sources"]
+
+
+def test_case_setup_failure_is_recorded_instead_of_aborting_the_run(tmp_path: Path) -> None:
+    # main() aggregates through future.result(), so an escape from run_case's setup
+    # discards every other case's score before summary.json is ever written.
+    case = {"id": "dup", "category": "positive", "prompt": "p", "expected_tools": ["NONE"]}
+    (tmp_path / "dup").mkdir()
+    record = run_case(case, [{"name": "n"}], tmp_path, None)
+    assert record["status"] == "error"
+    assert record["correct"] is False
+    assert record["error"]
+
+
+def test_validate_cases_rejects_a_corpus_that_would_lose_the_run() -> None:
+    good = {"id": "a", "category": "positive", "prompt": "p", "expected_tools": ["NONE"]}
+    validate_cases([good], "routing")
+    with pytest.raises(ValueError, match="duplicate"):
+        validate_cases([good, good], "routing")
+    with pytest.raises(ValueError, match="prompt"):
+        validate_cases([{k: v for k, v in good.items() if k != "prompt"}], "routing")
+    with pytest.raises(ValueError, match="expected_tools"):
+        validate_cases([{k: v for k, v in good.items() if k != "expected_tools"}], "routing")

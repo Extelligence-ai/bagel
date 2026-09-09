@@ -122,16 +122,49 @@ def command(output: Path, schema: Path, cwd: str, model: str | None, *, live: bo
     return [*result, "-"]
 
 
+REQUIRED_CASE_KEYS = ("id", "category", "prompt")
+
+
+def validate_cases(cases: list[dict], track: str) -> None:
+    """Reject a corpus that would abort the run, before any paid model call is made.
+
+    Raises:
+        ValueError: if a case is missing a key the run depends on, or an id repeats
+            (ids name the per-case output directory, so a repeat collides on disk).
+
+    """
+    seen: set[str] = set()
+    for case in cases:
+        missing = [key for key in REQUIRED_CASE_KEYS if not case.get(key)]
+        if track == "routing" and not case.get("expected_tools"):
+            missing.append("expected_tools")
+        if missing:
+            name = case.get("id", "<no id>")
+            raise ValueError(f"case {name!r} is missing: {', '.join(missing)}")
+        if case["id"] in seen:
+            raise ValueError(f"duplicate case id: {case['id']!r}")
+        seen.add(case["id"])
+
+
 def run_case(case: dict, catalog: list | None, output: Path, model: str | None) -> dict:
     """Run one fresh session, retaining exact inputs, raw events, and failures."""
-    directory = output / case["id"]
-    directory.mkdir()
-    prompt = make_prompt(case, catalog)
-    (directory / "prompt.txt").write_text(prompt)
-    schema = directory / "schema.json"
-    schema.write_text(json.dumps(response_schema(), indent=2))
     started = time.monotonic()
     record = {"id": case["id"], "category": case["category"], "status": "error"}
+    try:
+        directory = output / case["id"]
+        directory.mkdir()
+        prompt = make_prompt(case, catalog)
+        (directory / "prompt.txt").write_text(prompt)
+        schema = directory / "schema.json"
+        schema.write_text(json.dumps(response_schema(), indent=2))
+    except OSError as error:
+        # main() collects through future.result(), so an escape here aborts the whole
+        # run and summary.json is never written -- one unwritable case would discard
+        # every other case's score. Record it and let the rest of the run finish.
+        record["error"] = str(error)
+        record.update(score(case, None))
+        record.update(response=None, elapsed_seconds=round(time.monotonic() - started, 3))
+        return record
     response = None
     with tempfile.TemporaryDirectory(prefix="bagel-eval-") as cwd:
         argv = command(directory / "response.json", schema, cwd, model, live=catalog is None)
@@ -187,6 +220,10 @@ def main() -> None:
     cases = [c for c in json.loads(args.cases.read_text()) if c["track"] == args.track]
     if not cases:
         parser.error("the selected track has no cases")
+    try:
+        validate_cases(cases, args.track)
+    except ValueError as error:
+        parser.error(str(error))
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     metadata = {
