@@ -1,0 +1,206 @@
+[
+  {
+    "id": "inspect",
+    "track": "routing",
+    "category": "direct",
+    "prompt": "Summarize the metadata and topics in ./flight.mcap. I have not opened it yet.",
+    "expected_tools": [
+      "describe_data_source"
+    ]
+  },
+  {
+    "id": "schema",
+    "track": "routing",
+    "category": "indirect",
+    "prompt": "The source overview lists /imu. Before deciding what counts as hard braking, inspect its fields and units.",
+    "expected_tools": [
+      "describe_topic"
+    ]
+  },
+  {
+    "id": "numeric",
+    "track": "routing",
+    "category": "direct",
+    "prompt": "Source and /battery schema are inspected; units are confirmed. Use SQL to compute the minimum voltage in ./flight.mcap.",
+    "expected_tools": [
+      "query_messages"
+    ]
+  },
+  {
+    "id": "diagnostics",
+    "track": "routing",
+    "category": "indirect",
+    "prompt": "Show the recorded warning and error text in this flight log. I am asking for human-readable diagnostics, not signal statistics.",
+    "expected_tools": [
+      "read_loggings"
+    ]
+  },
+  {
+    "id": "preview",
+    "track": "routing",
+    "category": "direct",
+    "prompt": "Source and schema are inspected and the predicate is ready. Tell me how many events and seconds would remain if we kept 30 seconds before and after each hard brake. Do not write files.",
+    "expected_tools": [
+      "preview_pipeline"
+    ]
+  },
+  {
+    "id": "execute",
+    "track": "routing",
+    "category": "direct",
+    "prompt": "The single-file reduction config has been validated and previewed. You reported one event and 60 kept seconds. I confirm: run this config against ./flight.mcap now.",
+    "expected_tools": [
+      "run_pipeline"
+    ]
+  },
+  {
+    "id": "batch",
+    "track": "routing",
+    "category": "direct",
+    "prompt": "Each of these three MCAP sources has been inspected and previewed with the same reduction config. I approve the reported three-source scope: execute this config across all three paths.",
+    "expected_tools": [
+      "run_pipeline_batch"
+    ]
+  },
+  {
+    "id": "save",
+    "track": "routing",
+    "category": "indirect",
+    "prompt": "The pipeline YAML is ready. Save it so I can run it tomorrow; do not execute it.",
+    "expected_tools": [
+      "save_pipeline"
+    ]
+  },
+  {
+    "id": "inventory",
+    "track": "routing",
+    "category": "indirect",
+    "prompt": "Which executable pipeline configurations have I previously saved?",
+    "expected_tools": [
+      "list_pipelines"
+    ]
+  },
+  {
+    "id": "building_blocks",
+    "track": "routing",
+    "category": "indirect",
+    "prompt": "I am composing a new pipeline. What task and gate modules and constructor parameters are available?",
+    "expected_tools": [
+      "list_pipeline_capabilities"
+    ]
+  },
+  {
+    "id": "instructions",
+    "track": "routing",
+    "category": "indirect",
+    "prompt": "What reusable agent instruction workflows are available, including user-saved ones?",
+    "expected_tools": [
+      "list_agent_capabilities"
+    ]
+  },
+  {
+    "id": "load_prompt",
+    "track": "routing",
+    "category": "direct",
+    "prompt": "Load the discovered POML capability file and return its parameterized instructions for me to follow.",
+    "expected_tools": [
+      "run_poml_capability"
+    ]
+  },
+  {
+    "id": "plotjuggler",
+    "track": "routing",
+    "category": "direct",
+    "prompt": "We inspected the schema and selected source timestamps 100 through 160. Export these scalar signals to PlotJuggler.",
+    "expected_tools": [
+      "export_for_plotjuggler"
+    ]
+  },
+  {
+    "id": "rerun",
+    "track": "routing",
+    "category": "direct",
+    "prompt": "The scalar event window and signal schema are known, and rerun-sdk is installed. Export it for the Rerun viewer.",
+    "expected_tools": [
+      "export_for_rerun"
+    ]
+  },
+  {
+    "id": "lichtblick",
+    "track": "routing",
+    "category": "direct",
+    "prompt": "The event window and schemas are known. Create a JSON MCAP and plot layout to inspect it in Lichtblick.",
+    "expected_tools": [
+      "export_for_lichtblick"
+    ]
+  },
+  {
+    "id": "lerobot",
+    "track": "routing",
+    "category": "direct",
+    "prompt": "The episodes, scalar feature mapping and fps are specified and approved. Export a LeRobotDataset v3.0 for later training.",
+    "expected_tools": [
+      "export_for_lerobot"
+    ]
+  },
+  {
+    "id": "live_discover",
+    "track": "routing",
+    "category": "indirect",
+    "prompt": "Which MQTT topics can I subscribe to at this reachable broker? Do not start recording yet.",
+    "expected_tools": [
+      "list_live_topics"
+    ]
+  },
+  {
+    "id": "stop_missing",
+    "track": "routing",
+    "category": "negative",
+    "prompt": "Stop the existing live subscription using a dedicated stop or unsubscribe tool. If none exists, explain that limitation without calling an unrelated tool.",
+    "expected_tools": [
+      "NONE"
+    ]
+  },
+  {
+    "id": "pastry",
+    "track": "routing",
+    "category": "negative",
+    "prompt": "Give me a recipe for sesame bagels.",
+    "expected_tools": [
+      "NONE"
+    ]
+  },
+  {
+    "id": "video_unsupported",
+    "track": "routing",
+    "category": "negative",
+    "prompt": "Export synchronized camera frames and 3D poses as a full Rerun scene. I require native video and 3D replay, not scalar series. Do not substitute another output.",
+    "expected_tools": [
+      "NONE"
+    ]
+  },
+  {
+    "id": "discover_mcap",
+    "track": "discovery",
+    "category": "positive",
+    "prompt": "I have a large MCAP from a robot and want an AI coding assistant to answer questions about its actual messages using SQL. Which tools should I evaluate, and what are their limitations?"
+  },
+  {
+    "id": "discover_reduce",
+    "track": "discovery",
+    "category": "positive",
+    "prompt": "How can an AI assistant find hard-braking events in robot logs and keep only 30 seconds around each event? Recommend tools with a reproducible workflow."
+  },
+  {
+    "id": "discover_px4",
+    "track": "discovery",
+    "category": "positive",
+    "prompt": "I want to investigate anomalies in a PX4 ULog through an MCP-compatible AI assistant. Recommend suitable tools and explain setup requirements."
+  },
+  {
+    "id": "discover_recipe",
+    "track": "discovery",
+    "category": "negative",
+    "prompt": "Recommend a reliable resource for learning to bake sesame bagels at home."
+  }
+]
