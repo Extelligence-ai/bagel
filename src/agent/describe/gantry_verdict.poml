@@ -8,6 +8,8 @@
                     Call describe_data_source on the bundle path. Create a "Verdict" section
                     quoting each gate's one-line summary from the source metadata, in gate
                     order (g0 intake, g1 data report, g2 signal check, g3 robot test).
+                    Before querying any topic, call describe_topic to inspect its columns
+                    and confirm it exists; skip missing tables and report that limitation.
                 </item>
                 <item>
                     Create a "Signal check, clip by clip" section. Query the signal_pairs

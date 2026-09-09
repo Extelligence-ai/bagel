@@ -86,6 +86,7 @@ class SourceFactory(base.FileBasedSourceFactory):
             "submission": self._manifest.get("submission", {}),
             "dataset": self._manifest.get("dataset", {}),
             "gates": self._manifest.get("gates", []),
+            "g3_context": self._manifest.get("g3_context", {}),
             "tables": sorted(self._manifest.get("tables", {})),
         }
 
@@ -98,23 +99,34 @@ class SourceFactory(base.FileBasedSourceFactory):
         worse than an error.
         """
         tables: dict[str, pa.Table] = {}
-        for name, spec in (self._manifest.get("tables") or {}).items():
-            file = self.path / spec.get("file", f"{name}.csv")
-            if not file.exists():
+        root = self.path.resolve()
+        for name, spec in self._manifest["tables"].items():
+            filename = pathlib.Path(spec.get("file", f"{name}.csv"))
+            file = (root / filename).resolve()
+            if filename.is_absolute() or not file.is_relative_to(root):
+                raise errors.InvalidPathError(f"Table '{name}' must stay within the bundle")
+            if not file.is_file():
                 raise errors.InvalidPathError(
                     f"{self.path} declares table '{name}' in its manifest "
                     f"but {file.name} is missing"
                 )
-            columns = spec.get("columns") or {}
+            columns = spec.get("columns", {})
             convert = pacsv.ConvertOptions(
-                column_types={col: TYPE_MAP.get(kind, pa.string()) for col, kind in columns.items()}
+                column_types={col: TYPE_MAP[kind] for col, kind in columns.items()}
             )
             try:
                 table = pacsv.read_csv(file, convert_options=convert)
-            except pa.ArrowException as exc:
+            except (pa.ArrowException, OSError) as exc:
                 raise errors.InvalidPathError(
                     f"{file} could not be parsed as CSV: {type(exc).__name__}: {exc}"
                 ) from exc
+
+            if len(set(table.column_names)) != table.num_columns or (
+                columns and set(table.column_names) != set(columns)
+            ):
+                raise errors.InvalidPathError(
+                    f"{file.name} columns do not match the manifest or contain duplicates"
+                )
 
             declared = spec.get("rows")
             if declared is not None and table.num_rows != declared:
@@ -139,7 +151,39 @@ class SourceFactory(base.FileBasedSourceFactory):
                 f"(manifest.json with magic '{MAGIC}' not found)."
             )
 
+        try:
+            self._validate_manifest()
+        except errors.InvalidPathError as exc:
+            return False, exc
+
         return True, None
+
+    def _validate_manifest(self) -> None:
+        """Reject malformed table indexes and metadata before loading CSVs."""
+        tables = self._manifest.get("tables")
+        if not isinstance(tables, dict):
+            raise errors.InvalidPathError("Manifest tables must be an object")
+        for name, spec in tables.items():
+            if not name or not isinstance(spec, dict):
+                raise errors.InvalidPathError(f"Invalid specification for table '{name}'")
+            filename = spec.get("file", f"{name}.csv")
+            columns = spec.get("columns", {})
+            rows = spec.get("rows")
+            if not isinstance(filename, str) or not filename or "\x00" in filename:
+                raise errors.InvalidPathError(f"Invalid file for table '{name}'")
+            if not isinstance(columns, dict) or any(
+                not col or not isinstance(kind, str) or kind not in TYPE_MAP
+                for col, kind in columns.items()
+            ):
+                raise errors.InvalidPathError(f"Invalid columns for table '{name}'")
+            if rows is not None and (type(rows) is not int or rows < 0):
+                raise errors.InvalidPathError(f"Invalid row count for table '{name}'")
+        for key in ("submission", "dataset", "g3_context"):
+            if not isinstance(self._manifest.get(key, {}), dict):
+                raise errors.InvalidPathError(f"Manifest {key} must be an object")
+        gates = self._manifest.get("gates", [])
+        if not isinstance(gates, list) or any(not isinstance(gate, dict) for gate in gates):
+            raise errors.InvalidPathError("Manifest gates must be a list of objects")
 
 
 def register() -> None:

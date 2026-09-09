@@ -2,7 +2,7 @@
 
 import heapq
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import pyarrow as pa
@@ -14,12 +14,15 @@ from src.topic.gantry.evidence import _topic
 
 
 def _epoch(value: object) -> float | None:
-    """ISO 8601 -> epoch seconds, or None where the cell holds no time."""
+    """ISO 8601 -> epoch seconds; timestamps without an offset are treated as UTC."""
     if not value or not isinstance(value, str):
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except ValueError:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (ValueError, OverflowError, OSError):
         return None
 
 
@@ -41,18 +44,19 @@ class MessageDataset(base.MessageDataset):
 
     def _default_seconds(self, bundle: EvidenceBundle) -> float:
         manifest = bundle.manifest
-        return (
-            _epoch(manifest.get("submission", {}).get("created_at"))
-            or _epoch(manifest.get("generated_at"))
-            or 0.0
-        )
+        for value in (
+            manifest.get("submission", {}).get("created_at"),
+            manifest.get("generated_at"),
+        ):
+            seconds = _epoch(value)
+            if seconds is not None:
+                return seconds
+        return 0.0
 
     def _stamp(self, topic: str, row: dict[str, Any], default: float) -> float:
-        if topic == "events":
-            return _epoch(row.get("ts")) or default
-        if topic == "gates":
-            return _epoch(row.get("started_at")) or default
-        return default
+        column = {"events": "ts", "gates": "started_at"}.get(topic)
+        seconds = _epoch(row.get(column)) if column is not None else None
+        return default if seconds is None else seconds
 
     def _messages(
         self,

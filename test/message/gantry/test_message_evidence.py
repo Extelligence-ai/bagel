@@ -1,5 +1,7 @@
 import pathlib
+import time
 
+import pyarrow as pa
 import pytest
 
 from src.message.gantry import evidence as message
@@ -67,3 +69,31 @@ def test_should_respect_time_windows(bundle: source.EvidenceBundle) -> None:
 
     # THEN
     assert [r[2]["gate"] for r in rows] == ["g3"]
+
+
+@pytest.mark.parametrize(("topic", "column"), [("events", "ts"), ("gates", "started_at")])
+def test_epoch_zero_is_preserved_in_time_windows(
+    bundle: source.EvidenceBundle, topic: str, column: str
+) -> None:
+    bundle.tables[topic] = pa.table({column: ["1970-01-01T00:00:00Z"]})
+    rows = list(message.MessageDataset()._messages(bundle, [topic], 0.0, 0.0))
+    assert len(rows) == 1
+    assert rows[0][1] == 0.0
+
+
+def test_static_rows_preserve_epoch_zero(bundle: source.EvidenceBundle) -> None:
+    bundle.manifest["submission"]["created_at"] = "1970-01-01T00:00:00Z"
+    rows = list(message.MessageDataset()._messages(bundle, ["signal_pairs"], 0.0, 0.0))
+    assert len(rows) == 3
+    assert {row[1] for row in rows} == {0.0}
+
+
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="requires POSIX timezone control")
+def test_naive_timestamps_use_utc_independent_of_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    try:
+        with monkeypatch.context() as context:
+            context.setenv("TZ", "EST5EDT")
+            time.tzset()
+            assert message._epoch("1970-01-01T00:00:00") == 0.0
+    finally:
+        time.tzset()

@@ -79,6 +79,7 @@ def test_should_surface_verdicts_in_metadata(tmp_path: pathlib.Path) -> None:
 
     # THEN
     assert metadata["submission"]["id"] == "sample_two_handed"
+    assert metadata["g3_context"]["has_control"] is False
     assert any("shuffled control" in g["summary"] for g in metadata["gates"])
 
 
@@ -111,3 +112,106 @@ def test_should_refuse_manifest_that_lies_about_row_counts(tmp_path: pathlib.Pat
     # WHEN / THEN
     with pytest.raises(errors.InvalidPathError, match="declares"):
         evidence.SourceFactory(path=str(bundle)).build()
+
+
+@pytest.mark.parametrize("escape", ["parent", "absolute", "symlink"])
+def test_table_paths_cannot_escape_bundle(tmp_path: pathlib.Path, escape: str) -> None:
+    bundle = gantry_evidence.write_bundle(tmp_path / "bundle")
+    outside = tmp_path / "outside.csv"
+    outside.write_text((bundle / "signal_pairs.csv").read_text())
+    filename = "../outside.csv" if escape == "parent" else str(outside)
+    if escape == "symlink":
+        (bundle / "link.csv").symlink_to(outside)
+        filename = "link.csv"
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["tables"]["signal_pairs"]["file"] = filename
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(errors.InvalidPathError, match="within the bundle"):
+        evidence.SourceFactory(path=str(bundle)).build()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("file", None),
+        ("columns", []),
+        ("columns", {"episode": "unknown"}),
+        ("rows", -1),
+        ("rows", True),
+        ("rows", "3"),
+    ],
+)
+def test_invalid_table_specs_raise_format_errors(
+    tmp_path: pathlib.Path, field: str, value: object
+) -> None:
+    bundle = gantry_evidence.write_bundle(tmp_path / "bundle")
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["tables"]["signal_pairs"][field] = value
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(errors.InvalidPathError):
+        evidence.SourceFactory(path=str(bundle)).build()
+
+
+@pytest.mark.parametrize("tables", [None, [], {"signal_pairs": None}])
+def test_invalid_table_mapping_raises_format_error(tmp_path: pathlib.Path, tables: object) -> None:
+    bundle = gantry_evidence.write_bundle(tmp_path / "bundle")
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["tables"] = tables
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(errors.InvalidPathError):
+        evidence.SourceFactory(path=str(bundle)).build()
+
+
+@pytest.mark.parametrize(
+    "header", ["wrong,error_yours,error_shuffled,better", "episode,episode,error_shuffled,better"]
+)
+def test_csv_columns_must_match_manifest(tmp_path: pathlib.Path, header: str) -> None:
+    bundle = gantry_evidence.write_bundle(tmp_path / "bundle")
+    csv_path = bundle / "signal_pairs.csv"
+    _, rows = csv_path.read_text().split("\n", 1)
+    csv_path.write_text(header + "\n" + rows)
+
+    with pytest.raises(errors.InvalidPathError, match="columns"):
+        evidence.SourceFactory(path=str(bundle)).build()
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("submission", None),
+        ("dataset", []),
+        ("g3_context", False),
+        ("gates", {}),
+        ("gates", [None]),
+    ],
+)
+def test_invalid_metadata_is_rejected(tmp_path: pathlib.Path, key: str, value: object) -> None:
+    bundle = gantry_evidence.write_bundle(tmp_path / "bundle")
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest[key] = value
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(errors.InvalidPathError):
+        evidence.SourceFactory(path=str(bundle))
+
+
+def test_bundle_can_be_described_and_queried_through_server(tmp_path: pathlib.Path) -> None:
+    import server
+
+    path = str(gantry_evidence.write_bundle(tmp_path / "bundle"))
+    assert server.describe_data_source(path)
+    assert server.describe_topic(path, "signal_pairs")
+    result = server.query_messages(
+        path=path,
+        topic="signal_pairs",
+        sql_statement=(
+            'SELECT COUNT(*) AS n FROM "signal_pairs" WHERE "signal_pairs"[\'better\'] = true'
+        ),
+    )
+    assert result == [{"n": 2}]
