@@ -1,7 +1,9 @@
 # Lichtblick / Foxglove integration
 
 [Lichtblick](https://github.com/lichtblick-suite/lichtblick) is BMW's open-source
-fork of Foxglove Studio (Apache-2.0). Bagel exports any time window as a Lichtblick
+fork of Foxglove Studio, licensed under
+[MPL-2.0](https://github.com/lichtblick-suite/lichtblick/blob/main/LICENSE).
+Bagel exports any time window as a Lichtblick
 session: an MCAP file plus a layout with the plot series and time/value ranges
 pre-set, so the event is on screen as soon as you import both. The same files open
 in Foxglove, which shares the layout format.
