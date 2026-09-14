@@ -135,6 +135,9 @@ jobs:
             test/_fixtures \
             test/message/automotive \
             test/message/waffle \
+            test/message/gantry \
+            test/source/gantry \
+            test/topic/gantry \
             test/source/test_influxdb.py \
             test/source/test_postgres.py \
             test/logging/ros \
