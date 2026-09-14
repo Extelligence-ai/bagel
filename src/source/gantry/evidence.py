@@ -171,9 +171,17 @@ class SourceFactory(base.FileBasedSourceFactory):
             rows = spec.get("rows")
             if not isinstance(filename, str) or not filename or "\x00" in filename:
                 raise errors.InvalidPathError(f"Invalid file for table '{name}'")
-            if not isinstance(columns, dict) or any(
-                not col or not isinstance(kind, str) or kind not in TYPE_MAP
-                for col, kind in columns.items()
+            # A missing or empty map must be rejected, not defaulted: build() would then
+            # hand Arrow no column_types and skip the header/manifest equality check, so
+            # CSV inference silently rewrites evidence (an episode id "001" loads as 1,
+            # and declared-string timestamps stop being strings).
+            if (
+                not isinstance(columns, dict)
+                or not columns
+                or any(
+                    not col or not isinstance(kind, str) or kind not in TYPE_MAP
+                    for col, kind in columns.items()
+                )
             ):
                 raise errors.InvalidPathError(f"Invalid columns for table '{name}'")
             if rows is not None and (type(rows) is not int or rows < 0):
