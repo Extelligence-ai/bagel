@@ -185,8 +185,13 @@ jobs:
             deterministic step (no model involved) reads that file and posts it
             as the PR review. The file's FIRST LINE must be exactly:
             "Claude review -- Reviewed commit: ${{ steps.pr.outputs.head_sha }}"
-            followed by your findings ranked by severity (or "No findings that
-            block merge." if clean).
+            and the SECOND LINE must be exactly "Findings: present" if you found
+            anything that blocks merge, or exactly "Findings: none" if you did
+            not. codex-gate.yaml reads that line to decide whether this PR still
+            has open findings, so it is a contract, not prose -- the posting step
+            refuses to publish a review whose second line is neither. Put your
+            findings, ranked by severity, below it (or "No findings that block
+            merge." if clean).
           # No Bash tool of any kind -- see the header comment for why even a
           # read-only `gh pr diff`/`gh pr view` prefix was a credential-
           # exfiltration path via ambient env vars the runner injects into
@@ -231,6 +236,19 @@ jobs:
             echo "::error::got:      $first_line"
             exit 1
           fi
+          # codex-gate.yaml counts a body-reported finding by reading this line, so it
+          # must be one of exactly two values -- validated here, deterministically,
+          # rather than trusted as model prose. Anything else refuses to post, the same
+          # way a wrong stamp does.
+          verdict="$(sed -n '2p' -- "$file")"
+          case "$verdict" in
+            "Findings: present"|"Findings: none") ;;
+            *)
+              echo "::error::$file's second line must be exactly 'Findings: present' or 'Findings: none'; posting nothing."
+              echo "::error::got: $verdict"
+              exit 1
+              ;;
+          esac
           if [ "$HAVE_PAT" != "true" ]; then
             echo "::warning::CODEX_TRIGGER_TOKEN is not set; posting this review as github-actions[bot] via GITHUB_TOKEN. codex-gate.yaml does not trust that login, so this review will NOT satisfy the gate. Add the secret (fine-grained PAT, this repo, Pull requests: write) to restore trust and auto-retrigger."
           fi
