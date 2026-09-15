@@ -54,20 +54,66 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          reviewed_shas() {
+          accepted_bodies() {
             {
               gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
                 --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "claude[bot]" or .user.login == "arunvenkatadri") | .body' || true
               gh api "repos/$REPO/issues/$PR/comments" --paginate \
                 --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body' || true
-            } | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \
+            }
+          }
+          reviewed_shas() {
+            accepted_bodies \
+              | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \
               | grep -oE '[a-f0-9]{7,40}$' || true
           }
+          # Any commit-ish token in an accepted review body, however phrased. Used only
+          # to explain a near miss -- never to satisfy the gate.
+          mentioned_shas() {
+            accepted_bodies | grep -oE '[a-f0-9]{7,40}' || true
+          }
+          # A review only proves someone looked. #181 merged green with a Codex P2 still
+          # open, because the gate never asked whether the findings were addressed.
+          # Outdated threads are skipped: their code is gone, and the head-commit review
+          # requirement above re-surfaces anything that survived the rewrite.
+          unresolved_findings() {
+            gh api graphql \
+              -f query='query($owner:String!,$name:String!,$pr:Int!){
+                repository(owner:$owner,name:$name){
+                  pullRequest(number:$pr){
+                    reviewThreads(first:100){
+                      nodes{ isResolved isOutdated comments(first:1){nodes{author{login}}} }
+                    }
+                  }
+                }
+              }' \
+              -F owner="${REPO%%/*}" -F name="${REPO##*/}" -F pr="$PR" \
+              --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+                     | select(.isResolved == false and .isOutdated == false)
+                     | select(.comments.nodes[0].author.login == "chatgpt-codex-connector"
+                              or .comments.nodes[0].author.login == "claude")] | length' \
+              || echo 0
+          }
+          open_findings="$(unresolved_findings)"
+          if [ "${open_findings:-0}" -gt 0 ]; then
+            echo "::error::$open_findings unresolved Codex/Claude review thread(s) on this PR. A green gate means a review happened, not that its findings were addressed -- fix or resolve each thread before merging."
+            exit 1
+          fi
           for sha in $(reviewed_shas); do
             case "$HEAD_SHA" in
               "$sha"*)
-                echo "An AI reviewer (Codex or Claude) reviewed the head commit ($sha)."
+                echo "An AI reviewer (Codex or Claude) reviewed the head commit ($sha), with no unresolved findings."
                 exit 0
+                ;;
+            esac
+          done
+          # Distinguish "nobody reviewed" from "someone attested, but not in the exact
+          # words this gate matches" -- the latter used to fail identically and silently.
+          for sha in $(mentioned_shas); do
+            case "$HEAD_SHA" in
+              "$sha"*)
+                echo "::error::Found a review naming head commit $sha, but without the required phrase. A maintainer attestation must contain literally: Reviewed commit: $HEAD_SHA"
+                break
                 ;;
             esac
           done
