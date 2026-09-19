@@ -119,11 +119,21 @@ jobs:
                               or .comments.nodes[0].author.login == "claude")] | length' \
               | awk '{ total += $1 } END { print total + 0 }'
           }
-          # Claude reports findings in the review BODY (claude-review.yaml posts with
-          # `gh pr review --comment --body-file`), so reviewThreads cannot see them.
-          # That posting step validates a closed-enum verdict line; key on it here.
+          # Findings reported in a review BODY rather than as inline threads, which
+          # reviewThreads cannot see. Two shapes, one per reviewer:
+          #   - Claude: claude-review.yaml posts with `gh pr review --comment
+          #     --body-file`, and its posting step validates a closed-enum verdict
+          #     line deterministically, so "Findings: present" is trustworthy.
+          #   - Codex: its findings normally arrive as inline threads, but the review
+          #     body that accompanies them is distinguishable from the clean one
+          #     ("automated review suggestions" vs "Didn't find any major issues").
+          #     Counting it costs nothing when the threads are also seen -- any count
+          #     over zero blocks identically -- and covers the case where a body
+          #     reports findings that never became threads.
           body_findings() {
-            printf '%s\n' "$BODIES" | grep -cE '^Findings: present[[:space:]]*$' || true
+            printf '%s\n' "$BODIES" \
+              | grep -cE '^Findings: present[[:space:]]*$|automated review suggestions' \
+              || true
           }
           # Fail closed: an API outage, rate limit, or schema change must never read as
           # "nothing unresolved" and let an existing attestation carry the PR green.
