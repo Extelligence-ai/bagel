@@ -188,3 +188,26 @@ def test_validate_cases_rejects_a_corpus_that_would_lose_the_run() -> None:
         validate_cases([{k: v for k, v in good.items() if k != "prompt"}], "routing")
     with pytest.raises(ValueError, match="expected_tools"):
         validate_cases([{k: v for k, v in good.items() if k != "expected_tools"}], "routing")
+
+
+def test_validate_cases_rejects_expected_tools_that_is_not_a_list_of_strings() -> None:
+    # A bare string is truthy, so it passed -- and `in` then means SUBSTRING on it,
+    # scoring a response of "query" correct against "query_messages".
+    good = {"id": "a", "category": "positive", "prompt": "p", "expected_tools": ["NONE"]}
+    for bad in ("query_messages", [], [""], [1], ""):
+        with pytest.raises(ValueError, match="expected_tools"):
+            validate_cases([{**good, "expected_tools": bad}], "routing")
+
+
+def test_validate_cases_rejects_expected_tools_on_a_discovery_case() -> None:
+    # score() keys off the presence of expected_tools, so a discovery case carrying
+    # one is scored as routing; main() then reads r["bagel_mentioned"], raises
+    # KeyError, and summary.json is never written for the whole run.
+    case = {"id": "a", "category": "positive", "prompt": "p", "expected_tools": ["NONE"]}
+    with pytest.raises(ValueError, match="expected_tools"):
+        validate_cases([case], "discovery")
+    # An explicit null is still the key being PRESENT, which is all score() tests --
+    # membership in None then raises TypeError and loses the run's summary.
+    with pytest.raises(ValueError, match="expected_tools"):
+        validate_cases([{**case, "expected_tools": None}], "discovery")
+    validate_cases([{k: v for k, v in case.items() if k != "expected_tools"}], "discovery")
