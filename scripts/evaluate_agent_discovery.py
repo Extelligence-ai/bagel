@@ -157,11 +157,12 @@ def validate_cases(cases: list[dict], track: str) -> None:
                     f"case {case['id']!r}: expected_tools must be a non-empty list of "
                     f"non-empty strings, got {expected!r}"
                 )
-        elif expected is not None:
-            # `score()` keys off the mere presence of expected_tools, so a discovery
-            # case carrying one is scored as routing and returns {"correct": ...};
-            # main() then reads r["bagel_mentioned"], raises KeyError, and no
-            # summary.json is written for the entire run.
+        elif "expected_tools" in case:
+            # PRESENCE, not a non-null value: `score()` branches on `"expected_tools"
+            # in case`, so an explicit null is scored as routing too -- membership in
+            # None then raises TypeError. Either way the discovery case is scored as
+            # routing and main() reads r["bagel_mentioned"], so the exception escapes
+            # through future.result() and no summary.json is written for the run.
             raise ValueError(
                 f"case {case['id']!r}: expected_tools is not valid on the discovery "
                 f"track (it would be scored as routing)"

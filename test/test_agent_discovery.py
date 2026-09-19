@@ -206,4 +206,8 @@ def test_validate_cases_rejects_expected_tools_on_a_discovery_case() -> None:
     case = {"id": "a", "category": "positive", "prompt": "p", "expected_tools": ["NONE"]}
     with pytest.raises(ValueError, match="expected_tools"):
         validate_cases([case], "discovery")
+    # An explicit null is still the key being PRESENT, which is all score() tests --
+    # membership in None then raises TypeError and loses the run's summary.
+    with pytest.raises(ValueError, match="expected_tools"):
+        validate_cases([{**case, "expected_tools": None}], "discovery")
     validate_cases([{k: v for k, v in case.items() if k != "expected_tools"}], "discovery")
