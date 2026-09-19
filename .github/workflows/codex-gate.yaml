@@ -98,6 +98,9 @@ jobs:
           # --paginate with pageInfo/$endCursor: a PR past 100 threads must not hide an
           # unresolved finding on page two. Each page emits its own count; sum them.
           unresolved_findings() {
+            # $owner/$name/$pr/$endCursor below are GraphQL variables bound by the -F
+            # flags; the shell must NOT expand them, hence the single quotes.
+            # shellcheck disable=SC2016
             gh api graphql --paginate \
               -f query='query($owner:String!,$name:String!,$pr:Int!,$endCursor:String){
                 repository(owner:$owner,name:$name){
