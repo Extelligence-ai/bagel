@@ -137,6 +137,7 @@ def test_table_paths_cannot_escape_bundle(tmp_path: pathlib.Path, escape: str) -
     [
         ("file", None),
         ("columns", []),
+        ("columns", {}),
         ("columns", {"episode": "unknown"}),
         ("rows", -1),
         ("rows", True),
@@ -153,6 +154,19 @@ def test_invalid_table_specs_raise_format_errors(
     manifest_path.write_text(json.dumps(manifest))
 
     with pytest.raises(errors.InvalidPathError):
+        evidence.SourceFactory(path=str(bundle)).build()
+
+
+def test_a_table_must_declare_its_column_map(tmp_path: pathlib.Path) -> None:
+    # Without declared types Arrow infers them, so an episode id of "001" loads as 1 and
+    # the header/manifest equality check is skipped -- evidence values change silently.
+    bundle = gantry_evidence.write_bundle(tmp_path / "bundle")
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    del manifest["tables"]["signal_pairs"]["columns"]
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(errors.InvalidPathError, match="columns"):
         evidence.SourceFactory(path=str(bundle)).build()
 
 
