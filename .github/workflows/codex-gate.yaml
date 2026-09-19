@@ -10,6 +10,14 @@ name: codex-gate
 # Codex app ignores bot-authored triggers, comment "@codex review" manually
 # and the gate turns green when the review lands.
 #
+# The auto-trigger fires only on opened/reopened/ready_for_review. It used to
+# fire on every `synchronize` too, which bought a full review of the whole
+# diff per pushed commit -- and since the gate only accepts a review of the
+# FINAL head, each intermediate one was discarded by the next push. Iterating
+# is now free; add the `codex-rerequest` label (codex-rerequest.yaml) when the
+# branch is ready for another round. The gate still evaluates on every push,
+# so a head without a review is still visibly red -- it just costs nothing.
+#
 # Claude's reviews are posted by a deterministic, non-model shell step in
 # claude-review.yaml (see that file's header) -- the model itself is given
 # no posting capability at all, because any tool that lets it publish
@@ -52,6 +60,8 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
         run: |
           set -euo pipefail
           # Fetched once, and NOT with `|| true`: a reviews API failure that reads as
@@ -142,14 +152,27 @@ jobs:
                 ;;
             esac
           done
-          marker="<!-- codex-gate:$HEAD_SHA -->"
-          if gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[].body' \
-               | grep -qF "$marker"; then
-            echo "Codex review already requested for $HEAD_SHA; waiting for it to land."
-          else
-            gh api -X POST "repos/$REPO/issues/$PR/comments" \
-              -f body="$(printf '@codex review\n\n%s' "$marker")" >/dev/null
-            echo "Requested a Codex review of $HEAD_SHA."
-          fi
-          echo "::error::Codex has not yet reviewed head commit $HEAD_SHA. The gate re-runs when its review is submitted."
+          # Only `opened` and `ready_for_review` buy a review round. A `synchronize`
+          # used to request one per pushed head, and since the gate only ever accepts
+          # a review of the FINAL head, every intermediate review was paid for and
+          # then discarded on the next push -- #250 bought two rounds for one PR.
+          # Iterating on a PR now costs nothing; add the `codex-rerequest` label
+          # (codex-rerequest.yaml) when the branch is ready for another look.
+          case "$GITHUB_EVENT_NAME:$ACTION" in
+            pull_request:opened|pull_request:reopened|pull_request:ready_for_review)
+              marker="<!-- codex-gate:$HEAD_SHA -->"
+              if gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[].body' \
+                   | grep -qF "$marker"; then
+                echo "Codex review already requested for $HEAD_SHA; waiting for it to land."
+              else
+                gh api -X POST "repos/$REPO/issues/$PR/comments" \
+                  -f body="$(printf '@codex review\n\n%s' "$marker")" >/dev/null
+                echo "Requested a Codex review of $HEAD_SHA."
+              fi
+              ;;
+            *)
+              echo "Not requesting a review for $HEAD_SHA: this is a $GITHUB_EVENT_NAME/$ACTION, and intermediate pushes are not worth a review round. Add the 'codex-rerequest' label when the branch is ready."
+              ;;
+          esac
+          echo "::error::Codex has not yet reviewed head commit $HEAD_SHA. Add the 'codex-rerequest' label when this branch is ready for review; the gate re-runs when the review lands."
           exit 1
