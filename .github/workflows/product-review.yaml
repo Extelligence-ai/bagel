@@ -49,6 +49,14 @@ on:
   issue_comment:
     types: [created]
 
+# A second push while the agent is still grading the first one superseded its
+# output anyway; without this both ran to completion and both billed. Matches
+# test.yaml/lint.yaml, and is scoped per PR ref so an on-demand "@product
+# review" (issue_comment, no PR ref) never cancels a running PR review.
+concurrency:
+  group: product-review-${{ github.event.pull_request.number || github.event.issue.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
   pull-requests: write
