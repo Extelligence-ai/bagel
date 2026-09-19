@@ -71,25 +71,40 @@ jobs:
           # condition, where bash suppresses errexit for the command and its subshells,
           # so a failure of the FIRST call would otherwise be masked by the second
           # succeeding.
+          # One base64 record per body: bodies are multi-line, so a concatenated blob
+          # cannot tell which review said what -- and body_findings below must judge
+          # each body on its own.
           accepted_bodies() {
             gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
-              --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "claude[bot]" or .user.login == "arunvenkatadri") | .body' || return 1
+              --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "claude[bot]" or .user.login == "arunvenkatadri") | .body | @base64' || return 1
             gh api "repos/$REPO/issues/$PR/comments" --paginate \
-              --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body' || return 1
+              --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body | @base64' || return 1
           }
-          if ! BODIES="$(accepted_bodies)"; then
+          if ! BODIES_B64="$(accepted_bodies)"; then
             echo "::error::Could not read this PR's reviews and comments (GitHub API error). Failing closed."
             exit 1
           fi
+          decoded_bodies() {
+            for encoded in $BODIES_B64; do
+              printf '%s' "$encoded" | base64 --decode 2>/dev/null || true
+              printf '\n'
+            done
+          }
+          # The sha a single body says it reviewed, empty if it names none.
+          body_sha() {
+            printf '%s\n' "$1" \
+              | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \
+              | grep -oE '[a-f0-9]{7,40}$' | head -1 || true
+          }
           reviewed_shas() {
-            printf '%s\n' "$BODIES" \
+            decoded_bodies \
               | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \
               | grep -oE '[a-f0-9]{7,40}$' || true
           }
           # Any commit-ish token in an accepted review body, however phrased. Used only
           # to explain a near miss -- never to satisfy the gate.
           mentioned_shas() {
-            printf '%s\n' "$BODIES" | grep -oE '[a-f0-9]{7,40}' || true
+            decoded_bodies | grep -oE '[a-f0-9]{7,40}' || true
           }
           # A review only proves someone looked. #181 merged green with a Codex P2 still
           # open, because the gate never asked whether the findings were addressed.
@@ -126,14 +141,33 @@ jobs:
           #     line deterministically, so "Findings: present" is trustworthy.
           #   - Codex: its findings normally arrive as inline threads, but the review
           #     body that accompanies them is distinguishable from the clean one
-          #     ("automated review suggestions" vs "Didn't find any major issues").
-          #     Counting it costs nothing when the threads are also seen -- any count
-          #     over zero blocks identically -- and covers the case where a body
-          #     reports findings that never became threads.
+          #     ("automated review suggestions" vs "Didn't find any major issues"),
+          #     which covers findings that never became threads.
+          #
+          # ONLY bodies that reviewed the CURRENT head count. A review body is
+          # immutable history: unlike an inline thread it has no isResolved and no
+          # isOutdated, so matching against every body ever posted made one findings
+          # review block the PR forever, however many fixes landed after it (this gate
+          # did exactly that to its own PR). Keying on the head sha gives a body the
+          # same lifecycle a thread already has -- pushing a fix moves the head, the
+          # stale body stops counting, and the new head needs its own review anyway.
           body_findings() {
-            printf '%s\n' "$BODIES" \
-              | grep -cE '^Findings: present[[:space:]]*$|automated review suggestions' \
-              || true
+            count=0
+            for encoded in $BODIES_B64; do
+              body="$(printf '%s' "$encoded" | base64 --decode 2>/dev/null || true)"
+              [ -n "$body" ] || continue
+              sha="$(body_sha "$body")"
+              [ -n "$sha" ] || continue
+              case "$HEAD_SHA" in
+                "$sha"*) ;;
+                *) continue ;;
+              esac
+              if printf '%s\n' "$body" \
+                   | grep -qE '^Findings: present[[:space:]]*$|automated review suggestions'; then
+                count=$((count + 1))
+              fi
+            done
+            echo "$count"
           }
           # Fail closed: an API outage, rate limit, or schema change must never read as
           # "nothing unresolved" and let an existing attestation carry the PR green.
