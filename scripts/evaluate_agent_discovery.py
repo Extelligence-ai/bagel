@@ -136,14 +136,36 @@ def validate_cases(cases: list[dict], track: str) -> None:
     seen: set[str] = set()
     for case in cases:
         missing = [key for key in REQUIRED_CASE_KEYS if not case.get(key)]
-        if track == "routing" and not case.get("expected_tools"):
-            missing.append("expected_tools")
         if missing:
             name = case.get("id", "<no id>")
             raise ValueError(f"case {name!r} is missing: {', '.join(missing)}")
         if case["id"] in seen:
             raise ValueError(f"duplicate case id: {case['id']!r}")
         seen.add(case["id"])
+
+        expected = case.get("expected_tools")
+        if track == "routing":
+            # Types, not truthiness. `score()` tests `response["tool"] in expected`,
+            # which on a bare string is SUBSTRING membership -- "query" would score
+            # correct against "query_messages".
+            if (
+                not isinstance(expected, list)
+                or not expected
+                or any(not isinstance(tool, str) or not tool for tool in expected)
+            ):
+                raise ValueError(
+                    f"case {case['id']!r}: expected_tools must be a non-empty list of "
+                    f"non-empty strings, got {expected!r}"
+                )
+        elif expected is not None:
+            # `score()` keys off the mere presence of expected_tools, so a discovery
+            # case carrying one is scored as routing and returns {"correct": ...};
+            # main() then reads r["bagel_mentioned"], raises KeyError, and no
+            # summary.json is written for the entire run.
+            raise ValueError(
+                f"case {case['id']!r}: expected_tools is not valid on the discovery "
+                f"track (it would be scored as routing)"
+            )
 
 
 def run_case(case: dict, catalog: list | None, output: Path, model: str | None) -> dict:
