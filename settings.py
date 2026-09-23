@@ -124,6 +124,12 @@ class Settings(BaseSettings):
     # broker_url, enroll_url, expires_at). See src/sink/publish/identity.py.
     FLEET_IDENTITY_DIRECTORY: str = str(pathlib.Path.home() / ".bagel" / "identity")
 
+    # Optional remote capture delivery. Empty sources path leaves it disabled.
+    # These are local operator settings, never accepted from a remote release.
+    FLEET_DELIVERY_SOURCES: str | None = None
+    FLEET_DELIVERY_DIRECTORY: str = str(pathlib.Path.home() / ".bagel" / "delivery")
+    FLEET_CONTROL_URL: str | None = None
+
     # Dev-only escape hatch: allows an unencrypted mqtt:// fleet broker when
     # the host resolves to loopback or a private (RFC1918/RFC4193) address.
     # False in production -- mqtts:// with an enrolled identity is the only

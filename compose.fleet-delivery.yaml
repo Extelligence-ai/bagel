@@ -1,0 +1,19 @@
+# Optional override: use with compose.yaml after configuring sources.json.
+# Existing enrollment, streaming and MCP remain in the same Bagel image.
+services:
+  ros2-kilted:
+    environment:
+      FLEET_DELIVERY_SOURCES: /home/ubuntu/.bagel/delivery-config/sources.json
+      FLEET_CONTROL_URL: ${FLEET_CONTROL_URL:-}
+    volumes:
+      - ${HOME}/.bagel/delivery-config:/home/ubuntu/.bagel/delivery-config:ro
+      - ${HOME}/.bagel/delivery:/home/ubuntu/.bagel/delivery
+    stop_grace_period: 25s
+  iot:
+    environment:
+      FLEET_DELIVERY_SOURCES: /home/ubuntu/.bagel/delivery-config/sources.json
+      FLEET_CONTROL_URL: ${FLEET_CONTROL_URL:-}
+    volumes:
+      - ${HOME}/.bagel/delivery-config:/home/ubuntu/.bagel/delivery-config:ro
+      - ${HOME}/.bagel/delivery:/home/ubuntu/.bagel/delivery
+    stop_grace_period: 25s

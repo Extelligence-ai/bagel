@@ -1,0 +1,45 @@
+[
+  {
+    "spec": {
+      "schema": "bagel.capture.v1",
+      "name": "temperature_capture",
+      "source": "sensors",
+      "topics": [
+        "sensors/temperature"
+      ],
+      "trigger": {
+        "kind": "event",
+        "topic": "sensors/temperature",
+        "field": [
+          "value"
+        ],
+        "operator": "gt",
+        "value": 50,
+        "debounce_seconds": 5
+      },
+      "lookback_seconds": 10,
+      "output_format": "parquet"
+    },
+    "canonical": "{\"lookback_seconds\":10,\"name\":\"temperature_capture\",\"output_format\":\"parquet\",\"schema\":\"bagel.capture.v1\",\"source\":\"sensors\",\"topics\":[\"sensors/temperature\"],\"trigger\":{\"debounce_seconds\":5,\"field\":[\"value\"],\"kind\":\"event\",\"operator\":\"gt\",\"topic\":\"sensors/temperature\",\"value\":50}}",
+    "sha256": "b8237d0ef188dd60e2cafe8fc449f38337061606a6dcb28781943bfc6b991336"
+  },
+  {
+    "spec": {
+      "schema": "bagel.capture.v1",
+      "name": "temperature_capture",
+      "source": "sensors",
+      "topics": [
+        "sensors/temperature"
+      ],
+      "trigger": {
+        "kind": "periodic",
+        "topic": "sensors/temperature",
+        "every_seconds": 5
+      },
+      "lookback_seconds": 10,
+      "output_format": "csv"
+    },
+    "canonical": "{\"lookback_seconds\":10,\"name\":\"temperature_capture\",\"output_format\":\"csv\",\"schema\":\"bagel.capture.v1\",\"source\":\"sensors\",\"topics\":[\"sensors/temperature\"],\"trigger\":{\"every_seconds\":5,\"kind\":\"periodic\",\"topic\":\"sensors/temperature\"}}",
+    "sha256": "8e5191a887277ab7132e914bc5dcaf6ce61af543e45b525c55000511789b24b0"
+  }
+]

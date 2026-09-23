@@ -1,0 +1,17 @@
+# Review image: the complete fleet branch source over its cached platform image.
+# Refuse a dependency mismatch instead of silently borrowing another runtime.
+ARG BAGEL_BASE=ghcr.io/extelligence-ai/bagel/ros2-kilted:2.3.0-beta.93
+FROM ${BAGEL_BASE}
+USER root
+WORKDIR /home/ubuntu/runtime
+COPY pyproject.toml uv.lock /tmp/fleet-review-dependencies/
+RUN cmp pyproject.toml /tmp/fleet-review-dependencies/pyproject.toml && \
+    cmp uv.lock /tmp/fleet-review-dependencies/uv.lock
+COPY --chown=ubuntu:ubuntu src ./src
+COPY --chown=ubuntu:ubuntu server.py run.py settings.py ./
+COPY --chown=ubuntu:ubuntu doc ./doc
+ARG BAGEL_VCS_REF=""
+ENV BAGEL_BUILD_ID=fleet-delivery-review BAGEL_VCS_REF=${BAGEL_VCS_REF}
+USER ubuntu
+# Use the installed, lock-matched environment without mutating dependencies.
+CMD ["/home/ubuntu/runtime/.venv/bin/python", "server.py"]

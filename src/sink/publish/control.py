@@ -283,7 +283,10 @@ def unenroll_identity() -> dict:
         `{"deleted": list[str], "streams_removed": bool, "service": "stopped"}`.
 
     """
+    from src.sink.publish.delivery import service as delivery
+
     with _control_lock:
+        delivery.stop()
         service = startup.fleet_service()
         if service is not None:
             try:

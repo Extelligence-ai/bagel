@@ -30,6 +30,7 @@ from src.pipeline.tasks.waffle import snap as waffle_snap
 from src.sink import startup
 from src.sink.publish import control as fleet_control
 from src.sink.publish import identity as fleet_identity
+from src.sink.publish.delivery import service as fleet_delivery
 
 server = mcp_compat.create_server(
     name="Bagel MCP Server",
@@ -1520,9 +1521,13 @@ if __name__ == "__main__":
         settings.ARTIFACT_DIRECTORY,
         artifacts.directory_size_bytes(settings.ARTIFACT_DIRECTORY),
     )
-    mcp_compat.run_server(
-        server,
-        transport=settings.MCP_TRANSPORT,
-        host=settings.MCP_SERVER_HOST,
-        port=settings.MCP_SERVER_PORT,
-    )
+    fleet_delivery.start()
+    try:
+        mcp_compat.run_server(
+            server,
+            transport=settings.MCP_TRANSPORT,
+            host=settings.MCP_SERVER_HOST,
+            port=settings.MCP_SERVER_PORT,
+        )
+    finally:
+        fleet_delivery.stop()

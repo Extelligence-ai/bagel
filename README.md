@@ -52,6 +52,9 @@ control loop.
 - **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, and more.
 - **Dockerized environments**: No local dependencies required.
 - **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
+- **Approved capture delivery (beta)**: receive approved, versioned capture releases
+  from a fleet service, report activation and local artifact evidence, and recover
+  across restart or rollback. Opt-in setup: [delivery runbook](doc/fleet_delivery_v1.md).
 - **Fleet streaming (beta)**: publish live channels, events, and heartbeats from the
   edge to your own fleet broker. Landing incrementally on the `2.3.0-beta` image line;
   opt out at build time with `BAGEL_FLEET=false`, or at runtime with `FLEET_ENABLED=0`.
