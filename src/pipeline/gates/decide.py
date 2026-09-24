@@ -14,6 +14,7 @@ the `anomaly` gate instead.
 import dataclasses
 import json
 import logging
+import math
 from typing import Any
 
 import duckdb
@@ -57,9 +58,11 @@ def decide_window(  # noqa: PLR0913
     scores = answer.probabilities
     if missing := [choice for choice in choices if choice not in scores]:
         raise ValueError(f"Decision backend did not score choices: {missing}")
+    if not all(math.isfinite(scores[choice]) and scores[choice] >= 0 for choice in choices):
+        raise backends.BackendUnavailable(f"Decision backend returned non-probabilities: {scores}")
     total = sum(scores[choice] for choice in choices)
     if total <= 0:
-        raise ValueError(f"Decision backend returned no positive scores: {scores}")
+        raise backends.BackendUnavailable(f"Decision backend returned no positive scores: {scores}")
     probabilities = {choice: scores[choice] / total for choice in choices}
     choice = max(choices, key=probabilities.__getitem__)
     probability = probabilities[choice]
@@ -128,10 +131,10 @@ class Decide(messages.TopicMessageMixin, base.Gate):
             )
         if len(choices) < _MIN_CHOICES or len(set(choices)) != len(choices):
             raise ValueError(f"Choices must be at least two distinct values, got {choices}")
-        if max_signals < 1:
-            raise ValueError("max_signals must be at least 1")
-        if timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be a positive finite number")
+        if not isinstance(max_signals, int) or isinstance(max_signals, bool) or max_signals < 1:
+            raise ValueError("max_signals must be a whole number of at least 1")
         if not accept or any(choice not in choices for choice in accept):
             raise ValueError(f"Accept must be a non-empty subset of choices: {accept}")
         if not (0.0 <= min_probability <= 1.0):

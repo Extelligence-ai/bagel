@@ -303,3 +303,13 @@ def test_local_scores_do_not_penalize_longer_choice_names() -> None:
     )
     assert scores["fault_detected"] > scores["fault"]
     assert all(0 < s <= 1 for s in scores.values())
+
+
+def test_non_finite_local_scores_are_unavailable() -> None:
+    # All -inf / NaN log-probs after numerical instability must not become a decision.
+    with pytest.raises(backends.BackendUnavailable):
+        backends.normalize_log_likelihoods(
+            {"a": float("-inf"), "b": float("-inf")}, {"a": 1, "b": 1}
+        )
+    with pytest.raises(backends.BackendUnavailable):
+        backends.normalize_log_likelihoods({"a": float("nan"), "b": -1.0}, {"a": 1, "b": 1})

@@ -213,3 +213,9 @@ def test_a_one_off_publication_during_warmup_is_not_an_expected_topic(
 def test_preview_rejects_non_finite_settings(log_path: pathlib.Path, bad: dict) -> None:
     with pytest.raises(ValueError):
         _run(log_path, **bad)
+
+
+@pytest.mark.parametrize("bad", [{"max_signals": float("nan")}, {"max_signals": 2.5}])
+def test_preview_max_signals_must_be_a_finite_integer(log_path: pathlib.Path, bad: dict) -> None:
+    with pytest.raises(ValueError):
+        _run(log_path, **bad)

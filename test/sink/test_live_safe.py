@@ -84,3 +84,38 @@ def test_subscribing_a_fresh_topic_with_a_batch_only_pipeline_is_refused(
 def test_subscribing_without_a_pipeline_still_works(sink: _FakeSink) -> None:
     sink.subscribe("/a", buffer_size_bytes=None)
     assert "/a" in sink._buffers
+
+
+def test_multi_topic_subscription_is_refused_before_any_topic_is_subscribed(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # subscribe_live_topics subscribes topics in order; with the cadence topic listed
+    # last, earlier topics used to be subscribed before the guard fired, leaving a
+    # partial live subscription with no way to undo it (Codex P2).
+    from src.sink import startup
+
+    class _TwoTopicSink(_FakeSink):
+        def _available_topics(self) -> list[str]:
+            return ["/a", "/b"]
+
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k")
+    sink = _TwoTopicSink("localhost", next(_port_counter))
+    config = {
+        "name": "p",
+        "site": "s",
+        "asset": "a",
+        "allow_failure": False,
+        "cadence": {"topic": "/b", "when": {"every": 10, "unit": "second"}},
+        "gates": [
+            {
+                "module": "src.pipeline.gates.anomaly",
+                "lookback": {"last": 10, "unit": "second"},
+                "args": {"anomalies": {"overcurrent": "too much current"}},
+            }
+        ],
+        "tasks": [{"module": "src.pipeline.tasks.write_annotations"}],
+    }
+    with pytest.raises(ValueError, match="batch-only"):
+        startup.subscribe_with_pipeline(sink, ["/a", "/b"], config)
+    assert sink._buffers == {}

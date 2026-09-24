@@ -310,3 +310,35 @@ def test_live_subscriptions_accept_pipelines_without_batch_only_gates() -> None:
         }
     )
     sink_base.require_live_safe(pipeline)  # no error
+
+
+def test_non_finite_scores_from_a_backend_make_the_gate_abstain() -> None:
+    class Unstable:
+        def decide(self, state: dict, question: str, choices: dict[str, str]) -> backends.Answer:
+            return backends.Answer({c: float("nan") for c in choices}, "m")
+
+    with pytest.raises(backends.BackendUnavailable):
+        decide.decide_window(
+            _relation(),
+            backend=Unstable(),
+            question="q?",
+            choices=CHOICES,
+            accept=["upload"],
+            min_probability=0.5,
+        )
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"timeout_seconds": float("nan")},
+        {"timeout_seconds": float("inf")},
+        {"max_signals": float("nan")},
+        {"max_signals": 2.5},
+    ],
+)
+def test_non_finite_or_fractional_limits_are_rejected(bad: dict) -> None:
+    with pytest.raises(ValueError):
+        decide.Decide(
+            question="q?", choices=CHOICES, accept=["upload"], url="http://127.0.0.1:9/", **bad
+        )

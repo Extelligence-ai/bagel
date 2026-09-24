@@ -533,3 +533,9 @@ def test_non_finite_settings_are_rejected(server: DecisionServer, bad: dict) -> 
     # YAML `.nan` makes every comparison false, so it slipped through (Codex P2).
     with pytest.raises(ValueError):
         anomaly.Anomaly(**_gate_args(server, **bad))
+
+
+@pytest.mark.parametrize("bad", [{"max_signals": float("nan")}, {"max_signals": 2.5}])
+def test_max_signals_must_be_a_finite_integer(server: DecisionServer, bad: dict) -> None:
+    with pytest.raises(ValueError):
+        anomaly.Anomaly(**_gate_args(server, **bad))

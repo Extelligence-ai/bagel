@@ -86,8 +86,8 @@ def _validate_numbers(  # noqa: PLR0913
         raise ValueError("baseline_window_minutes must be positive and warmup_minutes non-negative")
     if not (0.0 <= min_probability <= 1.0):
         raise ValueError("min_probability must be between 0 and 1")
-    if max_signals < 1:
-        raise ValueError("max_signals must be at least 1")
+    if not isinstance(max_signals, int) or isinstance(max_signals, bool) or max_signals < 1:
+        raise ValueError("max_signals must be a whole number of at least 1")
     if warmup_minutes > baseline_window_minutes:
         raise ValueError(
             "warmup_minutes must not exceed baseline_window_minutes: the baseline forgets "

@@ -142,6 +142,8 @@ def normalize_log_likelihoods(
     best choice scores 1.
     """
     per_token = {c: log_likelihoods[c] / max(lengths[c], 1) for c in log_likelihoods}
+    if not all(math.isfinite(v) for v in per_token.values()):
+        raise BackendUnavailable("Local model produced non-finite scores")
     best = max(per_token.values())
     return {choice: math.exp(value - best) for choice, value in per_token.items()}
 
