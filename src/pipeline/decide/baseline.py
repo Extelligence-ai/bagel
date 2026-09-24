@@ -13,8 +13,13 @@ class Baseline(Protocol):
     (Matcha roadmap) implement the same three methods.
     """
 
-    def add(self, window: dict) -> None:
-        """Learn from a window summary judged normal."""
+    def add(self, window: dict, present_topics: set[str] | None = None) -> None:
+        """Learn from a window summary judged normal.
+
+        `present_topics` says which topics count as publishing in this window; callers
+        include topics that are silent but still within their dropout grace, so the
+        wait for a long threshold does not erode a topic's expected status.
+        """
         ...
 
     def ready(self, asof_seconds: float) -> bool:
@@ -45,7 +50,7 @@ class RollingBaseline:
             tuple[float, float, dict[str, tuple[float, float, float]], set[str]]
         ] = collections.deque()
 
-    def add(self, window: dict) -> None:
+    def add(self, window: dict, present_topics: set[str] | None = None) -> None:
         """Implement `Baseline.add`."""
         bounds = window["window"]
         if bounds["end_seconds"] is None:
@@ -74,6 +79,8 @@ class RollingBaseline:
             mean, std = signal["mean"], signal["std"] or 0.0
             moments[label] = (count, mean * count, (std**2 + mean**2) * count)
         topics = {topic for topic, stats in window["topics"].items() if stats["messages"]}
+        if present_topics is not None:
+            topics |= present_topics
         self._windows.append((bounds["start_seconds"], bounds["end_seconds"], moments, topics))
         self._prune()
 

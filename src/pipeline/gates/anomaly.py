@@ -34,6 +34,18 @@ DEFAULT_QUESTION = (
 )
 
 
+def _present_topics(
+    window: dict, last_seen: dict[str, float], asof_seconds: float, dropout_seconds: float
+) -> set[str]:
+    """Topics that published in the window, or are silent but still within their grace."""
+    return {
+        topic
+        for topic, stats in window["topics"].items()
+        if stats["messages"]
+        or (topic in last_seen and asof_seconds - last_seen[topic] <= dropout_seconds)
+    }
+
+
 class Anomaly(messages.TopicMessageMixin, base.Gate):
     """Detect anomalies on the robot and ask Jev to label them. BETA."""
 
@@ -196,9 +208,10 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         for topic, stats in window["topics"].items():
             if stats["last_seconds"] is not None:
                 self._last_seen[topic] = stats["last_seconds"]
+        present = _present_topics(window, self._last_seen, asof_seconds, self._dropout_seconds)
         self._annotations = {}
         if self._mode == "screen" and not reasons:
-            self.baseline.add(window)
+            self.baseline.add(window, present)
             return False
 
         state = {"window": window, "baseline": normal, "screen_reasons": reasons}
@@ -207,7 +220,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         except backends.BackendUnavailable as error:
             logging.warning("Anomaly gate %s: Jev unavailable (%s)", self.name, error)
             if not reasons:
-                self.baseline.add(window)
+                self.baseline.add(window, present)
                 return False
             self._record(SCREEN_ONLY, {}, None, False, window, normal, reasons)
             return True
@@ -224,7 +237,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         elif not reasons or (label == NORMAL and probabilities[NORMAL] >= self._min_probability):
             # Only a confident `normal` verdict teaches the baseline that a screened window
             # was fine; a weak one keeps it out, as an unreachable backend would.
-            self.baseline.add(window)
+            self.baseline.add(window, present)
         return flagged
 
     def _record(  # noqa: PLR0913

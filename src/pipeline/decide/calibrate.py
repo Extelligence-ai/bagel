@@ -10,6 +10,7 @@ from typing import Any
 
 from src.pipeline import base, messages
 from src.pipeline.decide import baseline, screen, summary
+from src.pipeline.gates.anomaly import _present_topics
 
 # A signal tripping the screen in more than this share of screened windows is not
 # "anomalous"; it drifts by design or its threshold is wrong.
@@ -71,19 +72,28 @@ def _advice(report: dict[str, Any]) -> list[str]:
     return advice
 
 
-def _validate(
+def _validate(  # noqa: PLR0913
     window_seconds: float,
     cadence_seconds: float | None,
     warmup_minutes: float,
     baseline_window_minutes: float,
+    z_threshold: float,
+    dropout_seconds: float,
+    max_signals: int,
 ) -> float:
-    """Check the timing arguments; return the cadence interval (defaults to the window)."""
+    """Check the arguments the way the gate and Pipeline.build would; return the cadence."""
     if window_seconds <= 0 or window_seconds != int(window_seconds):
         raise ValueError("window_seconds must be a positive whole number of seconds")
     if cadence_seconds is None:
         cadence_seconds = window_seconds
-    if cadence_seconds <= 0:
-        raise ValueError("cadence_seconds must be positive")
+    if cadence_seconds <= 0 or cadence_seconds != int(cadence_seconds):
+        raise ValueError("cadence_seconds must be a positive whole number of seconds")
+    if z_threshold <= 0 or dropout_seconds <= 0:
+        raise ValueError("z_threshold and dropout_seconds must be positive")
+    if baseline_window_minutes <= 0 or warmup_minutes < 0:
+        raise ValueError("baseline_window_minutes must be positive and warmup_minutes non-negative")
+    if max_signals < 1:
+        raise ValueError("max_signals must be at least 1")
     if warmup_minutes > baseline_window_minutes:
         raise ValueError(
             "warmup_minutes must not exceed baseline_window_minutes: the baseline forgets "
@@ -141,7 +151,13 @@ def calibrate(  # noqa: PLR0913
 
     """
     cadence_seconds = _validate(
-        window_seconds, cadence_seconds, warmup_minutes, baseline_window_minutes
+        window_seconds,
+        cadence_seconds,
+        warmup_minutes,
+        baseline_window_minutes,
+        z_threshold,
+        dropout_seconds,
+        max_signals,
     )
     reader = _Reader()
     reader.setup(path, **(source_args or {}))
@@ -174,6 +190,7 @@ def calibrate(  # noqa: PLR0913
         for topic, stats in window["topics"].items():
             if stats["last_seconds"] is not None:
                 last_seen[topic] = stats["last_seconds"]
+        present = _present_topics(window, last_seen, asof, dropout_seconds)
         if reasons:
             flagged.append(
                 {"asof_seconds": asof, "offset_seconds": asof - start, "reasons": reasons}
@@ -181,7 +198,7 @@ def calibrate(  # noqa: PLR0913
             by_signal.update({r["signal"] for r in reasons if "signal" in r})
             by_topic.update({r["topic"] for r in reasons if "topic" in r})
         else:
-            rolling.add(window)
+            rolling.add(window, present)
 
     screened = windows - warmup
     report: dict[str, Any] = {

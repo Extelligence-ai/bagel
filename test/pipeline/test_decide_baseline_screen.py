@@ -314,3 +314,17 @@ def test_overlapping_windows_count_each_sample_about_once() -> None:
         rolling.add(_window(float(end), [1.0] * 10))
     count = rolling.stats(asof_seconds=29.0)["signals"]["/m.v"]["count"]
     assert 25 <= count <= 32  # 10 in the first window, ~1 new sample per later window
+
+
+def test_a_topic_silent_within_its_grace_stays_expected() -> None:
+    # A dropout threshold longer than the rolling span: the silent-but-not-yet-late windows
+    # are added as normal and must not erode the topic's "expected" status, or the
+    # outage is never detected (Codex P1).
+    rolling = baseline.RollingBaseline(window_minutes=1, warmup_minutes=0)
+    for end in (10.0, 20.0, 30.0):
+        rolling.add(_window(end, [1.0], topic_last=end))
+    for end in range(40, 130, 10):  # 90 s of silence, all within a 100 s grace
+        window = _window(float(end), [1.0], topic_last=None)
+        window["topics"]["/m"] = {"messages": 0, "last_seconds": None}
+        rolling.add(window, present_topics={"/m"})
+    assert rolling.stats(asof_seconds=120.0)["topics"] == ["/m"]

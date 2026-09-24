@@ -486,3 +486,22 @@ def test_a_weak_normal_verdict_keeps_the_window_out_of_the_baseline(
         gate.evaluate(EPOCH + offset, lookback)
     mean = gate.baseline.stats(EPOCH + 420)["signals"]["/motor/current.value"]["mean"]
     assert mean == pytest.approx(1.0, abs=0.01)
+
+
+def test_a_permanent_outage_is_caught_even_when_the_threshold_exceeds_the_baseline_span(
+    tmp_path: pathlib.Path, server: DecisionServer
+) -> None:
+    # dropout_seconds=90 with a 1-minute baseline: before the fix, the silent windows
+    # under the threshold were added as normal, the topic lost its majority and was
+    # never expected again (Codex P1).
+    from test._fixtures.fault_log import write_fault_log
+
+    log = write_fault_log(tmp_path / "outage.mcap", gap=(300.0, 600.0))
+    server.reply = _label_from_screen
+    args = _gate_args(server, dropout_seconds=90, baseline_window_minutes=1)
+    produced = _pipeline(log, args, SNIP_AND_WRITE).run_all()
+    offsets = sorted(_records(produced))
+    assert 390.0 in offsets and 380.0 not in offsets
+    assert all(o not in offsets for o in range(310, 390, 10) if o != 410)
+    (reason,) = [r for r in _records(produced)[390.0]["screen_reasons"] if r["kind"] == "dropout"]
+    assert reason["silent_seconds"] == pytest.approx(90.2, abs=0.01)

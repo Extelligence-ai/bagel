@@ -156,3 +156,20 @@ def test_a_cadence_shorter_than_the_window_keeps_the_baseline(log_path: pathlib.
     report = _run(log_path, cadence_seconds=5)
     assert report["warmup_windows"] == 12  # 60 s of history at a 5 s cadence
     assert [round(f["offset_seconds"]) for f in report["flagged"]] == [405, 410, 510, 515]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"warmup_minutes": -1},
+        {"baseline_window_minutes": 0, "warmup_minutes": 0},
+        {"z_threshold": 0},
+        {"dropout_seconds": 0},
+        {"max_signals": 0, "signals": []},
+        {"cadence_seconds": 2.5},
+    ],
+)
+def test_preview_rejects_what_the_gate_would_reject(log_path: pathlib.Path, bad: dict) -> None:
+    # A preview that accepts settings Pipeline.build refuses is misleading (Codex P2).
+    with pytest.raises(ValueError):
+        _run(log_path, **bad)
