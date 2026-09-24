@@ -23,7 +23,9 @@ def _window(end: float, values: list[float], topic_last: float | None = None) ->
                 "std": std,
             }
         },
-        "topics": {"/m": {"messages": count, "last_seconds": topic_last}},
+        "topics": {
+            "/m": {"messages": count, "first_seconds": topic_last, "last_seconds": topic_last}
+        },
     }
 
 

@@ -233,7 +233,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         for topic, stats in window["topics"].items():
             if stats["last_seconds"] is not None:
                 self._last_seen[topic] = stats["last_seconds"]
-                self._first_seen.setdefault(topic, stats["last_seconds"])
+                self._first_seen.setdefault(topic, stats["first_seconds"])
         present = _present_topics(window, self._last_seen, asof_seconds, self._dropout_seconds)
         self._annotations = {}
         if self._mode == "screen" and not reasons:

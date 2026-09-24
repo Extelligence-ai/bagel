@@ -104,7 +104,7 @@ def summarize(
     Returns:
         ``{"window": {start_seconds, end_seconds, messages},
         "signals": {label: {count, min, max, mean, std}},
-        "topics": {topic: {messages, last_seconds}}}``
+        "topics": {topic: {messages, first_seconds, last_seconds}}}``
 
     Raises:
         ValueError: If an explicit label is not a numeric field of the relation.
@@ -122,7 +122,11 @@ def summarize(
     aggregates = ["count(*)", f"min({ts})::DOUBLE", f"max({ts})::DOUBLE"]
     for topic in topics:
         quoted = _quote_identifier(topic)
-        aggregates += [f"count({quoted})", f"max({ts}) FILTER (WHERE {quoted} IS NOT NULL)::DOUBLE"]
+        aggregates += [
+            f"count({quoted})",
+            f"min({ts}) FILTER (WHERE {quoted} IS NOT NULL)::DOUBLE",
+            f"max({ts}) FILTER (WHERE {quoted} IS NOT NULL)::DOUBLE",
+        ]
     for column, path in chosen.values():
         expression = _expression(column, path)
         aggregates += [
@@ -136,9 +140,9 @@ def summarize(
 
     topic_stats = {}
     for topic in topics:
-        count, last = values[:2]
-        values = values[2:]
-        topic_stats[topic] = {"messages": count, "last_seconds": last}
+        count, first, last = values[:3]
+        values = values[3:]
+        topic_stats[topic] = {"messages": count, "first_seconds": first, "last_seconds": last}
     signal_stats = {}
     for label in chosen:
         signal_stats[label] = dict(zip(_STATS, values[: len(_STATS)], strict=True))

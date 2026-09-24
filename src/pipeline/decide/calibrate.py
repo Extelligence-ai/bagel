@@ -208,7 +208,7 @@ def calibrate(  # noqa: PLR0913
         for topic, stats in window["topics"].items():
             if stats["last_seconds"] is not None:
                 last_seen[topic] = stats["last_seconds"]
-                first_seen.setdefault(topic, stats["last_seconds"])
+                first_seen.setdefault(topic, stats["first_seconds"])
         present = _present_topics(window, last_seen, asof, dropout_seconds)
         if reasons:
             flagged.append(

@@ -539,3 +539,28 @@ def test_non_finite_settings_are_rejected(server: DecisionServer, bad: dict) -> 
 def test_max_signals_must_be_a_finite_integer(server: DecisionServer, bad: dict) -> None:
     with pytest.raises(ValueError):
         anomaly.Anomaly(**_gate_args(server, **bad))
+
+
+def test_a_topic_that_stops_inside_the_first_window_is_still_a_dropout(
+    tmp_path: pathlib.Path, server: DecisionServer
+) -> None:
+    # /heartbeat publishes for 0..9.4 s and never again, and the first evaluation is at
+    # t=10. Its first and last message used to be recorded as the same instant (9.4 s),
+    # so it never counted as periodic and the outage was learned as normal (Codex P1).
+    from test._fixtures.fault_log import write_fault_log
+
+    log = write_fault_log(tmp_path / "stop.mcap", gap=(9.5, 10_000.0), duration_seconds=60)
+    server.reply = _label_from_screen
+    gate = anomaly.Anomaly(
+        **_gate_args(server, dropout_seconds=5, baseline_window_minutes=1, warmup_minutes=1 / 6)
+    )
+    gate.setup(path=str(log))
+    gate._name = "anomaly"
+    lookback = base.Lookback(last=10, unit=base.Unit.SECOND)
+    flagged = [
+        offset
+        for offset in (10, 20, 30, 40)
+        if gate.evaluate(EPOCH + offset, lookback)
+        and any(r["kind"] == "dropout" for r in gate.annotations()["screen_reasons"])
+    ]
+    assert flagged, "the heartbeat outage was never reported as a dropout"

@@ -62,8 +62,8 @@ def test_window_bounds() -> None:
 
 def test_per_topic_message_counts_and_last_seen() -> None:
     assert summary.summarize(_relation())["topics"] == {
-        "/imu": {"messages": 3, "last_seconds": 12.0},
-        "/motor": {"messages": 1, "last_seconds": 11.0},
+        "/imu": {"messages": 3, "first_seconds": 10.0, "last_seconds": 12.0},
+        "/motor": {"messages": 1, "first_seconds": 11.0, "last_seconds": 11.0},
     }
 
 
@@ -71,7 +71,7 @@ def test_empty_window() -> None:
     state = summary.summarize(_relation().filter(f"{TS} > 100"))
     assert state["window"]["messages"] == 0
     assert state["signals"]["/imu.accel.x"]["count"] == 0
-    assert state["topics"]["/imu"] == {"messages": 0, "last_seconds": None}
+    assert state["topics"]["/imu"] == {"messages": 0, "first_seconds": None, "last_seconds": None}
 
 
 # --- robustness (from pre-release review) ------------------------------------------------
@@ -175,4 +175,13 @@ def test_absurdly_large_values_are_treated_as_missing() -> None:
         "max": 2.0,
         "mean": 2.0,
         "std": 0.0,
+    }
+
+
+def test_per_topic_first_seen() -> None:
+    # A topic's earliest message matters for judging its period (Codex P1).
+    assert summary.summarize(_relation())["topics"]["/motor"] == {
+        "messages": 1,
+        "first_seconds": 11.0,
+        "last_seconds": 11.0,
     }
