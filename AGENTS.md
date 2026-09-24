@@ -30,7 +30,9 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
   paths.
 - Anomaly detection (beta): `src.pipeline.gates.anomaly` + `snippet.mcap` +
   `write_annotations` + an `upload.*` task keeps only anomalous slices with a JSON
-  label. It needs `TYPESAFE_API_KEY`; see `doc/runbooks/anomaly_detection.md`.
+  label. Calibrate with `preview_anomalies` first (rates and errors as `signals`,
+  never positions or orientations); the `compose/anomaly_pipeline` capability walks
+  the steps. Needs `TYPESAFE_API_KEY`; see `doc/runbooks/anomaly_detection.md`.
 
 ## Develop on Bagel
 

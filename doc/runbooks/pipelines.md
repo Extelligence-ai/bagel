@@ -69,7 +69,7 @@ also hand details to the tasks after them (for example, an anomaly label that
 | --- | --- |
 | `sql` | A boolean SQL check at the fire timestamp is true |
 | `cv.object_too_close`* | A detected object is closer than a threshold (images; needs the `cv` image) |
-| `anomaly` *(beta)* | The window deviates from the robot's rolling baseline and Jev labels it an anomaly ([guide](./anomaly_detection.md)) |
+| `anomaly` *(beta)* | The window deviates from the robot's rolling baseline and Jev labels it an anomaly; dry-run with `preview_anomalies` ([guide](./anomaly_detection.md)) |
 | `decide` *(beta)* | A typed-decision model answers a multiple-choice question with an accepted choice |
  Ask Bagel to *"list the pipeline capabilities"* (`list_pipeline_capabilities`) for the
 live catalog on your install; today the tasks include:

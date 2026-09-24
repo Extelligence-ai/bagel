@@ -30,6 +30,7 @@ from src.pipeline import (
     rerun_export,
     windows,
 )
+from src.pipeline.decide import calibrate
 from src.pipeline.tasks.waffle import snap as waffle_snap
 from src.sink import startup
 from src.source.context import SourceContext
@@ -732,6 +733,76 @@ def preview_pipeline(  # noqa: PLR0913
         "total_seconds": plan["total_seconds"],
         "kept_fraction": plan["kept_fraction"],
     }
+
+
+@server.tool(
+    title="Preview what the anomaly gate would flag (beta)",
+    description=(
+        "Dry-run the on-robot anomaly screen over a recorded log without calling any "
+        "decision model or writing artifacts. Learns a rolling baseline the way the "
+        "`src.pipeline.gates.anomaly` gate does, then reports every window the screen would "
+        "flag (mean shift, extreme sample, topic dropout) with the signal, value and z-score, "
+        "flag counts per signal, and plain-language advice (signals that drift by design, "
+        "warm-up longer than the log). Inspect topics first and pass `signals` as rates and "
+        "errors (accelerations, angular rates, currents), never positions or orientations. "
+        "Use it to choose signals and thresholds before saving an anomaly pipeline."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def preview_anomalies(  # noqa: PLR0913
+    path: str,
+    window_seconds: float,
+    topics: list[str] | None = None,
+    signals: list[str] | None = None,
+    max_signals: int = 64,
+    z_threshold: float = 3.0,
+    dropout_seconds: float = 2.0,
+    baseline_window_minutes: float = 30.0,
+    warmup_minutes: float = 5.0,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Report what the anomaly gate's screen would flag on a recorded log. BETA.
+
+    Args:
+        path (str): Filesystem path or URL to the recorded data source.
+        window_seconds (float): Window length; matches the gate's `lookback`.
+        topics (list[str] | None, optional): Topics to watch. If None, all topics.
+        signals (list[str] | None, optional): Dotted numeric signals to watch, e.g.
+            "/imu.linear_acceleration.x". Prefer rates and errors over states.
+        max_signals (int, optional): Refuse to watch more signals than this. Defaults to 64.
+        z_threshold (float, optional): Baseline standard deviations for a mean shift.
+        dropout_seconds (float, optional): Silence that counts as a dropout.
+        baseline_window_minutes (float, optional): Span of the rolling baseline.
+        warmup_minutes (float, optional): History needed before screening starts.
+        args (dict[str, Any] | None, optional): Additional source options.
+
+    Returns:
+        dict[str, Any]: `windows`, `warmup_windows`, `screened_windows`, `flagged`
+            (with `offset_seconds` and `reasons`), `flagged_fraction`, `by_signal`,
+            `by_topic`, `signals`, and `advice`.
+
+    Examples:
+        As an LLM prompt:
+            What would the anomaly gate flag on ./flight_042 with 10 s windows, watching
+            IMU accelerations and motor current?
+
+        As a Python call:
+            >>> preview_anomalies("./flight_042", window_seconds=10,
+            ...                   signals=["/imu.linear_acceleration.x", "/motor.current"])
+
+    """
+    return calibrate.calibrate(
+        path,
+        window_seconds=window_seconds,
+        topics=topics,
+        signals=signals,
+        max_signals=max_signals,
+        z_threshold=z_threshold,
+        dropout_seconds=dropout_seconds,
+        baseline_window_minutes=baseline_window_minutes,
+        warmup_minutes=warmup_minutes,
+        source_args=args,
+    )
 
 
 def _pipeline_summary(text: str, yaml_file: pathlib.Path) -> str:

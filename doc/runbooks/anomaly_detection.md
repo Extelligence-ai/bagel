@@ -82,12 +82,35 @@ tasks:
       source: /home/ubuntu/.bagel/artifacts/pipeline=anomaly_upload
 ```
 
-3. Run it: `uv run run.py pipelines/anomaly_upload.yaml`, or stand it up at the edge
-   like any other [pipeline](./pipelines.md#the-lifecycle).
+3. Calibrate it (next section), then run it: `uv run run.py pipelines/anomaly_upload.yaml`.
 
 Swap `upload.s3` for `upload.gcs` or `upload.azure`, or give `upload.s3` an
 `endpoint_url` for MinIO / Cloudflare R2. Anything the gate passes goes to whichever
 upload task you choose.
+
+## Calibrate first
+
+Before saving the pipeline, dry-run the screen over a log you know. Nothing is written
+and no decision model is called:
+
+> What would the anomaly gate flag on ./shift_042 with 10 s windows, watching
+> `/motor/current.value` and `/imu.linear_accel.x`?
+
+That is the `preview_anomalies` tool (`calibrate()` in `src/pipeline/decide/calibrate.py`):
+
+```text
+preview_anomalies("./shift_042", window_seconds=10,
+                  signals=["/motor/current.value", "/imu.linear_accel.x"], warmup_minutes=1)
+-> { "windows": 61, "warmup_windows": 6, "screened_windows": 55,
+     "flagged": [{"offset_seconds": 410.0, "reasons": [{"kind": "mean_shift", ...}, ...]}, ...],
+     "flagged_fraction": 0.036, "by_signal": {"/motor/current.value": 1},
+     "advice": [] }
+```
+
+`advice` names signals that trip the screen in most windows (they drift by design, drop
+them), topics that read as dropouts every window (raise `dropout_seconds`), and a
+warm-up that swallows the log. Iterate until the flags look like real events, then
+write the YAML. The LLM recipe `compose/anomaly_pipeline` walks these steps.
 
 ## Settings
 

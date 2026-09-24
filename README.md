@@ -397,7 +397,8 @@ before starting the container so the mount is owned by you, not root.
 - [Event-driven data reduction](./doc/runbooks/data_reduction.md) · detect events, keep
   windows around them (snippets or one reduced bag), batch across fleets, upload to the cloud
 - [Anomaly detection with Jev](./doc/runbooks/anomaly_detection.md) *(beta)* · learn normal on
-  the robot, ask Jev to label what isn't, upload only those slices with a JSON label
+  the robot, ask Jev to label what isn't, upload only those slices with a JSON label;
+  `preview_anomalies` dry-runs the screen first
 - [Live ROS2 robots over rosbridge](./doc/tutorials/live_ros2_bridge.md) · a step-by-step tutorial
 - [ROS text logs](./doc/runbooks/ros_text_logs.md) · inspect `~/.ros/log` errors and warnings without opening a bag
 - [MQTT](./doc/runbooks/iot_mqtt.md) · live IoT topics, Sparkplug B, edge recording
