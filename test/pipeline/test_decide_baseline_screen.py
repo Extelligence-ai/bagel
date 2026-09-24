@@ -163,6 +163,18 @@ def test_a_topic_never_seen_at_all_is_reported_with_unknown_silence() -> None:
     assert reasons == [{"kind": "dropout", "topic": "/m", "silent_seconds": None}]
 
 
+def test_a_baseline_with_too_few_samples_is_not_screened_against() -> None:
+    # One message in the first window gives std 0; the constant-baseline floor would then
+    # call ordinary noise a 50 sigma event.
+    thin = {
+        "span_seconds": 60.0,
+        "signals": {"/m.v": {"count": 1, "mean": 1.0, "std": 0.0}},
+        "topics": [],
+    }
+    reasons = screen.screen(_window(100, [1.05, 0.95], topic_last=100), thin, 100, 3.0, 2.0)
+    assert reasons == []
+
+
 def test_signals_unknown_to_the_baseline_are_ignored() -> None:
     empty = {"span_seconds": 600.0, "signals": {}, "topics": []}
     reasons = screen.screen(

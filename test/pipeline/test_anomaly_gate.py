@@ -264,7 +264,8 @@ def test_flagged_windows_do_not_enter_the_baseline(
 
 def test_nothing_is_screened_during_warmup(log_path: pathlib.Path, server: DecisionServer) -> None:
     server.reply = _label_from_screen
-    args = _gate_args(server, warmup_minutes=9)  # warm-up ends after both faults
+    # warm-up ends after both faults (and may not exceed the baseline span)
+    args = _gate_args(server, baseline_window_minutes=9, warmup_minutes=9)
     produced = _pipeline(log_path, args, SNIP_AND_WRITE).run_all()
     assert produced == []
     assert server.requests == []
@@ -430,3 +431,10 @@ def test_an_explicit_empty_signal_list_watches_only_dropouts(
     server.reply = _label_from_screen
     produced = _pipeline(log_path, _gate_args(server, signals=[]), SNIP_AND_WRITE).run_all()
     assert sorted(_records(produced)) == [510.0]
+
+
+def test_warmup_longer_than_the_baseline_is_rejected(server: DecisionServer) -> None:
+    # With a 1 min baseline the 5 min warm-up can never complete: the whole recording
+    # would be treated as warm-up and nothing detected (Codex P2).
+    with pytest.raises(ValueError, match="warmup_minutes"):
+        anomaly.Anomaly(**_gate_args(server, baseline_window_minutes=1, warmup_minutes=5))

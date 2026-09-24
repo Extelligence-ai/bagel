@@ -90,6 +90,16 @@ services:
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
+    # The local decision model runs on CUDA only if Docker exposes the GPU; this needs
+    # the NVIDIA container runtime on the host. Hosts without one should use ros2-jazzy
+    # with the hosted `jev` backend instead (see doc/runbooks/anomaly_detection.md).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     environment:
       CONTAINER_MODE: true
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}

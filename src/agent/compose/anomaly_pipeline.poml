@@ -29,8 +29,9 @@
                 <item>
                     CALIBRATE before writing anything: call `preview_anomalies` with the
                     path, `window_seconds` (the lookback you intend, e.g. 10), the `signals`,
-                    the `cadence_topic` the pipeline will use, and `warmup_minutes` that fits
-                    the log (a 20 s scene cannot warm up for
+                    the `cadence_topic` the pipeline will use (and `cadence_seconds` if it
+                    evaluates less often than the window), and `warmup_minutes` that fits
+                    the log (never longer than `baseline_window_minutes`) (a 20 s scene cannot warm up for
                     5 min). Report the flagged windows and their reasons, and act on the
                     `advice`: drop signals it says drift, adjust `z_threshold`,
                     `dropout_seconds` or `warmup_minutes`, and re-run until the flags look

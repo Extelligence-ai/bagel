@@ -107,7 +107,8 @@ preview_anomalies("./shift_042", window_seconds=10,
      "advice": [] }
 ```
 
-Pass `cadence_topic` so windows end exactly where the saved pipeline will fire.
+Pass `cadence_topic` (and `cadence_seconds`, if the pipeline evaluates less often than
+the window length) so windows end exactly where the saved pipeline will fire.
 `advice` names signals that trip the screen in most windows (they drift by design, drop
 them), topics that read as dropouts every window (raise `dropout_seconds`), and a
 warm-up that swallows the log. Iterate until the flags look like real events, then
@@ -125,7 +126,7 @@ write the YAML. The LLM recipe `compose/anomaly_pipeline` walks these steps.
 | `z_threshold` | `3.0` | Flag a window whose mean is this many baseline std devs from normal. A single sample must clear this plus the extreme its sample count explains (about 3σ more at 50 Hz), so noisy signals don't trip every window. |
 | `dropout_seconds` | `2` | Flag an expected topic silent this long at the window's end, measured from its last message even across windows (so a threshold longer than the window waits for it). Expected = publishes in most baseline windows, so event-driven topics don't count. The cadence topic can never drop out: the pipeline only runs when it publishes. |
 | `baseline_window_minutes` | `30` | How much recent history defines "normal". |
-| `warmup_minutes` | `5` | History needed before screening starts; nothing is flagged before then. |
+| `warmup_minutes` | `5` | History needed before screening starts; nothing is flagged before then. Must not exceed `baseline_window_minutes`. |
 | `min_probability` | `0.6` | Confidence Jev needs for its label to count; less confident answers count as normal. |
 | `question` | built in | The instructions Jev receives. |
 | `backend` | `jev` | `jev` (TypeSafe), `remote` (any endpoint answering `{"probabilities": {...}}`) or `local` (model on the robot, see below). |
@@ -193,9 +194,11 @@ docker compose build ros2-jazzy-jev          # prebuilt variant
 docker compose build <service> --build-arg JEV_MODE=true   # any other image
 ```
 
-Other images fail at pipeline build with a message pointing at this flag. The local
-backend runs on CUDA when PyTorch can see a GPU and on CPU otherwise (PyPI wheels on
-Jetson are CPU-only). It scores each choice with a generic causal LM; it does not load
+Other images fail at pipeline build with a message pointing at this flag. The
+`ros2-jazzy-jev` service reserves the host's NVIDIA GPUs, so it needs the NVIDIA
+container runtime; the local backend then runs on CUDA, and on CPU when PyTorch sees
+no GPU (PyPI wheels on Jetson are CPU-only). Hosts without the runtime should use a
+plain image with the hosted `jev` backend. It scores each choice with a generic causal LM; it does not load
 Open-Jev's decision head.
 
 ## Asking your own question: the `decide` gate

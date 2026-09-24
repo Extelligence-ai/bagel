@@ -556,6 +556,11 @@ class Pipeline:
                 annotations: dict[str, Any] = {}
                 for gate, _ in self._gates:
                     if gate_annotations := gate.annotations():
+                        if gate.name in annotations:
+                            raise ValueError(
+                                f"Two annotating gates share the name {gate.name!r}; give "
+                                "each a distinct `name` so their records stay apart"
+                            )
                         annotations[gate.name] = gate_annotations
                 for task, lookback in self._tasks:
                     task.gate_annotations = MappingProxyType(annotations)

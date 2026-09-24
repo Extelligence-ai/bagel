@@ -71,6 +71,44 @@ def _advice(report: dict[str, Any]) -> list[str]:
     return advice
 
 
+def _validate(
+    window_seconds: float,
+    cadence_seconds: float | None,
+    warmup_minutes: float,
+    baseline_window_minutes: float,
+) -> float:
+    """Check the timing arguments; return the cadence interval (defaults to the window)."""
+    if window_seconds <= 0 or window_seconds != int(window_seconds):
+        raise ValueError("window_seconds must be a positive whole number of seconds")
+    if cadence_seconds is None:
+        cadence_seconds = window_seconds
+    if cadence_seconds <= 0:
+        raise ValueError("cadence_seconds must be positive")
+    if warmup_minutes > baseline_window_minutes:
+        raise ValueError(
+            "warmup_minutes must not exceed baseline_window_minutes: the baseline forgets "
+            "history faster than warm-up needs it and would never become ready"
+        )
+    return cadence_seconds
+
+
+def _watched_signals(
+    whole: Any,  # noqa: ANN401
+    signals: list[str] | None,
+    max_signals: int,
+) -> summary.Signals:
+    if signals is not None:  # [] is a choice: dropouts only
+        watched = summary.resolve_signals(whole, signals)
+    else:
+        watched = summary.numeric_signals(whole)
+    if len(watched) > max_signals:
+        raise ValueError(
+            f"{len(watched)} numeric signals exceed max_signals={max_signals}. Set 'topics' "
+            "or 'signals' to the ones worth watching, or raise max_signals."
+        )
+    return watched
+
+
 def calibrate(  # noqa: PLR0913
     path: str,
     window_seconds: float,
@@ -82,13 +120,16 @@ def calibrate(  # noqa: PLR0913
     baseline_window_minutes: float = 30.0,
     warmup_minutes: float = 5.0,
     cadence_topic: str | None = None,
+    cadence_seconds: float | None = None,
     source_args: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the on-robot screen over every window of a recorded log and report the flags.
 
-    With `cadence_topic`, windows end at the same timestamps the saved pipeline would
-    fire on (that topic's messages, at least `window_seconds` apart); without it, on a
-    fixed grid from the start of the log. Flagged windows are kept out of the rolling
+    Windows are `window_seconds` long (the gate's lookback) and end every
+    `cadence_seconds` (the pipeline's cadence; defaults to the window). With
+    `cadence_topic`, they end at the same timestamps the saved pipeline would fire on
+    (that topic's messages, at least `cadence_seconds` apart); without it, on a fixed
+    grid from the start of the log. Flagged windows are kept out of the rolling
     baseline, exactly as the gate does.
 
     Returns:
@@ -98,8 +139,9 @@ def calibrate(  # noqa: PLR0913
         counts, the watched ``signals``, and plain-language ``advice``.
 
     """
-    if window_seconds <= 0 or window_seconds != int(window_seconds):
-        raise ValueError("window_seconds must be a positive whole number of seconds")
+    cadence_seconds = _validate(
+        window_seconds, cadence_seconds, warmup_minutes, baseline_window_minutes
+    )
     reader = _Reader()
     reader.setup(path, **(source_args or {}))
     lookback = base.Lookback(last=int(window_seconds), unit=base.Unit.SECOND)
@@ -107,15 +149,7 @@ def calibrate(  # noqa: PLR0913
     start, end = whole.aggregate("min(timestamp_seconds), max(timestamp_seconds)").fetchall()[0]
     if start is None:
         raise ValueError(f"No messages found in {path!r} for topics {topics}")
-    if signals is not None:  # [] is a choice: dropouts only
-        watched = summary.resolve_signals(whole, signals)
-    else:
-        watched = summary.numeric_signals(whole)
-    if len(watched) > max_signals:
-        raise ValueError(
-            f"{len(watched)} numeric signals exceed max_signals={max_signals}. Set 'topics' "
-            "or 'signals' to the ones worth watching, or raise max_signals."
-        )
+    watched = _watched_signals(whole, signals, max_signals)
 
     rolling = baseline.RollingBaseline(baseline_window_minutes, warmup_minutes)
     flagged: list[dict[str, Any]] = []
@@ -124,7 +158,7 @@ def calibrate(  # noqa: PLR0913
     windows = warmup = 0
     last_seen: dict[str, float] = {}
     asofs: list[float] = []
-    for asof in _asof_timestamps(reader, cadence_topic, float(start), float(end), window_seconds):
+    for asof in _asof_timestamps(reader, cadence_topic, float(start), float(end), cadence_seconds):
         asofs.append(asof)
         windows += 1
         relation = reader.to_duckdb(topics=topics, asof_seconds=asof, lookback=lookback)
@@ -154,6 +188,7 @@ def calibrate(  # noqa: PLR0913
         "span_seconds": float(end) - float(start),
         "window_seconds": window_seconds,
         "cadence_topic": cadence_topic,
+        "cadence_seconds": cadence_seconds,
         "asof_offsets_seconds": [asof - float(start) for asof in asofs],
         "signals": sorted(watched),
         "windows": windows,

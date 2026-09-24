@@ -760,6 +760,7 @@ def preview_anomalies(  # noqa: PLR0913
     baseline_window_minutes: float = 30.0,
     warmup_minutes: float = 5.0,
     cadence_topic: str | None = None,
+    cadence_seconds: float | None = None,
     args: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Report what the anomaly gate's screen would flag on a recorded log. BETA.
@@ -777,6 +778,9 @@ def preview_anomalies(  # noqa: PLR0913
         warmup_minutes (float, optional): History needed before screening starts.
         cadence_topic (str | None, optional): The topic the saved pipeline's cadence will
             follow; windows then end where that pipeline would fire. Default: a fixed grid.
+        cadence_seconds (float | None, optional): The pipeline's cadence interval, when it
+            differs from the window (e.g. a 10 s lookback evaluated every 60 s). Defaults
+            to `window_seconds`.
         args (dict[str, Any] | None, optional): Additional source options.
 
     Returns:
@@ -805,6 +809,7 @@ def preview_anomalies(  # noqa: PLR0913
         baseline_window_minutes=baseline_window_minutes,
         warmup_minutes=warmup_minutes,
         cadence_topic=cadence_topic,
+        cadence_seconds=cadence_seconds,
         source_args=args,
     )
 

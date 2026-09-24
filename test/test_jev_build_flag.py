@@ -79,3 +79,11 @@ def test_jev_image_is_built_and_published_by_ci() -> None:
     for workflow in ("docker-build.yaml", "publish.yaml"):
         text = pathlib.Path(".github/workflows", workflow).read_text(encoding="utf-8")
         assert JEV_SERVICE in text, f"{workflow} does not build {JEV_SERVICE}"
+
+
+def test_jev_service_reserves_a_gpu() -> None:
+    # The image is for GPU robots; without a device reservation Docker never exposes the
+    # GPU and the local model silently runs on CPU (Codex P2).
+    service = _services()[JEV_SERVICE]
+    devices = service["deploy"]["resources"]["reservations"]["devices"]
+    assert any(d.get("driver") == "nvidia" and "gpu" in d.get("capabilities", []) for d in devices)

@@ -7,6 +7,9 @@ import math
 _CONSTANT_STD = 1e-9
 _FLOOR_RELATIVE = 1e-3
 _FLOOR_ABSOLUTE = 1e-6
+# A baseline built from a handful of samples (a sparse cadence, a single message) has
+# no spread worth comparing against; such signals wait until the baseline has grown.
+MIN_BASELINE_SAMPLES = 30
 
 
 def _spread(normal: dict) -> float:
@@ -51,7 +54,7 @@ def screen(  # noqa: PLR0913
     reasons = []
     for label, normal in baseline["signals"].items():
         current = window["signals"].get(label)
-        if not current or not current["count"]:
+        if not current or not current["count"] or normal["count"] < MIN_BASELINE_SAMPLES:
             continue
         mean = normal["mean"]
         spread = _spread(normal)

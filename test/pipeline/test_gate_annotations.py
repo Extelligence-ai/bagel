@@ -137,3 +137,16 @@ def test_tasks_cannot_mutate_annotations(mcap_path: pathlib.Path) -> None:
 
 def test_default_gate_annotations_are_empty() -> None:
     assert PlainGate().annotations() == {}
+
+
+def test_two_annotating_gates_with_the_same_name_are_rejected(mcap_path: pathlib.Path) -> None:
+    # Pipeline.build does not require unique operator names; two annotating gates that
+    # share one would silently overwrite each other's record (Codex P2).
+    with pytest.raises(ValueError, match="labeller"):
+        _run(
+            mcap_path,
+            [
+                {"module": "fake_labeller", "args": {"key": "a"}},
+                {"module": "fake_labeller", "args": {"key": "b"}},
+            ],
+        )

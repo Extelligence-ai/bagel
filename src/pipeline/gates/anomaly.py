@@ -107,6 +107,11 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
             raise ValueError("min_probability must be between 0 and 1")
         if max_signals < 1:
             raise ValueError("max_signals must be at least 1")
+        if warmup_minutes > baseline_window_minutes:
+            raise ValueError(
+                "warmup_minutes must not exceed baseline_window_minutes: the baseline forgets "
+                "history faster than warm-up needs it and would never become ready"
+            )
         self._choices = {
             **anomalies,
             OTHER: "an anomaly that is none of the named types",

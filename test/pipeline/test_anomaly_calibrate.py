@@ -64,7 +64,7 @@ def test_no_advice_when_the_screen_is_quiet(log_path: pathlib.Path) -> None:
 
 
 def test_warns_when_warmup_swallows_the_log(log_path: pathlib.Path) -> None:
-    report = _run(log_path, warmup_minutes=9)
+    report = _run(log_path, baseline_window_minutes=9, warmup_minutes=9)
     assert report["flagged"] == []
     assert any("warm-up" in a for a in report["advice"])
 
@@ -130,3 +130,22 @@ def test_mcp_tool_accepts_a_cadence_topic(log_path: pathlib.Path) -> None:
         warmup_minutes=1,
     )
     assert result["cadence_topic"] == "/motor/current"
+
+
+def test_cadence_interval_is_separate_from_the_window(log_path: pathlib.Path) -> None:
+    # A 10 s lookback on a 60 s cadence evaluates every 60 s, not every 10 s (Codex P2).
+    report = _run(log_path, cadence_seconds=60, cadence_topic="/motor/current")
+    assert report["asof_offsets_seconds"] == pytest.approx(
+        [0, 60, 120, 180, 240, 300, 360, 420, 480, 540, 600]
+    )
+    assert report["cadence_seconds"] == 60
+    assert report["flagged"] == []  # neither 10 s window ending at a 60 s tick holds a fault
+
+
+def test_cadence_interval_defaults_to_the_window(log_path: pathlib.Path) -> None:
+    assert _run(log_path)["cadence_seconds"] == 10
+
+
+def test_warmup_longer_than_the_baseline_is_rejected(log_path: pathlib.Path) -> None:
+    with pytest.raises(ValueError, match="warmup_minutes"):
+        _run(log_path, baseline_window_minutes=1, warmup_minutes=5)
