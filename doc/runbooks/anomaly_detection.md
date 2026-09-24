@@ -10,11 +10,13 @@ against it, and asks [Jev](https://docs.typesafe.ai/models) (TypeSafe's typed-de
 model) to name anything unusual. Downstream tasks cut the slice, write a JSON label next
 to it, and upload both to any bucket Bagel supports.
 
-> **Beta.** The Jev backend follows TypeSafe's documented `/v1/systemone` request and
-> response format and is tested against a stand-in server; it has not yet been run
-> against the live TypeSafe API. **It graduates** when a pipeline has run against live
-> Jev on a real robot log with the label format confirmed, and the reference-log
-> baseline has shipped so warm-up no longer hides the start of every run.
+> **Beta.** Recorded logs only: the Jev call is synchronous and would stall a live
+> ingest thread, so the gate refuses live sources. The Jev backend follows TypeSafe's
+> documented `/v1/systemone` request and response format and is tested against a
+> stand-in server; it has not yet been run against the live TypeSafe API. **It
+> graduates** when a pipeline has run against live Jev on a real robot log with the
+> label format confirmed, the reference-log baseline has shipped so warm-up no longer
+> hides the start of every run, and the backend call has moved off the ingest thread.
 
 ## How it works
 
@@ -24,8 +26,9 @@ every window (e.g. 10 s)
   ├─ summarize ──── per-signal count/min/max/mean/std, per-topic last message
   │
   ├─ screen ─────── vs. the rolling baseline learned on this robot:
-  │                  a value > z_threshold std devs from normal, or a topic silent
-  │                  for > dropout_seconds
+  │                  the window mean > z_threshold std devs from normal (mean_shift),
+  │                  one sample far beyond what its sample count explains (z_score),
+  │                  or an expected topic silent for > dropout_seconds (dropout)
   │
   ├─ ask Jev ────── only for screened windows (or every window with mode: always):
   │                  "which of these anomalies is it?"
@@ -39,7 +42,8 @@ every window (e.g. 10 s)
 ```
 
 Windows that pass are kept out of the baseline, so an ongoing fault never becomes the
-new normal.
+new normal. Non-finite samples (PX4 and ROS topics carry NaN/Inf by design) are left out
+of every statistic.
 
 ## Set it up
 
@@ -52,7 +56,7 @@ new normal.
 name: anomaly_upload
 site: warehouse
 asset: forklift
-path: ./data/logs/shift_042          # a log, or a live source
+path: ./data/logs/shift_042          # a recorded log (live sources: after beta)
 allow_failure: false
 cadence:
   topic: /motor/current
@@ -61,8 +65,8 @@ gates:
   - module: src.pipeline.gates.anomaly
     lookback: {last: 10, unit: second}
     args:
-      topics: [/motor/current, /heartbeat]
-      anomalies:                       # plain language: this is what Jev reads
+      topics: [/motor/current, /heartbeat]   # dropout needs a topic other than the
+      anomalies:                       # cadence topic; plain language is what Jev reads
         overcurrent: "motor current far above normal"
         sensor_dropout: "a topic stops publishing"
         stall: "velocity commanded but the wheels are not moving"
@@ -92,9 +96,10 @@ upload task you choose.
 | `anomalies` | *(required)* | Named anomaly types and a plain-language description of each. `normal`, `other_unusual` and `screen_only` are reserved. |
 | `topics` | all | Topics to watch. |
 | `signals` | all numeric fields except `header`/`stamp` | Exact dotted signals, e.g. `/imu.linear_acceleration.x`. ROS header timestamps are skipped by default because they grow every message. |
+| `max_signals` | `64` | Refuse to watch more signals than this. Each adds to the summary query and to the request Jev reads (64k-token context); a PX4 log exposes ~2,000, so pick `topics` or `signals`. |
 | `mode` | `screen` | `screen`: ask Jev only about windows the on-robot check flags. `always`: ask about every window (more calls, catches what the screen misses). |
-| `z_threshold` | `3.0` | Flag a signal whose most extreme value is this many baseline std devs from its mean. |
-| `dropout_seconds` | `2` | Flag a topic that has been silent this long. |
+| `z_threshold` | `3.0` | Flag a window whose mean is this many baseline std devs from normal. A single sample must clear this plus the extreme its sample count explains (about 3σ more at 50 Hz), so noisy signals don't trip every window. |
+| `dropout_seconds` | `2` | Flag an expected topic silent this long at the window's end. Expected = publishes in most baseline windows, so event-driven topics don't count. The cadence topic can never drop out: the pipeline only runs when it publishes. |
 | `baseline_window_minutes` | `30` | How much recent history defines "normal". |
 | `warmup_minutes` | `5` | History needed before screening starts; nothing is flagged before then. |
 | `min_probability` | `0.6` | Confidence Jev needs for its label to count; less confident answers count as normal. |
@@ -119,7 +124,10 @@ record (rounded) from a test run with a planted current spike:
   "verified": true,
   "model": "jev-1.13.0",
   "mode": "screen",
-  "screen_reasons": [{"kind": "z_score", "signal": "/motor/current.value", "value": 9.0, "z": 226.3}],
+  "screen_reasons": [
+    {"kind": "mean_shift", "signal": "/motor/current.value", "value": 2.6, "z": 45.3},
+    {"kind": "z_score", "signal": "/motor/current.value", "value": 9.0, "z": 226.3}
+  ],
   "window": {"start_seconds": 1700000400.0, "end_seconds": 1700000410.0, "messages": 152},
   "baseline": {
     "span_seconds": 310.0,
@@ -133,12 +141,13 @@ record (rounded) from a test run with a planted current spike:
 }
 ```
 
-`screen_reasons` says what tripped the on-robot check (`z_score` or `dropout`);
-`baseline` is what "normal" meant at that moment.
+`screen_reasons` says what tripped the on-robot check (`mean_shift`, `z_score` or
+`dropout`); `baseline` is what "normal" meant at that moment.
 
 ## When Jev can't be reached
 
-Timeouts, rate limits, HTTP errors and malformed replies never crash the pipeline.
+Timeouts, rate limits, dropped connections, HTTP errors and malformed replies never
+crash the pipeline.
 A window the screen flagged is still kept and uploaded, labelled `screen_only` with
 `verified: false` and no model, so nothing is lost while the robot is offline or
 TypeSafe is busy. Windows the screen didn't flag are dropped as usual.
@@ -158,8 +167,9 @@ docker compose build <service> --build-arg JEV_MODE=true   # any other image
 ```
 
 Other images fail at pipeline build with a message pointing at this flag. The local
-backend scores each choice with a generic causal LM; it does not load Open-Jev's
-decision head.
+backend runs on CUDA when PyTorch can see a GPU and on CPU otherwise (PyPI wheels on
+Jetson are CPU-only). It scores each choice with a generic causal LM; it does not load
+Open-Jev's decision head.
 
 ## Asking your own question: the `decide` gate
 
@@ -170,7 +180,9 @@ also hands its decision to `write_annotations`.
 
 ## Limits
 
-- **Beta:** not yet validated against the live TypeSafe API.
+- **Beta:** not yet validated against the live TypeSafe API, and recorded logs only.
+- **Dropouts are judged at the window's end.** A topic that went quiet for 5 s in the
+  middle of a 10 s window and came back is not a dropout.
 - **The baseline is per run.** It is learned from the data the pipeline sees and
   resets when the pipeline restarts; the first `warmup_minutes` are never flagged.
   Known-good reference logs and fleet baselines pushed from Matcha are planned.

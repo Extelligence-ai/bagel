@@ -1,5 +1,7 @@
 """Tests for the rolling baseline and the on-robot screen (`src.pipeline.decide`)."""
 
+import random
+
 import pytest
 
 from src.pipeline.decide import baseline, screen
@@ -111,7 +113,7 @@ def test_constant_baseline_still_flags_a_change() -> None:
         z_threshold=3.0,
         dropout_seconds=2.0,
     )
-    assert [r["kind"] for r in reasons] == ["z_score"]
+    assert {r["kind"] for r in reasons} == {"mean_shift", "z_score"}
 
 
 def test_topic_that_stops_publishing_is_a_dropout() -> None:
@@ -146,3 +148,90 @@ def test_signals_unknown_to_the_baseline_are_ignored() -> None:
         dropout_seconds=2.0,
     )
     assert reasons == []
+
+
+# --- false-positive rate and sensitivity (from pre-release review) ------------------------
+
+
+def _gauss_window(end: float, hz: int, rng: random.Random, shift: float = 0.0) -> dict:
+    return _window(end, [rng.gauss(shift, 1.0) for _ in range(10 * hz)], topic_last=end)
+
+
+def _screened(hz: int, spike_at: int | None = None, shift_at: int | None = None) -> list[int]:
+    """Indices of flagged windows over 300 windows of N(0,1) noise at `hz` samples/s."""
+    rng = random.Random(0)  # noqa: S311 -- deterministic test data, not crypto
+    rolling = baseline.RollingBaseline(window_minutes=30, warmup_minutes=1)
+    flagged = []
+    for index in range(300):
+        end = (index + 1) * 10.0
+        window = _gauss_window(end, hz, rng, shift=4.0 if index == shift_at else 0.0)
+        if index == spike_at:
+            window["signals"]["/m.v"]["max"] = 12.0
+        if rolling.ready(end) and screen.screen(window, rolling.stats(end), end, 3.0, 2.0):
+            flagged.append(index)
+            continue
+        rolling.add(window)
+    return flagged
+
+
+@pytest.mark.parametrize("hz", [10, 50, 200])
+def test_pure_noise_is_rarely_flagged(hz: int) -> None:
+    # The old screen compared the window's most extreme sample against the per-sample
+    # std: the max of N normals exceeds 3 std with probability 1 - 0.9973**N, so at
+    # 50 Hz most normal windows were flagged and the baseline starved.
+    assert len(_screened(hz)) <= 6  # <= 2% of ~294 screened windows
+
+
+def test_a_sustained_shift_is_flagged_as_a_mean_shift() -> None:
+    assert 150 in _screened(hz=50, shift_at=150)
+
+
+def test_a_single_extreme_sample_is_still_flagged() -> None:
+    assert 150 in _screened(hz=50, spike_at=150)
+
+
+def test_extreme_threshold_grows_with_the_sample_count() -> None:
+    # 12 sigma stands out at any rate; 3.5 sigma is an ordinary max among 2000 samples.
+    tiny = _window(100, [0.0] * 1999 + [3.5], topic_last=100)
+    assert screen.screen(tiny, _baseline(), 100, 3.0, 2.0) == []
+
+
+def test_mean_shift_reason_names_the_signal() -> None:
+    reasons = screen.screen(
+        _window(100, [4.0, 4.2, 3.8], topic_last=100), _baseline(), 100, 3.0, 2.0
+    )
+    assert [(r["kind"], r["signal"]) for r in reasons] == [("mean_shift", "/m.v")]
+
+
+def test_the_spread_floor_only_applies_to_a_constant_baseline() -> None:
+    # Barometric pressure: mean 101325, std 5. A 30 Pa mean shift is 6 sigma and must
+    # be flagged; the old floor of 1e-3 * |mean| = 101 Pa hid it.
+    reasons = screen.screen(
+        _window(100, [101355.0, 101355.0], topic_last=100),
+        _baseline(mean=101325.0, std=5.0),
+        100,
+        3.0,
+        2.0,
+    )
+    assert "mean_shift" in {r["kind"] for r in reasons}
+
+
+def test_only_topics_seen_in_most_baseline_windows_can_drop_out() -> None:
+    # An event-driven topic (/cmd only while driving) must not read as a dropout in
+    # every quiet window.
+    rolling = baseline.RollingBaseline(window_minutes=10, warmup_minutes=0)
+    for end in (10, 20, 30, 40):
+        window = _window(end, [1.0], topic_last=end)
+        window["topics"]["/cmd"] = {"messages": 1 if end == 10 else 0, "last_seconds": None}
+        rolling.add(window)
+    assert rolling.stats(40)["topics"] == ["/m"]
+
+
+def test_time_running_backwards_resets_the_baseline() -> None:
+    # `ros2 bag play --loop`, a sim reset, or MQTT data with a rewound timestamp field.
+    rolling = baseline.RollingBaseline(window_minutes=30, warmup_minutes=0)
+    rolling.add(_window(1000, [1.0]))
+    rolling.add(_window(1010, [1.0]))
+    rolling.add(_window(20, [5.0]))
+    assert rolling.stats(20)["signals"]["/m.v"]["mean"] == 5.0
+    assert rolling.stats(20)["span_seconds"] == pytest.approx(10.0)

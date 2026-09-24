@@ -213,3 +213,30 @@ def test_remote_gate_decides_over_a_real_source(
     assert passed is gate.last_decision.passed
     assert gate.annotations()["choice"] == gate.last_decision.choice
     assert "state" not in gate.annotations()
+
+
+def test_backend_outage_makes_the_gate_abstain(caplog: pytest.LogCaptureFixture) -> None:
+    # A Jev/remote outage must not crash a pipeline; the gate stays closed.
+    gate = decide.Decide(
+        question="q?", choices=CHOICES, accept=["upload"], url="http://127.0.0.1:9/decide"
+    )
+    gate.setup(path="./data/sample/pyarrow/csv")
+    gate._name = "decide"
+    assert gate.evaluate(asof_seconds=1e12, lookback=None) is False
+    assert gate.annotations() == {}
+    assert "unavailable" in caplog.text.lower()
+
+
+def test_watching_more_signals_than_max_signals_fails_with_guidance() -> None:
+    # The CSV sample has three numeric fields; PX4 logs have ~2000.
+    gate = decide.Decide(
+        question="q?",
+        choices=CHOICES,
+        accept=["upload"],
+        url="http://127.0.0.1:9/decide",
+        max_signals=2,
+    )
+    gate.setup(path="./data/sample/pyarrow/csv")
+    gate._name = "decide"
+    with pytest.raises(ValueError, match="max_signals"):
+        gate.evaluate(asof_seconds=1e12, lookback=None)

@@ -169,9 +169,11 @@ def test_annotation_record_explains_the_decision(
     assert record["mode"] == "screen"
     assert record["model"] == "jev-1.13.0"
     assert record["probabilities"]["overcurrent"] == pytest.approx(0.9)
-    (reason,) = record["screen_reasons"]
-    assert reason["signal"] == "/motor/current.value"
-    assert reason["value"] == 9.0
+    kinds = {reason["kind"] for reason in record["screen_reasons"]}
+    assert kinds == {"mean_shift", "z_score"}  # a 2 s spike shifts the mean and the max
+    (extreme,) = [r for r in record["screen_reasons"] if r["kind"] == "z_score"]
+    assert extreme["signal"] == "/motor/current.value"
+    assert extreme["value"] == 9.0
     assert record["baseline"]["signals"]["/motor/current.value"]["mean"] == pytest.approx(
         1.0, abs=0.05
     )
@@ -254,7 +256,7 @@ def test_flagged_windows_do_not_enter_the_baseline(
     for offset in range(0, 421, 10):
         gate.evaluate(EPOCH + offset, lookback)
     mean = gate.baseline.stats(EPOCH + 420)["signals"]["/motor/current.value"]["mean"]
-    assert mean == pytest.approx(1.0, abs=0.05)
+    assert mean == pytest.approx(1.0, abs=0.01)  # a leaked spike window would give ~1.05
 
 
 def test_nothing_is_screened_during_warmup(log_path: pathlib.Path, server: DecisionServer) -> None:
@@ -332,3 +334,47 @@ def test_sample_pipeline_builds() -> None:
     config = yaml.safe_load(pathlib.Path("pipelines/anomaly_upload.yaml").read_text())
     pipeline = base.Pipeline.build(config)
     assert pipeline.name == "anomaly_upload"
+
+
+# --- limits (from pre-release review) ----------------------------------------------------
+
+
+def test_watching_more_signals_than_max_signals_fails_with_guidance(
+    log_path: pathlib.Path, server: DecisionServer
+) -> None:
+    # PX4 exposes ~2000 numeric fields; sending them all to Jev blows its 64k context.
+    gate = anomaly.Anomaly(**_gate_args(server, max_signals=1))
+    gate.setup(path=str(log_path))
+    gate._name = "anomaly"
+    with pytest.raises(ValueError, match="max_signals"):
+        gate.evaluate(EPOCH + 10, base.Lookback(last=10, unit=base.Unit.SECOND))
+
+
+def test_lookback_must_be_time_based(log_path: pathlib.Path, server: DecisionServer) -> None:
+    gate = anomaly.Anomaly(**_gate_args(server))
+    gate.setup(path=str(log_path))
+    gate._name = "anomaly"
+    with pytest.raises(ValueError, match="lookback"):
+        gate.evaluate(EPOCH + 10, None)
+    with pytest.raises(ValueError, match="lookback"):
+        gate.evaluate(EPOCH + 10, base.Lookback(last=100, unit=base.Unit.FRAME))
+
+
+def test_state_sent_to_jev_is_small(log_path: pathlib.Path, server: DecisionServer) -> None:
+    server.reply = _label_from_screen
+    _pipeline(log_path, _gate_args(server), SNIP_AND_WRITE).run_all()
+    assert all(len(json.dumps(r["body"]["state"])) < 8_000 for r in server.requests)
+
+
+def test_live_sources_are_rejected_in_beta(
+    server: DecisionServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The Jev call is synchronous; on a live ingest thread it would stall every topic.
+    from src.pipeline import messages
+
+    live = MagicMock()
+    live.factory = object()  # anything but a BoundedSourceFactory
+    monkeypatch.setattr(messages.SourceContext, "build", staticmethod(lambda path, kwargs: live))
+    gate = anomaly.Anomaly(**_gate_args(server))
+    with pytest.raises(ValueError, match="batch-only"):
+        gate.setup(path="live://imu")

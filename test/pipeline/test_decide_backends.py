@@ -1,5 +1,8 @@
 """Tests for typed-decision backends (`src.pipeline.decide.backends`)."""
 
+import importlib.util
+from collections.abc import Iterator
+
 import pytest
 
 from src.pipeline.decide import backends
@@ -132,6 +135,8 @@ def test_remote_http_error_is_unavailable(server: DecisionServer) -> None:
 
 def test_local_backend_without_the_jev_group_explains_the_build_flag() -> None:
     # Host CI does not install the `jev` group: this is the CPU-only-image experience.
+    if importlib.util.find_spec("torch") is not None:
+        pytest.skip("torch is installed here; the CPU-only-image error path cannot be exercised")
     with pytest.raises(ImportError, match="JEV_MODE=true"):
         backends.LocalBackend("x/y")
 
@@ -155,3 +160,73 @@ def test_build_rejects_unknown_backends() -> None:
 def test_build_remote_requires_a_url() -> None:
     with pytest.raises(ValueError, match="url"):
         backends.build("remote")
+
+
+# --- robustness (from pre-release review) ------------------------------------------------
+
+
+@pytest.fixture
+def hangup_url() -> Iterator[str]:
+    """A server that starts a reply and drops the connection mid-body."""
+    import socket
+    import threading
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(4)
+    stop = threading.Event()
+
+    def serve() -> None:
+        listener.settimeout(0.1)
+        while not stop.is_set():
+            try:
+                conn, _ = listener.accept()
+            except TimeoutError:
+                continue
+            # Headers arrive, then the body is cut short: urllib raises
+            # http.client.IncompleteRead from read(), not a URLError.
+            conn.recv(4096)
+            conn.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 500\r\n\r\n{"answers": {')
+            conn.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{listener.getsockname()[1]}/v1/systemone"
+    stop.set()
+    thread.join()
+    listener.close()
+
+
+def test_a_dropped_connection_is_unavailable(
+    hangup_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # RemoteDisconnected / ConnectionResetError are not URLError subclasses; they used to
+    # escape the fallback and crash the pipeline instead of yielding screen_only.
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k")
+    backend = backends.JevBackend(url=hangup_url, timeout_seconds=1)
+    with pytest.raises(backends.BackendUnavailable):
+        backend.decide(STATE, "q?", CHOICES)
+
+
+def test_remote_backend_requires_its_api_key_env_up_front(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MY_KEY", raising=False)
+    with pytest.raises(ValueError, match="MY_KEY"):
+        backends.RemoteBackend("http://127.0.0.1:9/", timeout_seconds=1, api_key_env="MY_KEY")
+
+
+@pytest.mark.parametrize("bad", [-1.0, float("nan"), float("inf")])
+def test_non_probability_scores_are_unavailable(
+    jev: backends.JevBackend, server: DecisionServer, bad: float
+) -> None:
+    server.reply = _jev_reply({"stall": bad, "other_unusual": 0.1, "normal": 0.1})
+    with pytest.raises(backends.BackendUnavailable):
+        jev.decide(STATE, "q?", CHOICES)
+
+
+def test_jev_url_override_must_be_https_unless_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The bearer key would otherwise travel in clear text.
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k")
+    with pytest.raises(ValueError, match="https"):
+        backends.JevBackend(url="http://proxy.example.com/v1/systemone")
+    backends.JevBackend(url="http://127.0.0.1:9/v1/systemone")  # loopback is fine
+    backends.JevBackend(url="http://localhost:9/v1/systemone")

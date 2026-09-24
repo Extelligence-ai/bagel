@@ -1,6 +1,7 @@
 """What "normal" looks like for a robot, as per-signal mean/std over recent windows."""
 
 import collections
+import logging
 import math
 from typing import Protocol
 
@@ -21,7 +22,10 @@ class Baseline(Protocol):
         ...
 
     def stats(self, asof_seconds: float) -> dict:
-        """Return ``{"span_seconds", "signals": {label: {count, mean, std}}, "topics"}``."""
+        """Return ``{"span_seconds", "signals": {label: {count, mean, std}}, "topics"}``.
+
+        `topics` lists the topics expected to publish in every window.
+        """
         ...
 
 
@@ -54,6 +58,11 @@ class RollingBaseline:
             mean, std = signal["mean"], signal["std"] or 0.0
             moments[label] = (count, mean * count, (std**2 + mean**2) * count)
         topics = {topic for topic, stats in window["topics"].items() if stats["messages"]}
+        if self._windows and bounds["start_seconds"] < self._windows[-1][1]:
+            # Data time went backwards (a looped bag, a sim reset, a rewound timestamp
+            # field): the old windows would never prune, so start over.
+            logging.warning("Baseline reset: window starts before the previous one ended")
+            self._windows.clear()
         self._windows.append((bounds["start_seconds"], bounds["end_seconds"], moments, topics))
 
     def _prune(self, asof_seconds: float) -> None:
@@ -72,9 +81,9 @@ class RollingBaseline:
         """Implement `Baseline.stats`."""
         self._prune(asof_seconds)
         totals: dict[str, list[float]] = {}
-        topics: set[str] = set()
+        seen: collections.Counter[str] = collections.Counter()
         for _, _, moments, window_topics in self._windows:
-            topics |= window_topics
+            seen.update(window_topics)
             for label, (count, total, total_sq) in moments.items():
                 running = totals.setdefault(label, [0.0, 0.0, 0.0])
                 running[0] += count
@@ -88,8 +97,11 @@ class RollingBaseline:
                 "mean": mean,
                 "std": math.sqrt(max(total_sq / samples - mean**2, 0.0)),
             }
+        # Only topics that publish in most windows are expected to keep publishing;
+        # event-driven ones (/cmd_vel while driving) would otherwise read as dropouts.
+        expected = [topic for topic, count in seen.items() if 2 * count > len(self._windows)]
         return {
             "span_seconds": self._covered_seconds(asof_seconds),
             "signals": signals,
-            "topics": sorted(topics),
+            "topics": sorted(expected),
         }

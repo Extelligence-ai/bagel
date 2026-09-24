@@ -2,10 +2,13 @@
 # only the anomalous 10-second slices -- each with a JSON label -- to a bucket.
 #
 # Every 10 s the `anomaly` gate compares the last 10 s against a rolling baseline
-# learned on the robot. When a signal jumps outside its normal spread or a topic
-# goes quiet, it asks Jev which of the named anomalies this is (or `other_unusual`
-# / `normal`). Set `mode: always` to ask Jev about every window instead.
-# If Jev is unreachable, flagged slices are still uploaded, labelled `screen_only`.
+# learned on the robot. When a signal shifts outside its normal spread, it asks Jev
+# which of the named anomalies this is (or `other_unusual` / `normal`). Set
+# `mode: always` to ask Jev about every window instead. If Jev is unreachable,
+# flagged slices are still uploaded, labelled `screen_only`.
+#
+# Beta: recorded logs only. A `sensor_dropout`-style anomaly needs a watched topic
+# other than the cadence topic (the pipeline only runs when that one publishes).
 #
 # Needs TYPESAFE_API_KEY in the environment (or `backend: remote` + `url`).
 # Uploads work with any supported store: swap upload.s3 for upload.gcs / upload.azure,
@@ -13,7 +16,7 @@
 name: anomaly_upload
 site: warehouse
 asset: forklift
-path: ./data/sample/ros2/mcap # <-- point this at your log or live source
+path: ./data/sample/ros2/mcap # <-- point this at your recorded log
 allow_failure: false
 cadence:
   topic: /fluid_pressure
@@ -29,7 +32,6 @@ gates:
       topics: [/fluid_pressure]
       anomalies:
         pressure_spike: "fluid pressure far above or below normal"
-        sensor_dropout: "the pressure sensor stops publishing"
       mode: screen # or: always
       z_threshold: 3.0
       dropout_seconds: 2

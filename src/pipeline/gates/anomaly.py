@@ -1,18 +1,19 @@
 """Detect anomalies on the robot and ask Jev to label them. BETA.
 
 Each window is summarized and compared against a rolling baseline learned on the
-robot. In ``screen`` mode (default) a cheap check -- a signal far outside its baseline
-spread, or a topic that stops publishing -- decides whether to ask Jev; in ``always``
-mode Jev is asked about every window. Jev picks one of the named anomaly types,
-``other_unusual`` or ``normal``. The gate passes for anything but a confident
-``normal``, so downstream tasks (snippet, write_annotations, upload) keep only
-anomalous log segments, each with a JSON label from `annotations()`.
+robot. In ``screen`` mode (default) a cheap check -- a window mean or single sample far
+outside the baseline spread, or an expected topic that stops publishing -- decides
+whether to ask Jev; in ``always`` mode Jev is asked about every window. Jev picks one of
+the named anomaly types, ``other_unusual`` or ``normal``. The gate passes for anything
+but a confident ``normal``, so downstream tasks (snippet, write_annotations, upload)
+keep only anomalous log segments, each with a JSON label from `annotations()`.
 
 If Jev cannot be reached, windows the screen flagged still pass, labelled
 ``screen_only`` (``verified: false``), so no anomaly is lost while offline.
 
-BETA: the Jev backend follows TypeSafe's documented /v1/systemone format and has not
-yet been validated against the live API.
+BETA limits: batch (recorded) sources only -- the Jev call is synchronous and would
+block a live ingest thread; and the Jev backend follows TypeSafe's documented
+/v1/systemone format without having been validated against the live API.
 """
 
 import logging
@@ -21,6 +22,7 @@ from typing import Any
 from src.di import module
 from src.pipeline import base, messages
 from src.pipeline.decide import backends, baseline, screen, summary
+from src.source.base import BoundedSourceFactory
 
 NORMAL = "normal"
 OTHER = "other_unusual"
@@ -40,6 +42,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         anomalies: dict[str, str],
         topics: list[str] | None = None,
         signals: list[str] | None = None,
+        max_signals: int = 64,
         mode: str = "screen",
         z_threshold: float = 3.0,
         dropout_seconds: float = 2.0,
@@ -60,13 +63,19 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
                 description of each, e.g. {"stall": "velocity commanded but no motion"}.
             topics (list[str] | None, optional): Topics to watch. If None, all topics.
             signals (list[str] | None, optional): Dotted numeric signals to watch, e.g.
-                "/imu.linear_acceleration.x". If None, every numeric field except
-                `header`/`stamp` fields.
+                "/imu.linear_acceleration.x". If None, every numeric field of the watched
+                topics except `header`/`stamp` fields.
+            max_signals (int, optional): Refuse to watch more signals than this. Every
+                signal adds to the summary query and to the request sent to Jev (64k
+                token context); PX4 logs expose ~2000. Defaults to 64.
             mode (str, optional): "screen" asks Jev only about windows the on-robot
                 check flags; "always" asks about every window. Defaults to "screen".
-            z_threshold (float, optional): Flag a signal whose most extreme value is
-                more than this many baseline standard deviations from its mean.
+            z_threshold (float, optional): Flag a window whose mean sits this many
+                baseline standard deviations from the baseline mean; single samples
+                must clear this plus the expected extreme for the sample count.
             dropout_seconds (float, optional): Flag a topic silent for longer than this.
+                Only topics that publish in most baseline windows count, and never the
+                cadence topic (the pipeline only runs when it publishes).
             baseline_window_minutes (float, optional): Span of the rolling baseline.
             warmup_minutes (float, optional): History needed before screening starts.
             min_probability (float, optional): Confidence Jev needs for its label to
@@ -84,8 +93,8 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
 
         """
         logging.warning(
-            "The anomaly gate is BETA: its Jev backend has not been validated against "
-            "the live TypeSafe API."
+            "The anomaly gate is BETA: batch sources only, and its Jev backend has not "
+            "been validated against the live TypeSafe API."
         )
         if not anomalies:
             raise ValueError("The anomaly gate needs at least one named type in 'anomalies'")
@@ -95,6 +104,8 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
             raise ValueError(f"Unknown mode {mode!r}; use one of {MODES}")
         if not (0.0 <= min_probability <= 1.0):
             raise ValueError("min_probability must be between 0 and 1")
+        if max_signals < 1:
+            raise ValueError("max_signals must be at least 1")
         self._choices = {
             **anomalies,
             OTHER: "an anomaly that is none of the named types",
@@ -102,6 +113,8 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         }
         self._topics = topics
         self._signals = signals
+        self._max_signals = max_signals
+        self._resolved: summary.Signals | None = None
         self._mode = mode
         self._z_threshold = z_threshold
         self._dropout_seconds = dropout_seconds
@@ -115,10 +128,40 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         )
         self._annotations: dict[str, Any] = {}
 
+    def setup(self, path: str, **kwargs) -> None:  # noqa: ANN003
+        """Implement `base.Operator.setup`; recorded sources only while in beta."""
+        super().setup(path, **kwargs)
+        if not isinstance(self.factory, BoundedSourceFactory):
+            raise ValueError(
+                "The anomaly gate is batch-only in this beta: it calls the decision backend "
+                "synchronously, which would block a live ingest thread. Run it on recorded logs."
+            )
+
+    def _watched(self, relation: Any) -> summary.Signals:  # noqa: ANN401
+        """Resolve the watched signals once; the schema does not change between windows."""
+        if self._resolved is None:
+            if self._signals:
+                resolved = summary.resolve_signals(relation, self._signals)
+            else:
+                resolved = summary.numeric_signals(relation)
+            if len(resolved) > self._max_signals:
+                raise ValueError(
+                    f"{len(resolved)} numeric signals exceed max_signals={self._max_signals}. "
+                    "Set 'topics' or 'signals' to the ones worth watching, or raise "
+                    "max_signals (every signal adds to the request sent to Jev)."
+                )
+            self._resolved = resolved
+        return self._resolved
+
     def evaluate(self, asof_seconds: float, lookback: base.Lookback | None) -> bool:
         """Implement `base.Gate.evaluate`."""
+        if lookback is None or lookback.unit == base.Unit.FRAME:
+            raise ValueError(
+                "The anomaly gate needs a time-based lookback, e.g. {last: 10, unit: second}: "
+                "its baseline is built from windows of data time."
+            )
         relation = self.to_duckdb(topics=self._topics, asof_seconds=asof_seconds, lookback=lookback)
-        window = summary.summarize(relation, self._signals)
+        window = summary.summarize(relation, self._watched(relation))
         normal = self.baseline.stats(asof_seconds) if self.baseline.ready(asof_seconds) else None
         reasons = (
             screen.screen(window, normal, asof_seconds, self._z_threshold, self._dropout_seconds)

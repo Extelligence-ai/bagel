@@ -49,9 +49,10 @@ def decide_window(  # noqa: PLR0913
     choices: list[str],
     accept: list[str],
     min_probability: float,
+    signals: summary.Signals | None = None,
 ) -> Decision:
     """Summarize a window, ask the backend, and apply the acceptance rule."""
-    state = summary.summarize(relation)
+    state = summary.summarize(relation, signals)
     answer = backend.decide(state, question, {choice: choice for choice in choices})
     scores = answer.probabilities
     if missing := [choice for choice in choices if choice not in scores]:
@@ -83,6 +84,8 @@ class Decide(messages.TopicMessageMixin, base.Gate):
         choices: list[str],
         accept: list[str],
         topics: list[str] | None = None,
+        signals: list[str] | None = None,
+        max_signals: int = 64,
         min_probability: float = 0.5,
         backend: str = "remote",
         url: str | None = None,
@@ -97,6 +100,10 @@ class Decide(messages.TopicMessageMixin, base.Gate):
             choices (list[str]): The possible answers, e.g. ["upload", "keep_local", "discard"].
             accept (list[str]): The choices that open the gate.
             topics (list[str] | None, optional): The topics to summarize. If None, all topics.
+            signals (list[str] | None, optional): Dotted numeric signals to summarize. If
+                None, every numeric field of the topics except `header`/`stamp` fields.
+            max_signals (int, optional): Refuse to summarize more signals than this; each
+                one adds to the query and to the request. Defaults to 64.
             min_probability (float, optional): Below this probability for the top choice the
                 gate abstains and stays closed. Defaults to 0.5.
             backend (str, optional): "remote" (HTTP endpoint), "jev" (TypeSafe) or "local"
@@ -122,6 +129,9 @@ class Decide(messages.TopicMessageMixin, base.Gate):
         self._choices = choices
         self._accept = accept
         self._topics = topics
+        self._signals = signals
+        self._max_signals = max_signals
+        self._resolved: summary.Signals | None = None
         self._min_probability = min_probability
         self._backend = backends.build(
             backend, model=model, url=url, api_key_env=api_key_env, timeout_seconds=timeout_seconds
@@ -131,14 +141,35 @@ class Decide(messages.TopicMessageMixin, base.Gate):
     def evaluate(self, asof_seconds: float, lookback: base.Lookback | None) -> bool:
         """Implement `base.Gate.evaluate`."""
         relation = self.to_duckdb(topics=self._topics, asof_seconds=asof_seconds, lookback=lookback)
-        self.last_decision = decide_window(
-            relation,
-            backend=self._backend,
-            question=self._question,
-            choices=self._choices,
-            accept=self._accept,
-            min_probability=self._min_probability,
-        )
+        if self._resolved is None:
+            if self._signals:
+                resolved = summary.resolve_signals(relation, self._signals)
+            else:
+                resolved = summary.numeric_signals(relation)
+            if len(resolved) > self._max_signals:
+                raise ValueError(
+                    f"{len(resolved)} numeric signals exceed max_signals={self._max_signals}. "
+                    "Set 'topics' or 'signals' to the ones worth asking about, or raise "
+                    "max_signals (every signal adds to the request)."
+                )
+            self._resolved = resolved
+        try:
+            self.last_decision = decide_window(
+                relation,
+                backend=self._backend,
+                question=self._question,
+                choices=self._choices,
+                accept=self._accept,
+                min_probability=self._min_probability,
+                signals=self._resolved,
+            )
+        except backends.BackendUnavailable as error:
+            # An outage closes the gate for this window instead of crashing the pipeline.
+            logging.warning(
+                "decide gate %s: backend unavailable (%s); abstaining", self.name, error
+            )
+            self.last_decision = None
+            return False
         logging.info(
             "decide gate %s at %s: %s", self.name, asof_seconds, json.dumps(self.annotations())
         )
