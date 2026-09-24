@@ -12,7 +12,9 @@ to it, and upload both to any bucket Bagel supports.
 
 > **Beta.** The Jev backend follows TypeSafe's documented `/v1/systemone` request and
 > response format and is tested against a stand-in server; it has not yet been run
-> against the live TypeSafe API.
+> against the live TypeSafe API. **It graduates** when a pipeline has run against live
+> Jev on a real robot log with the label format confirmed, and the reference-log
+> baseline has shipped so warm-up no longer hides the start of every run.
 
 ## How it works
 

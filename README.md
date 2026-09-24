@@ -427,6 +427,7 @@ Rough edges we know about, so you don't find them the hard way:
 - **The Jev anomaly gate is beta.** Its Jev backend follows TypeSafe's documented API
   and is tested against a stand-in server, not yet against the live TypeSafe API.
   Its baseline is learned per run, so the first minutes of each run are never flagged.
+  It graduates after a live-Jev run on real robot data and a reference-log baseline.
 - **Reduction ratios are workload-dependent, and unbenchmarked.** The ratio is
   event-window duration over total duration: quiet recordings reduce dramatically,
   eventful ones much less. The figures in this README are illustrative demo output,
