@@ -283,3 +283,24 @@ def test_overlapping_windows_do_not_reset_the_baseline() -> None:
     stats = rolling.stats(asof_seconds=12.0)
     assert stats["signals"]["/m.v"]["count"] == 6
     assert stats["span_seconds"] == pytest.approx(12.0)
+
+
+def test_a_fault_longer_than_the_rolling_span_does_not_starve_the_baseline() -> None:
+    # Flagged windows are never added, so during a long fault nothing new arrives; the
+    # normal history must not be pruned by data time or the fault becomes the new
+    # normal once warm-up restarts on it (Codex P1).
+    rolling = baseline.RollingBaseline(window_minutes=1, warmup_minutes=0)
+    for end in (10.0, 20.0, 30.0):
+        rolling.add(_window(end, [1.0, 1.0]))
+    # 5 minutes of fault: nothing added, asof keeps advancing
+    assert rolling.ready(asof_seconds=330.0) is True
+    stats = rolling.stats(asof_seconds=330.0)
+    assert stats["signals"]["/m.v"]["count"] == 6
+    assert stats["signals"]["/m.v"]["mean"] == 1.0
+
+
+def test_normal_windows_still_age_out_as_new_normal_ones_arrive() -> None:
+    rolling = baseline.RollingBaseline(window_minutes=1, warmup_minutes=0)
+    rolling.add(_window(10.0, [100.0]))
+    rolling.add(_window(80.0, [2.0]))  # 70 s later: the first window is older than the span
+    assert rolling.stats(asof_seconds=80.0)["signals"]["/m.v"]["count"] == 1

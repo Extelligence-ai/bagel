@@ -62,6 +62,31 @@ class PlainGate(base.Gate):
 
 
 SEEN: list[dict] = []
+RECORD: dict = {"probabilities": {"x": 0.5}}
+
+
+class Nested(base.Gate):
+    """Passes and reports a nested record that it keeps a reference to."""
+
+    def setup(self, path: str, **kwargs: Any) -> None:  # noqa: ANN401
+        pass
+
+    def evaluate(self, asof_seconds: float, lookback: base.Lookback | None) -> bool:
+        return True
+
+    def annotations(self) -> dict:
+        return RECORD
+
+
+class Tamper(base.Task):
+    """Edits a nested value of the annotations it is handed."""
+
+    def setup(self, path: str, **kwargs: Any) -> None:  # noqa: ANN401
+        pass
+
+    def execute(self, asof_seconds: float, lookback: base.Lookback | None) -> None:
+        self.gate_annotations["nested"]["probabilities"]["x"] = 999.0
+        SEEN.append(dict(self.gate_annotations))
 
 
 class Recorder(base.Task):
@@ -77,7 +102,14 @@ class Recorder(base.Task):
 @pytest.fixture(autouse=True)
 def _operators(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     SEEN.clear()
-    for name, cls in {"labeller": Labeller, "plain": PlainGate, "recorder": Recorder}.items():
+    operators = {
+        "labeller": Labeller,
+        "plain": PlainGate,
+        "recorder": Recorder,
+        "nested": Nested,
+        "tamper": Tamper,
+    }
+    for name, cls in operators.items():
         fake = types.ModuleType(f"fake_{name}")
         fake.register = lambda cls=cls, name=name: module.global_registry.__setitem__(  # type: ignore[attr-defined]
             f"fake_{name}", cls
@@ -86,7 +118,7 @@ def _operators(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
 
 
-def _run(path: pathlib.Path, gates: list[dict]) -> None:
+def _run(path: pathlib.Path, gates: list[dict], tasks: list[dict] | None = None) -> None:
     config = {
         "name": "annotations",
         "site": "s",
@@ -95,7 +127,7 @@ def _run(path: pathlib.Path, gates: list[dict]) -> None:
         "allow_failure": False,
         "cadence": {"topic": "/x", "when": {"every": 2, "unit": "second"}},
         "gates": gates,
-        "tasks": [{"module": "fake_recorder"}],
+        "tasks": tasks or [{"module": "fake_recorder"}],
     }
     base.Pipeline.build(config).run_all()
 
@@ -150,3 +182,11 @@ def test_two_annotating_gates_with_the_same_name_are_rejected(mcap_path: pathlib
                 {"module": "fake_labeller", "args": {"key": "b"}},
             ],
         )
+
+
+def test_tasks_cannot_alter_a_gate_record_through_nested_values(mcap_path: pathlib.Path) -> None:
+    # MappingProxyType only guards the outer mapping; nested dicts must be copies so a
+    # task's edits never reach the gate's own record or the next task (Codex P2).
+    RECORD["probabilities"]["x"] = 0.5
+    _run(mcap_path, [{"module": "fake_nested"}], tasks=[{"module": "fake_tamper"}])
+    assert RECORD == {"probabilities": {"x": 0.5}}

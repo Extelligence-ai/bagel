@@ -30,10 +30,10 @@ class Baseline(Protocol):
 
 
 class RollingBaseline:
-    """Statistics over the windows added during the last `window_minutes` of data time.
+    """Statistics over the last `window_minutes` of normal windows.
 
-    Callers add only windows they did not flag, so an ongoing fault does not become
-    the new normal.
+    Callers add only windows they did not flag, and age is measured from the newest
+    normal window, so an ongoing fault -- however long -- never becomes the new normal.
     """
 
     def __init__(self, window_minutes: float, warmup_minutes: float) -> None:
@@ -66,9 +66,16 @@ class RollingBaseline:
             logging.warning("Baseline reset: window ends before the previous one did")
             self._windows.clear()
         self._windows.append((bounds["start_seconds"], bounds["end_seconds"], moments, topics))
+        self._prune()
 
-    def _prune(self, asof_seconds: float) -> None:
-        while self._windows and self._windows[0][1] < asof_seconds - self._span_seconds:
+    def _prune(self) -> None:
+        # Age is measured from the newest normal window, not from the clock: during a
+        # fault nothing normal arrives, and the known-good history must survive it
+        # rather than be pruned until the fault reads as the new normal.
+        if not self._windows:
+            return
+        newest_end = self._windows[-1][1]
+        while self._windows and self._windows[0][1] < newest_end - self._span_seconds:
             self._windows.popleft()
 
     def _covered_seconds(self, asof_seconds: float) -> float:
@@ -76,12 +83,10 @@ class RollingBaseline:
 
     def ready(self, asof_seconds: float) -> bool:
         """Implement `Baseline.ready`."""
-        self._prune(asof_seconds)
         return bool(self._windows) and self._covered_seconds(asof_seconds) >= self._warmup_seconds
 
     def stats(self, asof_seconds: float) -> dict:
         """Implement `Baseline.stats`."""
-        self._prune(asof_seconds)
         totals: dict[str, list[float]] = {}
         seen: collections.Counter[str] = collections.Counter()
         for _, _, moments, window_topics in self._windows:

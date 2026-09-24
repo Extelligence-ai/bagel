@@ -1,6 +1,7 @@
 """Base classes and utilities for defining and running data processing pipelines."""
 
 import abc
+import copy
 import importlib
 import logging
 import pathlib
@@ -563,7 +564,9 @@ class Pipeline:
                             )
                         annotations[gate.name] = gate_annotations
                 for task, lookback in self._tasks:
-                    task.gate_annotations = MappingProxyType(annotations)
+                    # A deep copy per task: nested records must not be shared with the
+                    # gate or with the next task.
+                    task.gate_annotations = MappingProxyType(copy.deepcopy(annotations))
                     produced = task.execute(asof_seconds, lookback)
                     if produced:
                         self._produced.extend(produced)
