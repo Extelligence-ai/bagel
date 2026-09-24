@@ -307,9 +307,10 @@ class Gate(Operator):
     def annotations(self) -> dict[str, Any]:
         """Return details about the latest evaluation for downstream tasks.
 
-        When every gate passes, the pipeline merges the annotations of all gates and
-        exposes them to tasks as `Task.gate_annotations`, e.g. a label to write next to
-        a log slice. Gates that have nothing to share keep this default.
+        When every gate passes, the pipeline exposes each gate's annotations to tasks as
+        `Task.gate_annotations[<gate name>]`, e.g. a label to write next to a log slice.
+        Keyed by gate name so two gates reporting the same fields never overwrite each
+        other. Gates that have nothing to share keep this default.
 
         """
         return {}
@@ -322,7 +323,8 @@ class Task(Operator):
 
     """
 
-    # Read-only annotations from the gates that let this execution run (see `Gate.annotations`).
+    # Read-only annotations of the gates that let this execution run, keyed by gate name
+    # (see `Gate.annotations`).
     gate_annotations: Mapping[str, Any] = MappingProxyType({})
 
     @abc.abstractmethod
@@ -553,7 +555,8 @@ class Pipeline:
             if all(gate.evaluate(asof_seconds, lookback) for gate, lookback in self._gates):
                 annotations: dict[str, Any] = {}
                 for gate, _ in self._gates:
-                    annotations.update(gate.annotations())
+                    if gate_annotations := gate.annotations():
+                        annotations[gate.name] = gate_annotations
                 for task, lookback in self._tasks:
                     task.gate_annotations = MappingProxyType(annotations)
                     produced = task.execute(asof_seconds, lookback)

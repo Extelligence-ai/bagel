@@ -26,12 +26,13 @@ def extreme_threshold(z_threshold: float, samples: int) -> float:
     return z_threshold + math.sqrt(2.0 * math.log(max(samples, 1)))
 
 
-def screen(
+def screen(  # noqa: PLR0913
     window: dict,
     baseline: dict,
     asof_seconds: float,
     z_threshold: float,
     dropout_seconds: float,
+    last_seen: dict[str, float] | None = None,
 ) -> list[dict]:
     """Return the reasons a window looks anomalous (empty if it looks normal).
 
@@ -41,8 +42,10 @@ def screen(
         ``{"kind": "z_score", "signal", "value", "z"}`` -- a single sample sits beyond
         `extreme_threshold(z_threshold, count)`.
         ``{"kind": "dropout", "topic", "silent_seconds"}`` -- a topic the baseline expects
-        has been silent for more than `dropout_seconds` at the window's end (None if it
-        did not publish at all in the window).
+        has been silent for more than `dropout_seconds` at the window's end. Silence is
+        measured from the topic's last message, which `last_seen` carries across windows
+        (a window shorter than the threshold is not a dropout on its own); None means the
+        topic was never seen.
 
     """
     reasons = []
@@ -63,6 +66,8 @@ def screen(
             reasons.append({"kind": "z_score", "signal": label, "value": extreme, "z": z})
     for topic in baseline["topics"]:
         last = window["topics"].get(topic, {}).get("last_seconds")
+        if last is None and last_seen is not None:
+            last = last_seen.get(topic)
         if last is None:
             reasons.append({"kind": "dropout", "topic": topic, "silent_seconds": None})
         elif asof_seconds - last > dropout_seconds:

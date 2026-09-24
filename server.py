@@ -765,7 +765,7 @@ def preview_anomalies(  # noqa: PLR0913
 
     Args:
         path (str): Filesystem path or URL to the recorded data source.
-        window_seconds (float): Window length; matches the gate's `lookback`.
+        window_seconds (float): Window length in whole seconds; matches the gate's `lookback`.
         topics (list[str] | None, optional): Topics to watch. If None, all topics.
         signals (list[str] | None, optional): Dotted numeric signals to watch, e.g.
             "/imu.linear_acceleration.x". Prefer rates and errors over states.

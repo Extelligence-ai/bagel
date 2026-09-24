@@ -127,6 +127,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
             baseline_window_minutes, warmup_minutes
         )
         self._annotations: dict[str, Any] = {}
+        self._last_seen: dict[str, float] = {}
 
     def setup(self, path: str, **kwargs) -> None:  # noqa: ANN003
         """Implement `base.Operator.setup`; recorded sources only while in beta."""
@@ -164,10 +165,20 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         window = summary.summarize(relation, self._watched(relation))
         normal = self.baseline.stats(asof_seconds) if self.baseline.ready(asof_seconds) else None
         reasons = (
-            screen.screen(window, normal, asof_seconds, self._z_threshold, self._dropout_seconds)
+            screen.screen(
+                window,
+                normal,
+                asof_seconds,
+                self._z_threshold,
+                self._dropout_seconds,
+                last_seen=self._last_seen,
+            )
             if normal
             else []
         )
+        for topic, stats in window["topics"].items():
+            if stats["last_seconds"] is not None:
+                self._last_seen[topic] = stats["last_seconds"]
         self._annotations = {}
         if self._mode == "screen" and not reasons:
             self.baseline.add(window)

@@ -1,8 +1,10 @@
 """Write the annotations of the gates that let this run through, as a JSON artifact.
 
-Pair it with a snippet task: both name their artifact after the same timestamp, e.g.
-``task=snip_mcap/.../1700000410.0.mcap`` and ``task=write_annotations/.../1700000410.0.json``,
-so an upload task sends each log slice together with its label.
+The file holds ``asof_seconds`` plus one object per annotating gate, keyed by the gate's
+name (``{"asof_seconds": ..., "anomaly": {...}}``). Pair it with a snippet task: both
+name their artifact after the same timestamp, e.g. ``task=snip_mcap/.../1700000410.0.mcap``
+and ``task=write_annotations/.../1700000410.0.json``, so an upload task sends each log
+slice together with its label.
 """
 
 import json

@@ -91,3 +91,13 @@ def test_mcp_tool_returns_the_same_report(log_path: pathlib.Path) -> None:
         str(log_path), window_seconds=10, baseline_window_minutes=5, warmup_minutes=1
     )
     assert result == _run(log_path)
+
+
+@pytest.mark.parametrize("window", [2.5, 0.5, 0])
+def test_window_must_be_a_positive_whole_number_of_seconds(
+    log_path: pathlib.Path, window: float
+) -> None:
+    # Lookbacks are whole seconds; silently truncating 2.5 -> 2 gave results that could
+    # not match the request (Codex P2).
+    with pytest.raises(ValueError, match="whole"):
+        calibrate.calibrate(str(log_path), window_seconds=window)

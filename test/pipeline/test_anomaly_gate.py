@@ -125,7 +125,10 @@ def _offset(path: pathlib.Path) -> float:
 
 
 def _records(produced: list[pathlib.Path]) -> dict[float, dict]:
-    return {_offset(p): json.loads(p.read_text()) for p in produced if p.suffix == ".json"}
+    """The anomaly gate's record per kept window; the file nests it under the gate name."""
+    return {
+        _offset(p): json.loads(p.read_text())["anomaly"] for p in produced if p.suffix == ".json"
+    }
 
 
 # --- end to end --------------------------------------------------------------------------
@@ -378,3 +381,30 @@ def test_live_sources_are_rejected_in_beta(
     gate = anomaly.Anomaly(**_gate_args(server))
     with pytest.raises(ValueError, match="batch-only"):
         gate.setup(path="live://imu")
+
+
+def test_label_file_nests_each_gate_under_its_name(
+    log_path: pathlib.Path, server: DecisionServer
+) -> None:
+    server.reply = _label_from_screen
+    produced = _pipeline(log_path, _gate_args(server), SNIP_AND_WRITE).run_all()
+    payload = json.loads(next(p for p in produced if p.suffix == ".json").read_text())
+    assert set(payload) == {"asof_seconds", "anomaly"}
+    assert payload["anomaly"]["beta"] is True
+
+
+def test_dropout_threshold_longer_than_the_window_waits_for_it(
+    tmp_path: pathlib.Path, server: DecisionServer
+) -> None:
+    # 10 s windows, a 25 s heartbeat gap (505..530) and dropout_seconds=12: the window
+    # ending at 510 has seen 5 s of silence (not yet a dropout, Codex P2); the one ending
+    # at 520 has seen 15 s, measured from the last heartbeat at 505.
+    from test._fixtures.fault_log import write_fault_log
+
+    log = write_fault_log(tmp_path / "gap.mcap", gap=(505.0, 530.0))
+    server.reply = _label_from_screen
+    produced = _pipeline(log, _gate_args(server, dropout_seconds=12), SNIP_AND_WRITE).run_all()
+    assert sorted(_records(produced)) == [410.0, 520.0]
+    (reason,) = _records(produced)[520.0]["screen_reasons"]
+    # the last heartbeat before the gap is at 504.8 s (5 Hz)
+    assert reason["kind"] == "dropout" and reason["silent_seconds"] == pytest.approx(15.2, abs=0.01)

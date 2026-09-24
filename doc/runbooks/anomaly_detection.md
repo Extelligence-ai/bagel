@@ -122,7 +122,7 @@ write the YAML. The LLM recipe `compose/anomaly_pipeline` walks these steps.
 | `max_signals` | `64` | Refuse to watch more signals than this. Each adds to the summary query and to the request Jev reads (64k-token context); a PX4 log exposes ~2,000, so pick `topics` or `signals`. |
 | `mode` | `screen` | `screen`: ask Jev only about windows the on-robot check flags. `always`: ask about every window (more calls, catches what the screen misses). |
 | `z_threshold` | `3.0` | Flag a window whose mean is this many baseline std devs from normal. A single sample must clear this plus the extreme its sample count explains (about 3σ more at 50 Hz), so noisy signals don't trip every window. |
-| `dropout_seconds` | `2` | Flag an expected topic silent this long at the window's end. Expected = publishes in most baseline windows, so event-driven topics don't count. The cadence topic can never drop out: the pipeline only runs when it publishes. |
+| `dropout_seconds` | `2` | Flag an expected topic silent this long at the window's end, measured from its last message even across windows (so a threshold longer than the window waits for it). Expected = publishes in most baseline windows, so event-driven topics don't count. The cadence topic can never drop out: the pipeline only runs when it publishes. |
 | `baseline_window_minutes` | `30` | How much recent history defines "normal". |
 | `warmup_minutes` | `5` | History needed before screening starts; nothing is flagged before then. |
 | `min_probability` | `0.6` | Confidence Jev needs for its label to count; less confident answers count as normal. |
@@ -136,12 +136,14 @@ write the YAML. The LLM recipe `compose/anomaly_pipeline` walks these steps.
 ## The label file
 
 `write_annotations` writes `<timestamp>.json` under `task=write_annotations/`, named
-after the same timestamp as the slice under `task=snip_mcap/`. This one is a real
-record (rounded) from a test run with a planted current spike:
+after the same timestamp as the slice under `task=snip_mcap/`. Each gate's record sits
+under the gate's name, so two gates never overwrite each other's fields. This one is a
+real record (rounded) from a test run with a planted current spike:
 
 ```json
 {
   "asof_seconds": 1700000410.0,
+  "anomaly": {
   "label": "overcurrent",
   "probabilities": {"overcurrent": 0.9, "sensor_dropout": 0.033, "other_unusual": 0.033, "normal": 0.033},
   "verified": true,
@@ -161,6 +163,7 @@ record (rounded) from a test run with a planted current spike:
     "topics": ["/heartbeat", "/motor/current"]
   },
   "beta": true
+  }
 }
 ```
 

@@ -74,8 +74,8 @@ def calibrate(  # noqa: PLR0913
         counts, the watched ``signals``, and plain-language ``advice``.
 
     """
-    if window_seconds <= 0:
-        raise ValueError("window_seconds must be positive")
+    if window_seconds <= 0 or window_seconds != int(window_seconds):
+        raise ValueError("window_seconds must be a positive whole number of seconds")
     reader = _Reader()
     reader.setup(path, **(source_args or {}))
     lookback = base.Lookback(last=int(window_seconds), unit=base.Unit.SECOND)
@@ -95,16 +95,22 @@ def calibrate(  # noqa: PLR0913
     by_signal: collections.Counter[str] = collections.Counter()
     by_topic: collections.Counter[str] = collections.Counter()
     windows = warmup = 0
+    last_seen: dict[str, float] = {}
     asof = float(start)
     while asof <= end + 1e-9:
         windows += 1
         relation = reader.to_duckdb(topics=topics, asof_seconds=asof, lookback=lookback)
         window = summary.summarize(relation, watched)
         if rolling.ready(asof):
-            reasons = screen.screen(window, rolling.stats(asof), asof, z_threshold, dropout_seconds)
+            reasons = screen.screen(
+                window, rolling.stats(asof), asof, z_threshold, dropout_seconds, last_seen
+            )
         else:
             warmup += 1
             reasons = []
+        for topic, stats in window["topics"].items():
+            if stats["last_seconds"] is not None:
+                last_seen[topic] = stats["last_seconds"]
         if reasons:
             flagged.append(
                 {"asof_seconds": asof, "offset_seconds": asof - start, "reasons": reasons}

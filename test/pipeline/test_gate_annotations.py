@@ -102,18 +102,21 @@ def _run(path: pathlib.Path, gates: list[dict]) -> None:
 
 def test_tasks_receive_annotations_from_passing_gates(mcap_path: pathlib.Path) -> None:
     _run(mcap_path, [{"module": "fake_labeller", "args": {"key": "label"}}])
-    assert SEEN == [{"label": EPOCH}, {"label": EPOCH + 2}]
+    assert SEEN == [{"labeller": {"label": EPOCH}}, {"labeller": {"label": EPOCH + 2}}]
 
 
-def test_annotations_from_several_gates_are_merged(mcap_path: pathlib.Path) -> None:
+def test_annotations_from_several_gates_are_kept_apart_by_gate_name(
+    mcap_path: pathlib.Path,
+) -> None:
+    # Two gates that both report a `label` must not overwrite each other (Codex P1).
     _run(
         mcap_path,
         [
-            {"module": "fake_labeller", "args": {"key": "first"}},
-            {"module": "fake_labeller", "name": "second_gate", "args": {"key": "second"}},
+            {"module": "fake_labeller", "args": {"key": "label"}},
+            {"module": "fake_labeller", "name": "second_gate", "args": {"key": "label"}},
         ],
     )
-    assert SEEN[0] == {"first": EPOCH, "second": EPOCH}
+    assert SEEN[0] == {"labeller": {"label": EPOCH}, "second_gate": {"label": EPOCH}}
 
 
 def test_gates_without_annotations_contribute_nothing(mcap_path: pathlib.Path) -> None:

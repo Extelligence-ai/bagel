@@ -24,7 +24,9 @@ def current_at(offset: float) -> float:
     return 1.0 + 0.05 * math.sin(offset * 3.1)
 
 
-def write_fault_log(path: pathlib.Path, state_topic: bool = False) -> pathlib.Path:
+def write_fault_log(
+    path: pathlib.Path, state_topic: bool = False, gap: tuple[float, float] = GAP
+) -> pathlib.Path:
     """Write the log to `path`; with `state_topic`, add `/odom` whose `value` is a state that
     steps to a new level at t=70 s and stays there (like a heading after a turn)."""
     with open(path, "wb") as stream, ProtobufWriter(stream) as writer:
@@ -37,7 +39,7 @@ def write_fault_log(path: pathlib.Path, state_topic: bool = False) -> pathlib.Pa
                 log_time=stamp,
                 publish_time=stamp,
             )
-            if i % 2 == 0 and not (GAP[0] <= offset < GAP[1]):
+            if i % 2 == 0 and not (gap[0] <= offset < gap[1]):
                 writer.write_message(
                     topic="/heartbeat",
                     message=DoubleValue(value=1.0),

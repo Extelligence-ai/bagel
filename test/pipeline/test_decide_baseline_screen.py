@@ -127,7 +127,32 @@ def test_topic_that_stops_publishing_is_a_dropout() -> None:
     assert reasons == [{"kind": "dropout", "topic": "/m", "silent_seconds": 5.0}]
 
 
-def test_topic_silent_for_the_whole_window_is_a_dropout() -> None:
+def test_topic_silent_for_the_whole_window_is_measured_from_its_last_message() -> None:
+    reasons = screen.screen(
+        _window(100, [], topic_last=None),
+        _baseline(),
+        asof_seconds=100,
+        z_threshold=3.0,
+        dropout_seconds=2.0,
+        last_seen={"/m": 85.0},
+    )
+    assert reasons == [{"kind": "dropout", "topic": "/m", "silent_seconds": 15.0}]
+
+
+def test_an_empty_window_shorter_than_the_threshold_is_not_yet_a_dropout() -> None:
+    # 10 s window, 30 s threshold: silence so far is 10 s (Codex P2).
+    reasons = screen.screen(
+        _window(100, [], topic_last=None),
+        _baseline(),
+        asof_seconds=100,
+        z_threshold=3.0,
+        dropout_seconds=30.0,
+        last_seen={"/m": 90.0},
+    )
+    assert reasons == []
+
+
+def test_a_topic_never_seen_at_all_is_reported_with_unknown_silence() -> None:
     reasons = screen.screen(
         _window(100, [], topic_last=None),
         _baseline(),
