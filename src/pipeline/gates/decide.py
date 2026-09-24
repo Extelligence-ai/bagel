@@ -21,6 +21,7 @@ import duckdb
 from src.di import module
 from src.pipeline import base, messages
 from src.pipeline.decide import backends, summary
+from src.source.bagel import sink as live_sink
 
 _MIN_CHOICES = 2
 
@@ -119,8 +120,17 @@ class Decide(messages.TopicMessageMixin, base.Gate):
             ImportError: If the local backend is requested without the `jev` group.
 
         """
+        if any(not isinstance(choice, str) for choice in choices):
+            raise ValueError(
+                f"Choices must be strings, got {choices}. YAML reads bare yes/no/on/off as "
+                "booleans: quote them."
+            )
         if len(choices) < _MIN_CHOICES or len(set(choices)) != len(choices):
             raise ValueError(f"Choices must be at least two distinct values, got {choices}")
+        if max_signals < 1:
+            raise ValueError("max_signals must be at least 1")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
         if not accept or any(choice not in choices for choice in accept):
             raise ValueError(f"Accept must be a non-empty subset of choices: {accept}")
         if not (0.0 <= min_probability <= 1.0):
@@ -137,6 +147,15 @@ class Decide(messages.TopicMessageMixin, base.Gate):
             backend, model=model, url=url, api_key_env=api_key_env, timeout_seconds=timeout_seconds
         )
         self.last_decision: Decision | None = None
+
+    def setup(self, path: str, **kwargs) -> None:  # noqa: ANN003
+        """Implement `base.Operator.setup`; recorded sources only while in beta."""
+        super().setup(path, **kwargs)
+        if isinstance(self.factory, live_sink.SourceFactory):
+            raise ValueError(
+                "The decide gate is batch-only in this beta: it calls the decision backend "
+                "synchronously, which would block a live ingest thread. Run it on recorded logs."
+            )
 
     def evaluate(self, asof_seconds: float, lookback: base.Lookback | None) -> bool:
         """Implement `base.Gate.evaluate`."""

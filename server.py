@@ -745,7 +745,9 @@ def preview_pipeline(  # noqa: PLR0913
         "flag counts per signal, and plain-language advice (signals that drift by design, "
         "warm-up longer than the log). Inspect topics first and pass `signals` as rates and "
         "errors (accelerations, angular rates, currents), never positions or orientations. "
-        "Use it to choose signals and thresholds before saving an anomaly pipeline."
+        "Use it to choose signals and thresholds before saving an anomaly pipeline. It models "
+        "screen mode with the decision model confirming every flag, `every: N seconds` "
+        "cadences, and a gate that sees every fire (list the anomaly gate first)."
     ),
     annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
 )

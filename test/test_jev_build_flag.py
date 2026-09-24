@@ -87,3 +87,15 @@ def test_jev_service_reserves_a_gpu() -> None:
     service = _services()[JEV_SERVICE]
     devices = service["deploy"]["resources"]["reservations"]["devices"]
     assert any(d.get("driver") == "nvidia" and "gpu" in d.get("capabilities", []) for d in devices)
+
+
+def test_every_pipeline_service_forwards_the_typesafe_key() -> None:
+    # `docker compose run` does not inherit the host environment; without a mapping the
+    # documented `export TYPESAFE_API_KEY=...` never reaches the gate (Codex P1).
+    missing = [
+        name
+        for name, service in _services().items()
+        if "MCP_SERVER_PORT" in (service.get("environment") or {})
+        and "TYPESAFE_API_KEY" not in (service.get("environment") or {})
+    ]
+    assert missing == []

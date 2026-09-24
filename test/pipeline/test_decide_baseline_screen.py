@@ -281,7 +281,7 @@ def test_overlapping_windows_do_not_reset_the_baseline() -> None:
     for end in (10.0, 11.0, 12.0):
         rolling.add(_window(end, [1.0, 3.0]))
     stats = rolling.stats(asof_seconds=12.0)
-    assert stats["signals"]["/m.v"]["count"] == 6
+    assert stats["signals"]["/m.v"]["mean"] == pytest.approx(2.0)
     assert stats["span_seconds"] == pytest.approx(12.0)
 
 
@@ -304,3 +304,13 @@ def test_normal_windows_still_age_out_as_new_normal_ones_arrive() -> None:
     rolling.add(_window(10.0, [100.0]))
     rolling.add(_window(80.0, [2.0]))  # 70 s later: the first window is older than the span
     assert rolling.stats(asof_seconds=80.0)["signals"]["/m.v"]["count"] == 1
+
+
+def test_overlapping_windows_count_each_sample_about_once() -> None:
+    # A 10 s lookback every second puts each sample in ~10 windows; counting all of them
+    # would let 3 real samples pass MIN_BASELINE_SAMPLES.
+    rolling = baseline.RollingBaseline(window_minutes=30, warmup_minutes=0)
+    for end in range(10, 30):
+        rolling.add(_window(float(end), [1.0] * 10))
+    count = rolling.stats(asof_seconds=29.0)["signals"]["/m.v"]["count"]
+    assert 25 <= count <= 32  # 10 in the first window, ~1 new sample per later window

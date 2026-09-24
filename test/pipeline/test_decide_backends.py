@@ -252,3 +252,44 @@ def test_local_choices_are_tokenized_without_sequence_start_tokens() -> None:
 
     backends.choice_ids(Tokenizer(), "stall")
     assert calls == [{"text": " stall", "return_tensors": "pt", "add_special_tokens": False}]
+
+
+def test_redirects_are_not_followed_and_never_carry_the_key(
+    jev: backends.JevBackend, server: DecisionServer
+) -> None:
+    # urllib follows a 302 by re-sending as GET with every header, Authorization included,
+    # to wherever Location points -- which would defeat the https-only rule.
+    server.reply = lambda body: (302, {}, {"Location": f"http://127.0.0.1:{server.port}/leaked"})
+    with pytest.raises(backends.BackendUnavailable, match="redirect"):
+        jev.decide(STATE, "q?", CHOICES)
+    assert [r["path"] for r in server.requests] == ["/v1/systemone"]
+
+
+def test_local_backend_runtime_errors_are_unavailable() -> None:
+    # CUDA OOM, a prompt beyond the model's context, a tokenizer error: fall back, don't crash.
+    import contextlib
+
+    class Ids:
+        shape = (1, 2)
+
+        def to(self, device: str) -> "Ids":
+            return self
+
+    class Tokenizer:
+        def __call__(self, text: str, **kwargs: object) -> object:
+            return type("Encoded", (), {"input_ids": Ids()})()
+
+    class Model:
+        def __call__(self, ids: object) -> object:
+            raise RuntimeError("CUDA out of memory")
+
+    class Torch:
+        no_grad = staticmethod(contextlib.nullcontext)
+        cat = staticmethod(lambda parts, dim: Ids())
+        log_softmax = staticmethod(lambda *args, **kwargs: None)
+
+    backend = object.__new__(backends.LocalBackend)
+    backend._torch, backend._tokenizer, backend._model = Torch(), Tokenizer(), Model()
+    backend._device, backend._name = "cpu", "fake"
+    with pytest.raises(backends.BackendUnavailable, match="CUDA"):
+        backend.decide(STATE, "q?", CHOICES)

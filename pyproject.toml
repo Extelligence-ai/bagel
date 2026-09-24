@@ -48,8 +48,8 @@ cv = [
     "torch >=2.8.0,<3.0.0",
     "transformers >=4.57.0,<5.0.0",
 ]
-# On-robot typed-decision model for the `decide` gate's local backend. Only
-# images built with JEV_MODE=true include it; CPU-only robots use the remote backend.
+# On-robot decision model for the anomaly and decide gates' local backend. Only
+# images built with JEV_MODE=true include it; CPU-only robots use the hosted backend.
 jev = [
     "torch >=2.8.0,<3.0.0",
     "transformers >=4.57.0,<5.0.0",

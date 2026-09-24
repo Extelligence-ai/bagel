@@ -42,7 +42,7 @@ class RollingBaseline:
         self._warmup_seconds = warmup_minutes * 60
         # (start_seconds, end_seconds, {label: (count, sum, sum_sq)}, {topics that published})
         self._windows: collections.deque[
-            tuple[float, float, dict[str, tuple[int, float, float]], set[str]]
+            tuple[float, float, dict[str, tuple[float, float, float]], set[str]]
         ] = collections.deque()
 
     def add(self, window: dict) -> None:
@@ -50,14 +50,6 @@ class RollingBaseline:
         bounds = window["window"]
         if bounds["end_seconds"] is None:
             return
-        moments = {}
-        for label, signal in window["signals"].items():
-            count = signal["count"]
-            if not count:
-                continue
-            mean, std = signal["mean"], signal["std"] or 0.0
-            moments[label] = (count, mean * count, (std**2 + mean**2) * count)
-        topics = {topic for topic, stats in window["topics"].items() if stats["messages"]}
         if self._windows and bounds["end_seconds"] < self._windows[-1][1]:
             # Data time went backwards (a looped bag, a sim reset, a rewound timestamp
             # field): the old windows would never prune, so start over. Windows that
@@ -65,6 +57,23 @@ class RollingBaseline:
             # and are fine.
             logging.warning("Baseline reset: window ends before the previous one did")
             self._windows.clear()
+        # Overlapping windows (a cadence shorter than the lookback) would count each
+        # sample once per window; weight a window by the share of its span that is new.
+        share = 1.0
+        if self._windows and bounds["end_seconds"] > bounds["start_seconds"]:
+            previous_end = self._windows[-1][1]
+            span = bounds["end_seconds"] - bounds["start_seconds"]
+            share = min(1.0, max(0.0, (bounds["end_seconds"] - previous_end) / span))
+        if share == 0.0:
+            return
+        moments = {}
+        for label, signal in window["signals"].items():
+            count = signal["count"] * share
+            if not count:
+                continue
+            mean, std = signal["mean"], signal["std"] or 0.0
+            moments[label] = (count, mean * count, (std**2 + mean**2) * count)
+        topics = {topic for topic, stats in window["topics"].items() if stats["messages"]}
         self._windows.append((bounds["start_seconds"], bounds["end_seconds"], moments, topics))
         self._prune()
 

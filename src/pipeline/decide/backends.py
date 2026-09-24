@@ -70,6 +70,24 @@ def _redacted(url: str) -> str:
     return f"{parts.scheme}://{parts.hostname or ''}{parts.path}"
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow redirects: urllib would re-send every header, the bearer key included."""
+
+    def redirect_request(  # noqa: PLR0913 -- urllib's signature
+        self,
+        req: Any,  # noqa: ANN401
+        fp: Any,  # noqa: ANN401
+        code: int,
+        msg: str,
+        headers: Any,  # noqa: ANN401
+        newurl: str,
+    ) -> None:
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _post_json(url: str, body: dict, headers: dict[str, str], timeout_seconds: float) -> Any:  # noqa: ANN401
     request = urllib.request.Request(  # noqa: S310 -- scheme checked by _require_http
         url,
@@ -79,9 +97,13 @@ def _post_json(url: str, body: dict, headers: dict[str, str], timeout_seconds: f
     )
     where = _redacted(url)
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+        with _OPENER.open(request, timeout=timeout_seconds) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
+        if 300 <= error.code < 400:  # noqa: PLR2004
+            raise BackendUnavailable(
+                f"Refusing to follow a redirect ({error.code}) from {where}"
+            ) from error
         raise BackendUnavailable(f"HTTP {error.code} from {where}") from error
     except TimeoutError as error:
         raise BackendUnavailable(f"Request to {where} timed out") from error
@@ -212,6 +234,13 @@ class LocalBackend:
             f"Choices: {options}\n"
             "Answer:"
         )
+        try:
+            return self._score(prompt, choices)
+        except (RuntimeError, ValueError, IndexError, OSError) as error:
+            # CUDA OOM, a prompt beyond the model's context, a tokenizer error.
+            raise BackendUnavailable(f"Local model failed: {error}") from error
+
+    def _score(self, prompt: str, choices: dict[str, str]) -> Answer:
         prompt_ids = self._tokenizer(prompt, return_tensors="pt").input_ids.to(self._device)
         log_likelihoods = {}
         with self._torch.no_grad():

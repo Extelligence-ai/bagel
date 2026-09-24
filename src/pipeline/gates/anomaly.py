@@ -22,7 +22,7 @@ from typing import Any
 from src.di import module
 from src.pipeline import base, messages
 from src.pipeline.decide import backends, baseline, screen, summary
-from src.source.base import BoundedSourceFactory
+from src.source.bagel import sink as live_sink
 
 NORMAL = "normal"
 OTHER = "other_unusual"
@@ -99,6 +99,17 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         )
         if not anomalies:
             raise ValueError("The anomaly gate needs at least one named type in 'anomalies'")
+        if any(not isinstance(k, str) or not isinstance(v, str) for k, v in anomalies.items()):
+            raise ValueError(
+                "Anomaly names and descriptions must be strings. YAML reads bare yes/no/on/off "
+                "as booleans: quote them."
+            )
+        if z_threshold <= 0 or dropout_seconds <= 0 or timeout_seconds <= 0:
+            raise ValueError("z_threshold, dropout_seconds and timeout_seconds must be positive")
+        if baseline_window_minutes <= 0 or warmup_minutes < 0:
+            raise ValueError(
+                "baseline_window_minutes must be positive and warmup_minutes non-negative"
+            )
         if reserved := sorted({NORMAL, OTHER, SCREEN_ONLY} & set(anomalies)):
             raise ValueError(f"Anomaly names {reserved} are reserved labels")
         if mode not in MODES:
@@ -138,7 +149,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
     def setup(self, path: str, **kwargs) -> None:  # noqa: ANN003
         """Implement `base.Operator.setup`; recorded sources only while in beta."""
         super().setup(path, **kwargs)
-        if not isinstance(self.factory, BoundedSourceFactory):
+        if isinstance(self.factory, live_sink.SourceFactory):
             raise ValueError(
                 "The anomaly gate is batch-only in this beta: it calls the decision backend "
                 "synchronously, which would block a live ingest thread. Run it on recorded logs."
@@ -162,10 +173,10 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
 
     def evaluate(self, asof_seconds: float, lookback: base.Lookback | None) -> bool:
         """Implement `base.Gate.evaluate`."""
-        if lookback is None or lookback.unit == base.Unit.FRAME:
+        if lookback is None or lookback.unit == base.Unit.FRAME or lookback.last <= 0:
             raise ValueError(
-                "The anomaly gate needs a time-based lookback, e.g. {last: 10, unit: second}: "
-                "its baseline is built from windows of data time."
+                "The anomaly gate needs a positive time-based lookback, e.g. "
+                "{last: 10, unit: second}: its baseline is built from windows of data time."
             )
         relation = self.to_duckdb(topics=self._topics, asof_seconds=asof_seconds, lookback=lookback)
         window = summary.summarize(relation, self._watched(relation))
@@ -210,8 +221,9 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         flagged = label != NORMAL and probabilities[label] >= self._min_probability
         if flagged:
             self._record(label, probabilities, answer.model, True, window, normal, reasons)
-        elif not reasons or label == NORMAL:
-            # Keep uncertain-but-screened windows out of the baseline as well.
+        elif not reasons or (label == NORMAL and probabilities[NORMAL] >= self._min_probability):
+            # Only a confident `normal` verdict teaches the baseline that a screened window
+            # was fine; a weak one keeps it out, as an unreachable backend would.
             self.baseline.add(window)
         return flagged
 

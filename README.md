@@ -427,8 +427,8 @@ Rough edges we know about, so you don't find them the hard way:
   has been trained from a Bagel export yet.
 - **The Jev anomaly gate is beta.** Recorded logs only for now. Its Jev backend
   follows TypeSafe's documented API and is tested against a stand-in server, not yet
-  against the live TypeSafe API. Its baseline is learned per run, so the first minutes
-  of each run are never flagged.
+  against the live TypeSafe API. Its baseline is learned per run, so in screen mode the
+  first minutes of each run are never flagged.
   It graduates after a live-Jev run on real robot data and a reference-log baseline.
 - **Reduction ratios are workload-dependent, and unbenchmarked.** The ratio is
   event-window duration over total duration: quiet recordings reduce dramatically,

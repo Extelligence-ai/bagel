@@ -125,12 +125,13 @@ def calibrate(  # noqa: PLR0913
 ) -> dict[str, Any]:
     """Run the on-robot screen over every window of a recorded log and report the flags.
 
-    Windows are `window_seconds` long (the gate's lookback) and end every
-    `cadence_seconds` (the pipeline's cadence; defaults to the window). With
-    `cadence_topic`, they end at the same timestamps the saved pipeline would fire on
-    (that topic's messages, at least `cadence_seconds` apart); without it, on a fixed
-    grid from the start of the log. Flagged windows are kept out of the rolling
-    baseline, exactly as the gate does.
+    A screen-only preview: it assumes the gate runs on every fire (list it first among
+    the gates), models `mode: screen` with the decision model confirming every flag,
+    and reproduces `every: N seconds` cadences only. Windows are `window_seconds` long
+    (the gate's lookback) and end every `cadence_seconds` (defaults to the window); with
+    `cadence_topic`, at that topic's messages at least `cadence_seconds` apart, else on
+    a fixed grid from the start of the log. Flagged windows are kept out of the rolling
+    baseline, as the gate does.
 
     Returns:
         ``windows``, ``warmup_windows``, ``screened_windows``, ``flagged`` (each with

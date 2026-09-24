@@ -26,6 +26,8 @@ class WriteAnnotations(base.ArtifactMixin, base.Task):
         """Implement `base.Task.execute`."""
         if not self.gate_annotations:
             return None
+        if "asof_seconds" in self.gate_annotations:
+            raise ValueError("A gate cannot be named 'asof_seconds': that key holds the timestamp")
         path = self.artifact_path(asof_seconds, ".json")
         record = {"asof_seconds": asof_seconds, **self.gate_annotations}
         path.write_text(json.dumps(record, indent=2, sort_keys=True), encoding="utf-8")

@@ -160,3 +160,19 @@ def test_summarizes_a_real_source_with_nan_and_dotted_fields(tmp_path: pathlib.P
         "std": 1.0,
     }
     assert state["signals"]["message.batt"]["count"] == 2
+
+
+def test_absurdly_large_values_are_treated_as_missing() -> None:
+    # Some drivers use DBL_MAX for "unknown"; squaring it overflows the baseline math and
+    # DuckDB's stddev_pop raises on it.
+    relation = duckdb.sql(
+        f"SELECT * FROM (VALUES (1.0, {{'v': 1e300}}), (2.0, {{'v': 2.0}}), "
+        f"(3.0, {{'v': 1.5e308}})) AS t({TS}, \"/m\")"
+    )
+    assert summary.summarize(relation)["signals"]["/m.v"] == {
+        "count": 1,
+        "min": 2.0,
+        "max": 2.0,
+        "mean": 2.0,
+        "std": 0.0,
+    }

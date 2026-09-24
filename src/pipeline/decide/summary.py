@@ -24,6 +24,7 @@ _NUMERIC_TYPES = {
 # anomalous in every window, so they are skipped unless selected explicitly.
 _SKIPPED_FIELDS = {"header", "stamp"}
 _STATS = ("count", "min", "max", "mean", "std")
+_MAX_MAGNITUDE = 1e150
 
 # label -> (topic column, struct field path). Field names may themselves contain dots
 # (PX4 flattens nested fields to "previous.vx"), so labels are never re-split.
@@ -73,7 +74,11 @@ def _expression(column: str, path: tuple[str, ...]) -> str:
     carry both by design, so non-finite samples are dropped rather than propagated.
     """
     value = _quote_identifier(column) + "".join(f"[{_quote_literal(f)}]" for f in path)
-    return f"(CASE WHEN isfinite({value}::DOUBLE) THEN {value}::DOUBLE END)"
+    double = f"{value}::DOUBLE"
+    # DBL_MAX-style "unknown" markers (1e308) survive isfinite but overflow when squared.
+    return (
+        f"(CASE WHEN isfinite({double}) AND abs({double}) < {_MAX_MAGNITUDE:g} THEN {double} END)"
+    )
 
 
 def resolve_signals(relation: duckdb.DuckDBPyRelation, labels: list[str]) -> Signals:

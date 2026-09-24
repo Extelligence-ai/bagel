@@ -16,7 +16,7 @@
                     heading error. Bad: positions, velocities, orientation quaternions,
                     odometry - they drift by design as the robot moves, so "far from the
                     baseline mean" fires on every window. Keep 5-20 signals (the gate's
-                    `max_signals` defaults to 64) as dotted labels: `/imu.linear_accel.x`.
+                    `max_signals` defaults to 64) as dotted labels: `/imu.linear_acceleration.x`.
                 </item>
                 <item>
                     Name the ANOMALIES in plain language, three to five types, one sentence

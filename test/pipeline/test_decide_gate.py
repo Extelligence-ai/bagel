@@ -240,3 +240,37 @@ def test_watching_more_signals_than_max_signals_fails_with_guidance() -> None:
     gate._name = "decide"
     with pytest.raises(ValueError, match="max_signals"):
         gate.evaluate(asof_seconds=1e12, lookback=None)
+
+
+def test_decide_gate_rejects_live_sources_in_beta(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock
+
+    from src.pipeline import messages
+    from src.source.bagel import sink as live_sink
+
+    live = MagicMock()
+    live.factory = MagicMock(spec=live_sink.SourceFactory)  # the live buffer reader
+    monkeypatch.setattr(messages.SourceContext, "build", staticmethod(lambda path, kwargs: live))
+    gate = decide.Decide(
+        question="q?", choices=CHOICES, accept=["upload"], url="http://127.0.0.1:9/"
+    )
+    with pytest.raises(ValueError, match="batch-only"):
+        gate.setup(path="live://x")
+
+
+def test_choices_must_be_strings() -> None:
+    # YAML turns `[yes, no]` into [True, False]; the criteria keys would then never match.
+    with pytest.raises(ValueError, match="string"):
+        decide.Decide(
+            question="q?", choices=[True, False], accept=[True], url="http://127.0.0.1:9/"
+        )
+
+
+@pytest.mark.parametrize(
+    "bad", [{"max_signals": 0}, {"timeout_seconds": 0}, {"timeout_seconds": -1}]
+)
+def test_numeric_settings_are_validated(bad: dict) -> None:
+    with pytest.raises(ValueError):
+        decide.Decide(
+            question="q?", choices=CHOICES, accept=["upload"], url="http://127.0.0.1:9/", **bad
+        )

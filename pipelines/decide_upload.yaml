@@ -30,7 +30,7 @@ gates:
       topics: [/fluid_pressure]
       backend: remote
       url: http://localhost:9000/decide # <-- your decision endpoint
-      api_key_env: DECIDE_API_KEY # optional bearer token
+      # api_key_env: DECIDE_API_KEY # bearer token; the variable must be set when named
       # backend: local
       # model: <hugging-face-model-id-or-path>
 tasks:

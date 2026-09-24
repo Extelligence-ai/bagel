@@ -190,3 +190,12 @@ def test_tasks_cannot_alter_a_gate_record_through_nested_values(mcap_path: pathl
     RECORD["probabilities"]["x"] = 0.5
     _run(mcap_path, [{"module": "fake_nested"}], tasks=[{"module": "fake_tamper"}])
     assert RECORD == {"probabilities": {"x": 0.5}}
+
+
+def test_a_gate_named_asof_seconds_cannot_shadow_the_timestamp(mcap_path: pathlib.Path) -> None:
+    with pytest.raises(ValueError, match="asof_seconds"):
+        _run(
+            mcap_path,
+            [{"module": "fake_labeller", "name": "asof_seconds", "args": {"key": "k"}}],
+            tasks=[{"module": "src.pipeline.tasks.write_annotations"}],
+        )

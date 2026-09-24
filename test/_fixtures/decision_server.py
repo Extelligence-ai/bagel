@@ -49,13 +49,24 @@ def decision_server() -> Iterator[DecisionServer]:
     state = DecisionServer()
 
     class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            state.requests.append({"auth": self.headers.get("Authorization"), "path": self.path})
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
         def do_POST(self) -> None:
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            state.requests.append({"body": body, "auth": self.headers.get("Authorization")})
+            state.requests.append(
+                {"body": body, "auth": self.headers.get("Authorization"), "path": self.path}
+            )
             time.sleep(state.delay_seconds)
-            status, reply = state.reply(body)
+            status, reply, *extra = state.reply(body)
             data = reply.encode() if isinstance(reply, str) else json.dumps(reply).encode()
             self.send_response(status)
+            for name, value in (extra[0] if extra else {}).items():
+                self.send_header(name, value)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()

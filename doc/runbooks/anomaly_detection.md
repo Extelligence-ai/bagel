@@ -94,13 +94,13 @@ Before saving the pipeline, dry-run the screen over a log you know. Nothing is w
 and no decision model is called:
 
 > What would the anomaly gate flag on ./shift_042 with 10 s windows, watching
-> `/motor/current.value` and `/imu.linear_accel.x`?
+> `/motor/current.value` and `/imu.linear_acceleration.x`?
 
 That is the `preview_anomalies` tool (`calibrate()` in `src/pipeline/decide/calibrate.py`):
 
 ```text
 preview_anomalies("./shift_042", window_seconds=10,
-                  signals=["/motor/current.value", "/imu.linear_accel.x"], warmup_minutes=1)
+                  signals=["/motor/current.value", "/imu.linear_acceleration.x"], warmup_minutes=1)
 -> { "windows": 61, "warmup_windows": 6, "screened_windows": 55,
      "flagged": [{"offset_seconds": 410.0, "reasons": [{"kind": "mean_shift", ...}, ...]}, ...],
      "flagged_fraction": 0.036, "by_signal": {"/motor/current.value": 1},
@@ -108,7 +108,10 @@ preview_anomalies("./shift_042", window_seconds=10,
 ```
 
 Pass `cadence_topic` (and `cadence_seconds`, if the pipeline evaluates less often than
-the window length) so windows end exactly where the saved pipeline will fire.
+the window length) so windows end where the saved pipeline will fire. The preview is
+screen-only: it models `mode: screen` with the model confirming every flag, `every: N
+seconds` cadences, and a gate that runs on every fire, so list the anomaly gate first
+if you combine gates.
 `advice` names signals that trip the screen in most windows (they drift by design, drop
 them), topics that read as dropouts every window (raise `dropout_seconds`), and a
 warm-up that swallows the log. Iterate until the flags look like real events, then
@@ -126,12 +129,12 @@ write the YAML. The LLM recipe `compose/anomaly_pipeline` walks these steps.
 | `z_threshold` | `3.0` | Flag a window whose mean is this many baseline std devs from normal. A single sample must clear this plus the extreme its sample count explains (about 3σ more at 50 Hz), so noisy signals don't trip every window. |
 | `dropout_seconds` | `2` | Flag an expected topic silent this long at the window's end, measured from its last message even across windows (so a threshold longer than the window waits for it). Expected = publishes in most baseline windows, so event-driven topics don't count. The cadence topic can never drop out: the pipeline only runs when it publishes. |
 | `baseline_window_minutes` | `30` | How much recent history defines "normal". |
-| `warmup_minutes` | `5` | History needed before screening starts; nothing is flagged before then. Must not exceed `baseline_window_minutes`. |
+| `warmup_minutes` | `5` | History needed before screening starts; in screen mode nothing is flagged before then (in `always` mode Jev is still asked, without baseline statistics). Must not exceed `baseline_window_minutes`. |
 | `min_probability` | `0.6` | Confidence Jev needs for its label to count; less confident answers count as normal. |
 | `question` | built in | The instructions Jev receives. |
 | `backend` | `jev` | `jev` (TypeSafe), `remote` (any endpoint answering `{"probabilities": {...}}`) or `local` (model on the robot, see below). |
 | `model` | `jev-latest` | Pin a version such as `jev-1.13.0` for reproducible labels. |
-| `url` | TypeSafe | Override the endpoint, e.g. a LiteLLM pass-through proxy. |
+| `url` | TypeSafe | Override the endpoint, e.g. a LiteLLM pass-through proxy. Must be https unless the host is loopback (`localhost`/`127.0.0.1` inside the container; `host.docker.internal` is not), because the key travels as a bearer token. Redirects are never followed. |
 | `api_key_env` | `TYPESAFE_API_KEY` | Environment variable holding the key. |
 | `timeout_seconds` | `10` | Per-request timeout. |
 
@@ -214,7 +217,8 @@ also hands its decision to `write_annotations`.
 - **Dropouts are judged at the window's end.** A topic that went quiet for 5 s in the
   middle of a 10 s window and came back is not a dropout.
 - **The baseline is per run.** It is learned from the data the pipeline sees and
-  resets when the pipeline restarts; the first `warmup_minutes` are never flagged.
+  resets when the pipeline restarts; in screen mode the first `warmup_minutes` are never
+  flagged.
   Known-good reference logs and fleet baselines pushed from Matcha are planned.
 - **Slow drift can hide.** A signal that creeps up over longer than
   `baseline_window_minutes` moves the baseline with it.

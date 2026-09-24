@@ -16,7 +16,7 @@
 name: anomaly_upload
 site: warehouse
 asset: forklift
-path: ./data/sample/ros2/mcap # <-- point this at your recorded log
+path: ./data/sample/ros2/mcap # <-- point this at a real recorded log (the sample is 0.6 s long)
 allow_failure: false
 cadence:
   topic: /fluid_pressure

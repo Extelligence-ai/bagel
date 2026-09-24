@@ -375,9 +375,10 @@ def test_live_sources_are_rejected_in_beta(
 ) -> None:
     # The Jev call is synchronous; on a live ingest thread it would stall every topic.
     from src.pipeline import messages
+    from src.source.bagel import sink as live_sink
 
     live = MagicMock()
-    live.factory = object()  # anything but a BoundedSourceFactory
+    live.factory = MagicMock(spec=live_sink.SourceFactory)  # the live buffer reader
     monkeypatch.setattr(messages.SourceContext, "build", staticmethod(lambda path, kwargs: live))
     gate = anomaly.Anomaly(**_gate_args(server))
     with pytest.raises(ValueError, match="batch-only"):
@@ -438,3 +439,50 @@ def test_warmup_longer_than_the_baseline_is_rejected(server: DecisionServer) -> 
     # would be treated as warm-up and nothing detected (Codex P2).
     with pytest.raises(ValueError, match="warmup_minutes"):
         anomaly.Anomaly(**_gate_args(server, baseline_window_minutes=1, warmup_minutes=5))
+
+
+def test_anomaly_names_must_be_strings(server: DecisionServer) -> None:
+    # YAML turns `on:`/`off:` keys into booleans.
+    with pytest.raises(ValueError, match="string"):
+        anomaly.Anomaly(**_gate_args(server, anomalies={True: "switched on"}))
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"z_threshold": 0},
+        {"dropout_seconds": 0},
+        {"baseline_window_minutes": 0, "warmup_minutes": 0},
+        {"warmup_minutes": -1},
+        {"timeout_seconds": 0},
+    ],
+)
+def test_numeric_settings_are_validated(server: DecisionServer, bad: dict) -> None:
+    with pytest.raises(ValueError):
+        anomaly.Anomaly(**_gate_args(server, **bad))
+
+
+def test_a_zero_lookback_is_rejected(log_path: pathlib.Path, server: DecisionServer) -> None:
+    gate = anomaly.Anomaly(**_gate_args(server))
+    gate.setup(path=str(log_path))
+    gate._name = "anomaly"
+    with pytest.raises(ValueError, match="lookback"):
+        gate.evaluate(EPOCH + 10, base.Lookback(last=0, unit=base.Unit.SECOND))
+
+
+def test_a_weak_normal_verdict_keeps_the_window_out_of_the_baseline(
+    log_path: pathlib.Path, server: DecisionServer
+) -> None:
+    # Jev ranks `normal` first but below min_probability: not confident enough to keep the
+    # slice, and not confident enough to teach the baseline that the fault is normal.
+    server.reply = lambda body: jev_reply(
+        {c: (0.4 if c == "normal" else 0.2) for c in body["questions"]["decision"]["criteria"]}
+    )
+    gate = anomaly.Anomaly(**_gate_args(server))
+    gate.setup(path=str(log_path))
+    gate._name = "anomaly"
+    lookback = base.Lookback(last=10, unit=base.Unit.SECOND)
+    for offset in range(0, 421, 10):
+        gate.evaluate(EPOCH + offset, lookback)
+    mean = gate.baseline.stats(EPOCH + 420)["signals"]["/motor/current.value"]["mean"]
+    assert mean == pytest.approx(1.0, abs=0.01)
