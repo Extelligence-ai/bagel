@@ -49,7 +49,10 @@ of every statistic.
 
 1. Get a TypeSafe API key and export it where the pipeline runs:
    `export TYPESAFE_API_KEY=...`. A missing key fails when the pipeline is built, not
-   at the first anomaly.
+   at the first anomaly. No TypeSafe key? [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe)
+   serves the same API with a gateway key: set `url:
+   https://ai-gateway.vercel.sh/typesafe/v1/systemone`, `model: typesafe-ai/jev` and
+   `api_key_env: AI_GATEWAY_API_KEY` on the gate.
 2. Start from [`pipelines/anomaly_upload.yaml`](../../pipelines/anomaly_upload.yaml):
 
 ```yaml

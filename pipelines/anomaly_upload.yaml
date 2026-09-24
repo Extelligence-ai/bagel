@@ -39,6 +39,10 @@ gates:
       warmup_minutes: 5
       min_probability: 0.6
       backend: jev # model defaults to jev-latest
+      # Through Vercel AI Gateway instead of a TypeSafe key:
+      # url: https://ai-gateway.vercel.sh/typesafe/v1/systemone
+      # model: typesafe-ai/jev
+      # api_key_env: AI_GATEWAY_API_KEY
 tasks:
   - module: src.pipeline.tasks.snippet.mcap
     lookback:
