@@ -46,6 +46,53 @@ def _present_topics(
     }
 
 
+def _validate_settings(  # noqa: PLR0913
+    anomalies: dict[str, str],
+    mode: str,
+    z_threshold: float,
+    dropout_seconds: float,
+    timeout_seconds: float,
+    baseline_window_minutes: float,
+    warmup_minutes: float,
+    min_probability: float,
+    max_signals: int,
+) -> None:
+    """Reject settings the gate cannot run with, at construction time."""
+    if not anomalies:
+        raise ValueError("The anomaly gate needs at least one named type in 'anomalies'")
+    if any(not isinstance(k, str) or not isinstance(v, str) for k, v in anomalies.items()):
+        raise ValueError(
+            "Anomaly names and descriptions must be strings. YAML reads bare yes/no/on/off "
+            "as booleans: quote them."
+        )
+    numbers = (
+        z_threshold,
+        dropout_seconds,
+        timeout_seconds,
+        baseline_window_minutes,
+        warmup_minutes,
+    )
+    if not all(math.isfinite(n) for n in numbers):
+        raise ValueError("Numeric settings must be finite (YAML `.nan`/`.inf` are not)")
+    if z_threshold <= 0 or dropout_seconds <= 0 or timeout_seconds <= 0:
+        raise ValueError("z_threshold, dropout_seconds and timeout_seconds must be positive")
+    if baseline_window_minutes <= 0 or warmup_minutes < 0:
+        raise ValueError("baseline_window_minutes must be positive and warmup_minutes non-negative")
+    if reserved := sorted({NORMAL, OTHER, SCREEN_ONLY} & set(anomalies)):
+        raise ValueError(f"Anomaly names {reserved} are reserved labels")
+    if mode not in MODES:
+        raise ValueError(f"Unknown mode {mode!r}; use one of {MODES}")
+    if not (0.0 <= min_probability <= 1.0):
+        raise ValueError("min_probability must be between 0 and 1")
+    if max_signals < 1:
+        raise ValueError("max_signals must be at least 1")
+    if warmup_minutes > baseline_window_minutes:
+        raise ValueError(
+            "warmup_minutes must not exceed baseline_window_minutes: the baseline forgets "
+            "history faster than warm-up needs it and would never become ready"
+        )
+
+
 class Anomaly(messages.TopicMessageMixin, base.Gate):
     """Detect anomalies on the robot and ask Jev to label them. BETA."""
 
@@ -108,41 +155,17 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
 
         """
         logging.warning("The anomaly gate is BETA: recorded (batch) sources only.")
-        if not anomalies:
-            raise ValueError("The anomaly gate needs at least one named type in 'anomalies'")
-        if any(not isinstance(k, str) or not isinstance(v, str) for k, v in anomalies.items()):
-            raise ValueError(
-                "Anomaly names and descriptions must be strings. YAML reads bare yes/no/on/off "
-                "as booleans: quote them."
-            )
-        numbers = (
+        _validate_settings(
+            anomalies,
+            mode,
             z_threshold,
             dropout_seconds,
             timeout_seconds,
             baseline_window_minutes,
             warmup_minutes,
+            min_probability,
+            max_signals,
         )
-        if not all(math.isfinite(n) for n in numbers):
-            raise ValueError("Numeric settings must be finite (YAML `.nan`/`.inf` are not)")
-        if z_threshold <= 0 or dropout_seconds <= 0 or timeout_seconds <= 0:
-            raise ValueError("z_threshold, dropout_seconds and timeout_seconds must be positive")
-        if baseline_window_minutes <= 0 or warmup_minutes < 0:
-            raise ValueError(
-                "baseline_window_minutes must be positive and warmup_minutes non-negative"
-            )
-        if reserved := sorted({NORMAL, OTHER, SCREEN_ONLY} & set(anomalies)):
-            raise ValueError(f"Anomaly names {reserved} are reserved labels")
-        if mode not in MODES:
-            raise ValueError(f"Unknown mode {mode!r}; use one of {MODES}")
-        if not (0.0 <= min_probability <= 1.0):
-            raise ValueError("min_probability must be between 0 and 1")
-        if max_signals < 1:
-            raise ValueError("max_signals must be at least 1")
-        if warmup_minutes > baseline_window_minutes:
-            raise ValueError(
-                "warmup_minutes must not exceed baseline_window_minutes: the baseline forgets "
-                "history faster than warm-up needs it and would never become ready"
-            )
         self._choices = {
             **anomalies,
             OTHER: "an anomaly that is none of the named types",
