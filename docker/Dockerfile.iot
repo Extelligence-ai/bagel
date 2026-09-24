@@ -64,6 +64,7 @@ COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
 COPY --chown=${USERNAME}:${USERNAME} run.py ./run.py
 COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
 COPY --chown=${USERNAME}:${USERNAME} src ./src
+COPY --chown=${USERNAME}:${USERNAME} LICENSE THIRD_PARTY_NOTICES.md ./
 # MCAP as a first-class format (no ROS required)
 
 # Copy common test code
