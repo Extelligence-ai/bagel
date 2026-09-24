@@ -293,3 +293,13 @@ def test_local_backend_runtime_errors_are_unavailable() -> None:
     backend._device, backend._name = "cpu", "fake"
     with pytest.raises(backends.BackendUnavailable, match="CUDA"):
         backend.decide(STATE, "q?", CHOICES)
+
+
+def test_local_scores_do_not_penalize_longer_choice_names() -> None:
+    # Summing token log-probs means a choice whose tokens extend another's can never
+    # outrank it ("fault" vs "fault_detected"); scores are compared per token (Codex P2).
+    scores = backends.normalize_log_likelihoods(
+        {"fault": -2.0, "fault_detected": -3.0}, {"fault": 1, "fault_detected": 3}
+    )
+    assert scores["fault_detected"] > scores["fault"]
+    assert all(0 < s <= 1 for s in scores.values())

@@ -132,6 +132,20 @@ def _probabilities(raw: Any, choices: dict[str, str]) -> dict[str, float]:  # no
     return {choice: scores[choice] for choice in choices}
 
 
+def normalize_log_likelihoods(
+    log_likelihoods: dict[str, float], lengths: dict[str, int]
+) -> dict[str, float]:
+    """Turn summed token log-probs into comparable scores in (0, 1].
+
+    Summed log-probs penalize longer names: a choice whose tokens extend another's can
+    never outrank it. Compare the mean log-prob per token instead, then shift so the
+    best choice scores 1.
+    """
+    per_token = {c: log_likelihoods[c] / max(lengths[c], 1) for c in log_likelihoods}
+    best = max(per_token.values())
+    return {choice: math.exp(value - best) for choice, value in per_token.items()}
+
+
 def choice_ids(tokenizer: Any, choice: str) -> Any:  # noqa: ANN401
     """Tokenize a choice as a continuation of the prompt, never as a new sequence.
 
@@ -243,6 +257,7 @@ class LocalBackend:
     def _score(self, prompt: str, choices: dict[str, str]) -> Answer:
         prompt_ids = self._tokenizer(prompt, return_tensors="pt").input_ids.to(self._device)
         log_likelihoods = {}
+        lengths = {}
         with self._torch.no_grad():
             for choice in choices:
                 encoded = choice_ids(self._tokenizer, choice).to(self._device)
@@ -251,11 +266,8 @@ class LocalBackend:
                 targets = input_ids[0, 1:]
                 token_log_probs = log_probs.gather(1, targets.unsqueeze(1)).squeeze(1)
                 log_likelihoods[choice] = token_log_probs[-encoded.shape[1] :].sum().item()
-        best = max(log_likelihoods.values())
-        return Answer(
-            {choice: math.exp(value - best) for choice, value in log_likelihoods.items()},
-            self._name,
-        )
+                lengths[choice] = int(encoded.shape[1])
+        return Answer(normalize_log_likelihoods(log_likelihoods, lengths), self._name)
 
 
 def build(
