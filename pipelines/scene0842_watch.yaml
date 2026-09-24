@@ -1,0 +1,66 @@
+name: scene0842_watch
+site: singapore
+asset: ego
+path: /Users/arunvenkatadri/bagel-demo/nuscenes-scene-0842.mcap
+allow_failure: false
+cadence:
+  topic: /ego/lane
+  when:
+    every: 1
+    unit: second
+gates:
+- module: src.pipeline.gates.anomaly
+  lookback:
+    last: 1
+    unit: second
+  args:
+    topics:
+    - /imu
+    - /odom
+    - /ego/lane
+    signals:
+    - /imu.linear_accel.x
+    - /imu.linear_accel.y
+    - /imu.linear_accel.z
+    - /imu.rotation_rate.x
+    - /imu.rotation_rate.y
+    - /imu.rotation_rate.z
+    - /odom.accel.x
+    - /odom.accel.y
+    - /odom.rotation_rate.z
+    - /ego/lane.lateral_offset_m
+    - /ego/lane.heading_error_rad
+    anomalies:
+      hard_braking: sudden strong longitudinal deceleration or acceleration, far beyond
+        normal driving
+      swerve: abrupt sharp yaw rate or lateral acceleration, a sudden steering input
+        or evasive maneuver
+      lane_drift: 'the car drifts off the lane centre: lateral offset or heading error
+        well outside normal'
+      imu_odom_disagreement: the IMU and odometry report inconsistent accelerations
+        or rotation rates
+      sensor_dropout: the IMU, odometry or lane topic stops publishing
+    mode: screen
+    z_threshold: 3
+    dropout_seconds: 1
+    baseline_window_minutes: 1
+    warmup_minutes: 0.1
+    min_probability: 0.6
+    backend: jev
+    model: typesafe-ai/jev
+    url: https://ai-gateway.vercel.sh/typesafe/v1/systemone
+    api_key_env: AI_GATEWAY_API_KEY
+    timeout_seconds: 20
+tasks:
+- module: src.pipeline.tasks.snippet.mcap
+  lookback:
+    last: 1
+    unit: second
+  args:
+    topics:
+    - /imu
+    - /odom
+    - /ego/lane
+    - /cam_front/image_rect_compressed
+    - /cam_front/camera_info
+- module: src.pipeline.tasks.write_annotations

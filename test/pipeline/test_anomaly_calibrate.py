@@ -200,3 +200,16 @@ def test_a_one_off_publication_during_warmup_is_not_an_expected_topic(
     )
     assert "/event" not in report["by_topic"]
     assert all(r.get("topic") != "/event" for f in report["flagged"] for r in f["reasons"])
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"warmup_minutes": float("nan")},
+        {"z_threshold": float("nan")},
+        {"cadence_seconds": float("inf")},
+    ],
+)
+def test_preview_rejects_non_finite_settings(log_path: pathlib.Path, bad: dict) -> None:
+    with pytest.raises(ValueError):
+        _run(log_path, **bad)

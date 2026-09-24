@@ -519,3 +519,17 @@ def test_live_subscriptions_refuse_the_anomaly_gate(
     pipeline = _pipeline(log_path, _gate_args(server), SNIP_AND_WRITE)
     with pytest.raises(ValueError, match="batch-only"):
         sink_base.require_live_safe(pipeline)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"warmup_minutes": float("nan")},
+        {"z_threshold": float("nan")},
+        {"dropout_seconds": float("inf")},
+    ],
+)
+def test_non_finite_settings_are_rejected(server: DecisionServer, bad: dict) -> None:
+    # YAML `.nan` makes every comparison false, so it slipped through (Codex P2).
+    with pytest.raises(ValueError):
+        anomaly.Anomaly(**_gate_args(server, **bad))

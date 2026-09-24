@@ -6,6 +6,7 @@ is used before a reduction.
 """
 
 import collections
+import math
 from typing import Any
 
 from src.pipeline import base, messages
@@ -82,6 +83,16 @@ def _validate(  # noqa: PLR0913
     max_signals: int,
 ) -> float:
     """Check the arguments the way the gate and Pipeline.build would; return the cadence."""
+    numbers = (
+        window_seconds,
+        cadence_seconds or 1.0,
+        warmup_minutes,
+        baseline_window_minutes,
+        z_threshold,
+        dropout_seconds,
+    )
+    if not all(math.isfinite(n) for n in numbers):
+        raise ValueError("Numeric settings must be finite (YAML `.nan`/`.inf` are not)")
     if window_seconds <= 0 or window_seconds != int(window_seconds):
         raise ValueError("window_seconds must be a positive whole number of seconds")
     if cadence_seconds is None:

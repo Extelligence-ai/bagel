@@ -17,6 +17,7 @@ Vercel AI Gateway; a direct TypeSafe key has not been used yet.
 """
 
 import logging
+import math
 from typing import Any
 
 from src.di import module
@@ -114,6 +115,15 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
                 "Anomaly names and descriptions must be strings. YAML reads bare yes/no/on/off "
                 "as booleans: quote them."
             )
+        numbers = (
+            z_threshold,
+            dropout_seconds,
+            timeout_seconds,
+            baseline_window_minutes,
+            warmup_minutes,
+        )
+        if not all(math.isfinite(n) for n in numbers):
+            raise ValueError("Numeric settings must be finite (YAML `.nan`/`.inf` are not)")
         if z_threshold <= 0 or dropout_seconds <= 0 or timeout_seconds <= 0:
             raise ValueError("z_threshold, dropout_seconds and timeout_seconds must be positive")
         if baseline_window_minutes <= 0 or warmup_minutes < 0:
