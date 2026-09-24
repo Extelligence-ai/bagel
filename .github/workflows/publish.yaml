@@ -77,7 +77,11 @@ jobs:
       base-ref: ${{ needs.resolve-audit-baseline.outputs.sha }}
   docker:
     needs: [validate-tests, validate-lint, validate-dependencies]
-    if: github.ref == 'refs/heads/main'
+    # always() opts out of the implicit success() check, which is false whenever any
+    # upstream job was skipped: resolve-audit-baseline is skipped on every push, so
+    # without it this job never ran (no images published 2026-09-04 .. 2.3.0).
+    # !failure() and !cancelled() still require validation to pass.
+    if: always() && !failure() && !cancelled() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
