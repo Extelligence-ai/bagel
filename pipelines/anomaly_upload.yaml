@@ -1,0 +1,51 @@
+# BETA. Watch a robot log for anomalies, ask Jev (TypeSafe) to label them, and send
+# only the anomalous 10-second slices -- each with a JSON label -- to a bucket.
+#
+# Every 10 s the `anomaly` gate compares the last 10 s against a rolling baseline
+# learned on the robot. When a signal jumps outside its normal spread or a topic
+# goes quiet, it asks Jev which of the named anomalies this is (or `other_unusual`
+# / `normal`). Set `mode: always` to ask Jev about every window instead.
+# If Jev is unreachable, flagged slices are still uploaded, labelled `screen_only`.
+#
+# Needs TYPESAFE_API_KEY in the environment (or `backend: remote` + `url`).
+# Uploads work with any supported store: swap upload.s3 for upload.gcs / upload.azure,
+# or set `endpoint_url` for MinIO / R2.
+name: anomaly_upload
+site: warehouse
+asset: forklift
+path: ./data/sample/ros2/mcap # <-- point this at your log or live source
+allow_failure: false
+cadence:
+  topic: /fluid_pressure
+  when:
+    every: 10
+    unit: second
+gates:
+  - module: src.pipeline.gates.anomaly
+    lookback:
+      last: 10
+      unit: second
+    args:
+      topics: [/fluid_pressure]
+      anomalies:
+        pressure_spike: "fluid pressure far above or below normal"
+        sensor_dropout: "the pressure sensor stops publishing"
+      mode: screen # or: always
+      z_threshold: 3.0
+      dropout_seconds: 2
+      baseline_window_minutes: 30
+      warmup_minutes: 5
+      min_probability: 0.6
+      backend: jev # model defaults to jev-latest
+tasks:
+  - module: src.pipeline.tasks.snippet.mcap
+    lookback:
+      last: 10
+      unit: second
+  - module: src.pipeline.tasks.write_annotations
+  - module: src.pipeline.tasks.upload.s3
+    args:
+      bucket: my-robot-anomalies # <-- your bucket
+      prefix: anomalies
+      # Artifact directory inside the Bagel images (settings.ARTIFACT_DIRECTORY).
+      source: /home/ubuntu/.bagel/artifacts/pipeline=anomaly_upload

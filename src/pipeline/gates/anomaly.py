@@ -1,0 +1,188 @@
+"""Detect anomalies on the robot and ask Jev to label them. BETA.
+
+Each window is summarized and compared against a rolling baseline learned on the
+robot. In ``screen`` mode (default) a cheap check -- a signal far outside its baseline
+spread, or a topic that stops publishing -- decides whether to ask Jev; in ``always``
+mode Jev is asked about every window. Jev picks one of the named anomaly types,
+``other_unusual`` or ``normal``. The gate passes for anything but a confident
+``normal``, so downstream tasks (snippet, write_annotations, upload) keep only
+anomalous log segments, each with a JSON label from `annotations()`.
+
+If Jev cannot be reached, windows the screen flagged still pass, labelled
+``screen_only`` (``verified: false``), so no anomaly is lost while offline.
+
+BETA: the Jev backend follows TypeSafe's documented /v1/systemone format and has not
+yet been validated against the live API.
+"""
+
+import logging
+from typing import Any
+
+from src.di import module
+from src.pipeline import base, messages
+from src.pipeline.decide import backends, baseline, screen, summary
+
+NORMAL = "normal"
+OTHER = "other_unusual"
+SCREEN_ONLY = "screen_only"
+MODES = ("screen", "always")
+DEFAULT_QUESTION = (
+    "Compared with this robot's baseline, does this window of sensor data show one of "
+    "these anomalies, something else unusual, or normal operation?"
+)
+
+
+class Anomaly(messages.TopicMessageMixin, base.Gate):
+    """Detect anomalies on the robot and ask Jev to label them. BETA."""
+
+    def __init__(  # noqa: PLR0913
+        self,
+        anomalies: dict[str, str],
+        topics: list[str] | None = None,
+        signals: list[str] | None = None,
+        mode: str = "screen",
+        z_threshold: float = 3.0,
+        dropout_seconds: float = 2.0,
+        baseline_window_minutes: float = 30.0,
+        warmup_minutes: float = 5.0,
+        min_probability: float = 0.6,
+        question: str = DEFAULT_QUESTION,
+        backend: str = "jev",
+        model: str | None = None,
+        url: str | None = None,
+        api_key_env: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> None:
+        """Initialize the gate.
+
+        Args:
+            anomalies (dict[str, str]): Named anomaly types and a plain-language
+                description of each, e.g. {"stall": "velocity commanded but no motion"}.
+            topics (list[str] | None, optional): Topics to watch. If None, all topics.
+            signals (list[str] | None, optional): Dotted numeric signals to watch, e.g.
+                "/imu.linear_acceleration.x". If None, every numeric field except
+                `header`/`stamp` fields.
+            mode (str, optional): "screen" asks Jev only about windows the on-robot
+                check flags; "always" asks about every window. Defaults to "screen".
+            z_threshold (float, optional): Flag a signal whose most extreme value is
+                more than this many baseline standard deviations from its mean.
+            dropout_seconds (float, optional): Flag a topic silent for longer than this.
+            baseline_window_minutes (float, optional): Span of the rolling baseline.
+            warmup_minutes (float, optional): History needed before screening starts.
+            min_probability (float, optional): Confidence Jev needs for its label to
+                count. A less confident answer counts as normal. Defaults to 0.6.
+            question (str, optional): The instructions given to Jev.
+            backend (str, optional): "jev" (TypeSafe, default), "remote" or "local".
+            model (str | None, optional): Model id; defaults to "jev-latest" for jev.
+            url (str | None, optional): Endpoint override, e.g. a LiteLLM proxy.
+            api_key_env (str | None, optional): Env var with the API key; defaults to
+                TYPESAFE_API_KEY for jev.
+            timeout_seconds (float, optional): Request timeout. Defaults to 10.
+
+        Raises:
+            ValueError: On invalid arguments, or a missing API key for the jev backend.
+
+        """
+        logging.warning(
+            "The anomaly gate is BETA: its Jev backend has not been validated against "
+            "the live TypeSafe API."
+        )
+        if not anomalies:
+            raise ValueError("The anomaly gate needs at least one named type in 'anomalies'")
+        if reserved := sorted({NORMAL, OTHER, SCREEN_ONLY} & set(anomalies)):
+            raise ValueError(f"Anomaly names {reserved} are reserved labels")
+        if mode not in MODES:
+            raise ValueError(f"Unknown mode {mode!r}; use one of {MODES}")
+        if not (0.0 <= min_probability <= 1.0):
+            raise ValueError("min_probability must be between 0 and 1")
+        self._choices = {
+            **anomalies,
+            OTHER: "an anomaly that is none of the named types",
+            NORMAL: "normal operation for this robot",
+        }
+        self._topics = topics
+        self._signals = signals
+        self._mode = mode
+        self._z_threshold = z_threshold
+        self._dropout_seconds = dropout_seconds
+        self._min_probability = min_probability
+        self._question = question
+        self._backend = backends.build(
+            backend, model=model, url=url, api_key_env=api_key_env, timeout_seconds=timeout_seconds
+        )
+        self.baseline: baseline.Baseline = baseline.RollingBaseline(
+            baseline_window_minutes, warmup_minutes
+        )
+        self._annotations: dict[str, Any] = {}
+
+    def evaluate(self, asof_seconds: float, lookback: base.Lookback | None) -> bool:
+        """Implement `base.Gate.evaluate`."""
+        relation = self.to_duckdb(topics=self._topics, asof_seconds=asof_seconds, lookback=lookback)
+        window = summary.summarize(relation, self._signals)
+        normal = self.baseline.stats(asof_seconds) if self.baseline.ready(asof_seconds) else None
+        reasons = (
+            screen.screen(window, normal, asof_seconds, self._z_threshold, self._dropout_seconds)
+            if normal
+            else []
+        )
+        self._annotations = {}
+        if self._mode == "screen" and not reasons:
+            self.baseline.add(window)
+            return False
+
+        state = {"window": window, "baseline": normal, "screen_reasons": reasons}
+        try:
+            answer = self._backend.decide(state, self._question, self._choices)
+        except backends.BackendUnavailable as error:
+            logging.warning("Anomaly gate %s: Jev unavailable (%s)", self.name, error)
+            if not reasons:
+                self.baseline.add(window)
+                return False
+            self._record(SCREEN_ONLY, {}, None, False, window, normal, reasons)
+            return True
+
+        total = sum(answer.probabilities.values())
+        probabilities = {
+            choice: (score / total if total > 0 else 0.0)
+            for choice, score in answer.probabilities.items()
+        }
+        label = max(probabilities, key=probabilities.__getitem__)
+        flagged = label != NORMAL and probabilities[label] >= self._min_probability
+        if flagged:
+            self._record(label, probabilities, answer.model, True, window, normal, reasons)
+        elif not reasons or label == NORMAL:
+            # Keep uncertain-but-screened windows out of the baseline as well.
+            self.baseline.add(window)
+        return flagged
+
+    def _record(  # noqa: PLR0913
+        self,
+        label: str,
+        probabilities: dict[str, float],
+        model: str | None,
+        verified: bool,
+        window: dict,
+        normal: dict | None,
+        reasons: list[dict],
+    ) -> None:
+        self._annotations = {
+            "label": label,
+            "probabilities": probabilities,
+            "verified": verified,
+            "model": model,
+            "mode": self._mode,
+            "screen_reasons": reasons,
+            "window": window["window"],
+            "baseline": normal,
+            "beta": True,
+        }
+        logging.info("Anomaly gate %s flagged %s (verified=%s)", self.name, label, verified)
+
+    def annotations(self) -> dict[str, Any]:
+        """Implement `base.Gate.annotations`: the label record of the latest pass."""
+        return dict(self._annotations)
+
+
+def register() -> None:
+    """Register module for dependency injection."""
+    module.global_registry[__name__] = Anomaly

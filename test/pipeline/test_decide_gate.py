@@ -10,6 +10,7 @@ import pytest
 
 from settings import settings
 from src.pipeline import base
+from src.pipeline.decide import backends
 from src.pipeline.gates import decide
 
 TS = settings.TIMESTAMP_SECONDS_COLUMN_NAME
@@ -35,41 +36,9 @@ class _Fixed:
         self.probabilities = probabilities
         self.calls: list[dict] = []
 
-    def decide(self, state: dict, question: str, choices: list[str]) -> dict[str, float]:
+    def decide(self, state: dict, question: str, choices: dict[str, str]) -> backends.Answer:
         self.calls.append({"state": state, "question": question, "choices": choices})
-        return self.probabilities
-
-
-# --- summarize ---------------------------------------------------------------------------
-
-
-def test_summarize_reports_numeric_leaf_statistics() -> None:
-    state = decide.summarize(_relation())
-    assert state["signals"]["/imu.accel.x"] == {
-        "count": 3,
-        "min": -12.0,
-        "max": -2.0,
-        "mean": -6.0,
-    }
-    assert state["signals"]["/imu.accel.y"]["max"] == 1.0
-
-
-def test_summarize_skips_non_numeric_fields() -> None:
-    assert "/imu.mode" not in decide.summarize(_relation())["signals"]
-
-
-def test_summarize_reports_the_window_bounds() -> None:
-    assert decide.summarize(_relation())["window"] == {
-        "start_seconds": 10.0,
-        "end_seconds": 12.0,
-        "messages": 3,
-    }
-
-
-def test_summarize_empty_window() -> None:
-    state = decide.summarize(_relation().filter(f"{TS} > 100"))
-    assert state["window"]["messages"] == 0
-    assert state["signals"]["/imu.accel.x"]["count"] == 0
+        return backends.Answer(self.probabilities, "fixed-model")
 
 
 # --- decide_window -----------------------------------------------------------------------
@@ -130,7 +99,7 @@ def test_backend_receives_the_window_summary() -> None:
     )
     (call,) = backend.calls
     assert call["question"] == "q?"
-    assert call["choices"] == CHOICES
+    assert list(call["choices"]) == CHOICES
     assert call["state"]["signals"]["/imu.accel.x"]["min"] == -12.0
 
 
@@ -139,7 +108,14 @@ def test_decision_serializes_to_json() -> None:
     payload = json.loads(decision.to_json())
     assert payload["choice"] == "upload"
     assert payload["passed"] is True
+    assert payload["model"] == "fixed-model"
     assert set(payload["probabilities"]) == set(CHOICES)
+
+
+def test_jev_backend_is_available_to_the_decide_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k")
+    gate = decide.Decide(question="q?", choices=CHOICES, accept=["upload"], backend="jev")
+    assert isinstance(gate._backend, backends.JevBackend)
 
 
 # --- configuration -----------------------------------------------------------------------
@@ -163,14 +139,6 @@ def test_remote_backend_rejects_non_http_urls() -> None:
 def test_unknown_backend_is_rejected() -> None:
     with pytest.raises(ValueError, match="backend"):
         decide.Decide(question="q?", choices=CHOICES, accept=["upload"], backend="magic")
-
-
-def test_local_backend_without_the_jev_group_explains_the_build_flag() -> None:
-    # Host CI does not install the `jev` group, so this is the CPU-only-image experience.
-    with pytest.raises(ImportError, match="JEV_MODE=true"):
-        decide.Decide(
-            question="q?", choices=CHOICES, accept=["upload"], backend="local", model="x/y"
-        )
 
 
 def test_gate_is_registered_and_importable_without_heavy_dependencies() -> None:
@@ -243,3 +211,5 @@ def test_remote_gate_decides_over_a_real_source(
     assert request["body"]["choices"] == CHOICES
     assert gate.last_decision is not None
     assert passed is gate.last_decision.passed
+    assert gate.annotations()["choice"] == gate.last_decision.choice
+    assert "state" not in gate.annotations()

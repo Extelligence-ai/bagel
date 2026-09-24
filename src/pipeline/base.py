@@ -4,8 +4,9 @@ import abc
 import importlib
 import logging
 import pathlib
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from enum import Enum
+from types import MappingProxyType
 from typing import Any
 
 import boto3
@@ -303,6 +304,16 @@ class Gate(Operator):
 
         """
 
+    def annotations(self) -> dict[str, Any]:
+        """Return details about the latest evaluation for downstream tasks.
+
+        When every gate passes, the pipeline merges the annotations of all gates and
+        exposes them to tasks as `Task.gate_annotations`, e.g. a label to write next to
+        a log slice. Gates that have nothing to share keep this default.
+
+        """
+        return {}
+
 
 class Task(Operator):
     """Abstract base class for task operators.
@@ -310,6 +321,9 @@ class Task(Operator):
     A task performs a specific action when executed, such as sending an email or generating a GIF.
 
     """
+
+    # Read-only annotations from the gates that let this execution run (see `Gate.annotations`).
+    gate_annotations: Mapping[str, Any] = MappingProxyType({})
 
     @abc.abstractmethod
     def execute(self, asof_seconds: float, lookback: Lookback | None) -> list[pathlib.Path] | None:
@@ -537,7 +551,11 @@ class Pipeline:
         """Run the pipeline at the given timestamp (in seconds)."""
         try:
             if all(gate.evaluate(asof_seconds, lookback) for gate, lookback in self._gates):
+                annotations: dict[str, Any] = {}
+                for gate, _ in self._gates:
+                    annotations.update(gate.annotations())
                 for task, lookback in self._tasks:
+                    task.gate_annotations = MappingProxyType(annotations)
                     produced = task.execute(asof_seconds, lookback)
                     if produced:
                         self._produced.extend(produced)
