@@ -10,8 +10,9 @@ against it, and asks [Jev](https://docs.typesafe.ai/models) (TypeSafe's typed-de
 model) to name anything unusual. Downstream tasks cut the slice, write a JSON label next
 to it, and upload both to any bucket Bagel supports.
 
-> **Beta.** Recorded logs only: the Jev call is synchronous and would stall a live
-> ingest thread, so the gate refuses live sources. The Jev backend follows TypeSafe's
+> **Beta.** Recorded logs only (a completed sink recording counts): the Jev call is
+> synchronous and would stall a live ingest thread, so `subscribe_live_topics` refuses
+> pipelines that contain this gate. The Jev backend follows TypeSafe's
 > documented `/v1/systemone` request and response format and is tested against a
 > stand-in server; it has not yet been run against the live TypeSafe API. **It
 > graduates** when a pipeline has run against live Jev on a real robot log with the
@@ -138,7 +139,7 @@ write the YAML. The LLM recipe `compose/anomaly_pipeline` walks these steps.
 | `backend` | `jev` | `jev` (TypeSafe), `remote` (any endpoint answering `{"probabilities": {...}}`) or `local` (model on the robot, see below). |
 | `model` | `jev-latest` | Pin a version such as `jev-1.13.0` for reproducible labels. |
 | `url` | TypeSafe | Override the endpoint, e.g. a LiteLLM pass-through proxy. Must be https unless the host is loopback (`localhost`/`127.0.0.1` inside the container; `host.docker.internal` is not), because the key travels as a bearer token. Redirects are never followed. |
-| `api_key_env` | `TYPESAFE_API_KEY` | Environment variable holding the key. |
+| `api_key_env` | `TYPESAFE_API_KEY` | Environment variable holding the key. Compose forwards only `TYPESAFE_API_KEY` into the containers; for another name, start with `docker compose run -e OTHER_KEY ...` or add it to the service's `environment`. |
 | `timeout_seconds` | `10` | Per-request timeout. |
 
 ## The label file

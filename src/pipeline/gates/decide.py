@@ -21,7 +21,6 @@ import duckdb
 from src.di import module
 from src.pipeline import base, messages
 from src.pipeline.decide import backends, summary
-from src.source.bagel import sink as live_sink
 
 _MIN_CHOICES = 2
 
@@ -78,6 +77,8 @@ def decide_window(  # noqa: PLR0913
 
 class Decide(messages.TopicMessageMixin, base.Gate):
     """Ask a typed-decision model a multiple-choice question about the lookback window."""
+
+    live_safe = False  # synchronous backend call: recorded sources only
 
     def __init__(  # noqa: PLR0913
         self,
@@ -147,15 +148,6 @@ class Decide(messages.TopicMessageMixin, base.Gate):
             backend, model=model, url=url, api_key_env=api_key_env, timeout_seconds=timeout_seconds
         )
         self.last_decision: Decision | None = None
-
-    def setup(self, path: str, **kwargs) -> None:  # noqa: ANN003
-        """Implement `base.Operator.setup`; recorded sources only while in beta."""
-        super().setup(path, **kwargs)
-        if isinstance(self.factory, live_sink.SourceFactory):
-            raise ValueError(
-                "The decide gate is batch-only in this beta: it calls the decision backend "
-                "synchronously, which would block a live ingest thread. Run it on recorded logs."
-            )
 
     def evaluate(self, asof_seconds: float, lookback: base.Lookback | None) -> bool:
         """Implement `base.Gate.evaluate`."""

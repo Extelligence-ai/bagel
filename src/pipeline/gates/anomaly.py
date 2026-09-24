@@ -22,7 +22,6 @@ from typing import Any
 from src.di import module
 from src.pipeline import base, messages
 from src.pipeline.decide import backends, baseline, screen, summary
-from src.source.bagel import sink as live_sink
 
 NORMAL = "normal"
 OTHER = "other_unusual"
@@ -48,6 +47,8 @@ def _present_topics(
 
 class Anomaly(messages.TopicMessageMixin, base.Gate):
     """Detect anomalies on the robot and ask Jev to label them. BETA."""
+
+    live_safe = False  # synchronous backend call: recorded sources only
 
     def __init__(  # noqa: PLR0913
         self,
@@ -157,15 +158,6 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         )
         self._annotations: dict[str, Any] = {}
         self._last_seen: dict[str, float] = {}
-
-    def setup(self, path: str, **kwargs) -> None:  # noqa: ANN003
-        """Implement `base.Operator.setup`; recorded sources only while in beta."""
-        super().setup(path, **kwargs)
-        if isinstance(self.factory, live_sink.SourceFactory):
-            raise ValueError(
-                "The anomaly gate is batch-only in this beta: it calls the decision backend "
-                "synchronously, which would block a live ingest thread. Run it on recorded logs."
-            )
 
     def _watched(self, relation: Any) -> summary.Signals:  # noqa: ANN401
         """Resolve the watched signals once; the schema does not change between windows."""

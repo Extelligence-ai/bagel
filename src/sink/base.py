@@ -15,7 +15,24 @@ import yaml
 from settings import settings
 from src import artifacts
 from src.pipeline.base import OnceAtEnd, Pipeline
+
 from src.sink.buffer import TopicBufferWriter
+
+
+def require_live_safe(pipeline: Pipeline) -> None:
+    """Refuse pipelines whose gates cannot run on the ingest thread.
+
+    The anomaly and decide gates call a decision backend synchronously (up to their
+    timeout per window); on a live subscription that would stall every topic. They run
+    on recorded sources, including completed sink recordings.
+    """
+    if batch_only := pipeline.batch_only_gates:
+        raise ValueError(
+            f"Gates {batch_only} are batch-only in this beta: they call a decision backend "
+            "synchronously, which would block a live ingest thread. Run this pipeline on "
+            "recorded logs (a completed sink recording is fine) instead of a live subscription."
+        )
+
 
 # A global registry to hold singleton instances of TopicSink instances.
 _global_sink_singletons: dict[tuple[str, int], "TopicSink"] = {}  # (host, port) -> instance
@@ -257,6 +274,8 @@ class TopicSink(abc.ABC):
 
         if topic in self._buffers and not overwrite:
             raise TopicAlreadySubscribedError(topic)
+            if pipeline is not None:
+                require_live_safe(pipeline)
 
         total_limit = settings.SINK_TOTAL_BUFFER_BYTES
         if total_limit:

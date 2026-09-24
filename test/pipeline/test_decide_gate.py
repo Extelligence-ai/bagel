@@ -242,22 +242,6 @@ def test_watching_more_signals_than_max_signals_fails_with_guidance() -> None:
         gate.evaluate(asof_seconds=1e12, lookback=None)
 
 
-def test_decide_gate_rejects_live_sources_in_beta(monkeypatch: pytest.MonkeyPatch) -> None:
-    from unittest.mock import MagicMock
-
-    from src.pipeline import messages
-    from src.source.bagel import sink as live_sink
-
-    live = MagicMock()
-    live.factory = MagicMock(spec=live_sink.SourceFactory)  # the live buffer reader
-    monkeypatch.setattr(messages.SourceContext, "build", staticmethod(lambda path, kwargs: live))
-    gate = decide.Decide(
-        question="q?", choices=CHOICES, accept=["upload"], url="http://127.0.0.1:9/"
-    )
-    with pytest.raises(ValueError, match="batch-only"):
-        gate.setup(path="live://x")
-
-
 def test_choices_must_be_strings() -> None:
     # YAML turns `[yes, no]` into [True, False]; the criteria keys would then never match.
     with pytest.raises(ValueError, match="string"):
@@ -274,3 +258,55 @@ def test_numeric_settings_are_validated(bad: dict) -> None:
         decide.Decide(
             question="q?", choices=CHOICES, accept=["upload"], url="http://127.0.0.1:9/", **bad
         )
+
+
+def test_live_subscriptions_refuse_the_decide_gate() -> None:
+    from src.sink import base as sink_base
+
+    pipeline = base.Pipeline.build(
+        {
+            "name": "decide_live",
+            "site": "s",
+            "asset": "a",
+            "path": "./data/sample/pyarrow/csv",
+            "allow_failure": False,
+            "cadence": {"topic": "message", "when": "once_at_end"},
+            "gates": [
+                {
+                    "module": "src.pipeline.gates.decide",
+                    "args": {
+                        "question": "q?",
+                        "choices": CHOICES,
+                        "accept": ["upload"],
+                        "url": "http://127.0.0.1:9/",
+                    },
+                }
+            ],
+            "tasks": [{"module": "src.pipeline.tasks.write_annotations"}],
+        }
+    )
+    with pytest.raises(ValueError, match="batch-only"):
+        sink_base.require_live_safe(pipeline)
+
+
+def test_live_subscriptions_accept_pipelines_without_batch_only_gates() -> None:
+    from src.sink import base as sink_base
+
+    pipeline = base.Pipeline.build(
+        {
+            "name": "sql_live",
+            "site": "s",
+            "asset": "a",
+            "path": "./data/sample/pyarrow/csv",
+            "allow_failure": False,
+            "cadence": {"topic": "message", "when": "once_at_end"},
+            "gates": [
+                {
+                    "module": "src.pipeline.gates.sql",
+                    "args": {"topic": "message", "statement": "SELECT true"},
+                }
+            ],
+            "tasks": [{"module": "src.pipeline.tasks.write_annotations"}],
+        }
+    )
+    sink_base.require_live_safe(pipeline)  # no error

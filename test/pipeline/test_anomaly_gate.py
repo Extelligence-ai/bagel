@@ -370,21 +370,6 @@ def test_state_sent_to_jev_is_small(log_path: pathlib.Path, server: DecisionServ
     assert all(len(json.dumps(r["body"]["state"])) < 8_000 for r in server.requests)
 
 
-def test_live_sources_are_rejected_in_beta(
-    server: DecisionServer, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The Jev call is synchronous; on a live ingest thread it would stall every topic.
-    from src.pipeline import messages
-    from src.source.bagel import sink as live_sink
-
-    live = MagicMock()
-    live.factory = MagicMock(spec=live_sink.SourceFactory)  # the live buffer reader
-    monkeypatch.setattr(messages.SourceContext, "build", staticmethod(lambda path, kwargs: live))
-    gate = anomaly.Anomaly(**_gate_args(server))
-    with pytest.raises(ValueError, match="batch-only"):
-        gate.setup(path="live://imu")
-
-
 def test_label_file_nests_each_gate_under_its_name(
     log_path: pathlib.Path, server: DecisionServer
 ) -> None:
@@ -505,3 +490,32 @@ def test_a_permanent_outage_is_caught_even_when_the_threshold_exceeds_the_baseli
     assert all(o not in offsets for o in range(310, 390, 10) if o != 410)
     (reason,) = [r for r in _records(produced)[390.0]["screen_reasons"] if r["kind"] == "dropout"]
     assert reason["silent_seconds"] == pytest.approx(90.2, abs=0.01)
+
+
+def test_completed_sink_recordings_are_accepted(
+    server: DecisionServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A persisted TopicSink recording uses the same source class as a live sink; the gate
+    # must not refuse it (Codex P2). The batch-only rule is enforced where a pipeline is
+    # attached to a live subscription instead.
+    from src.pipeline import messages
+    from src.source.bagel import sink as bagel_sink
+
+    recording = MagicMock()
+    recording.factory = MagicMock(spec=bagel_sink.SourceFactory)
+    monkeypatch.setattr(
+        messages.SourceContext, "build", staticmethod(lambda path, kwargs: recording)
+    )
+    gate = anomaly.Anomaly(**_gate_args(server))
+    gate.setup(path="./recorded-sink")
+    assert gate.live_safe is False
+
+
+def test_live_subscriptions_refuse_the_anomaly_gate(
+    log_path: pathlib.Path, server: DecisionServer
+) -> None:
+    from src.sink import base as sink_base
+
+    pipeline = _pipeline(log_path, _gate_args(server), SNIP_AND_WRITE)
+    with pytest.raises(ValueError, match="batch-only"):
+        sink_base.require_live_safe(pipeline)
