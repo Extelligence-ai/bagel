@@ -142,7 +142,7 @@ class Decide(messages.TopicMessageMixin, base.Gate):
         """Implement `base.Gate.evaluate`."""
         relation = self.to_duckdb(topics=self._topics, asof_seconds=asof_seconds, lookback=lookback)
         if self._resolved is None:
-            if self._signals:
+            if self._signals is not None:
                 resolved = summary.resolve_signals(relation, self._signals)
             else:
                 resolved = summary.numeric_signals(relation)

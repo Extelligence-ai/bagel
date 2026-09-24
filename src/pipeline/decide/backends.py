@@ -105,7 +105,18 @@ def _probabilities(raw: Any, choices: dict[str, str]) -> dict[str, float]:  # no
         raise BackendUnavailable(f"Reply did not score choices {missing}")
     if bad := [c for c in choices if not math.isfinite(scores[c]) or scores[c] < 0]:
         raise BackendUnavailable(f"Reply scored choices with non-probabilities: {bad}")
+    if not any(scores[choice] > 0 for choice in choices):
+        raise BackendUnavailable("Reply gave no choice a positive score")
     return {choice: scores[choice] for choice in choices}
+
+
+def choice_ids(tokenizer: Any, choice: str) -> Any:  # noqa: ANN401
+    """Tokenize a choice as a continuation of the prompt, never as a new sequence.
+
+    Llama-style tokenizers prepend BOS by default; concatenated after the prompt that
+    would score the choice as a fresh sequence instead of the prompt's continuation.
+    """
+    return tokenizer(" " + choice, return_tensors="pt", add_special_tokens=False).input_ids
 
 
 class JevBackend:
@@ -205,13 +216,12 @@ class LocalBackend:
         log_likelihoods = {}
         with self._torch.no_grad():
             for choice in choices:
-                choice_ids = self._tokenizer(" " + choice, return_tensors="pt").input_ids
-                choice_ids = choice_ids.to(self._device)
-                input_ids = self._torch.cat([prompt_ids, choice_ids], dim=1)
+                encoded = choice_ids(self._tokenizer, choice).to(self._device)
+                input_ids = self._torch.cat([prompt_ids, encoded], dim=1)
                 log_probs = self._torch.log_softmax(self._model(input_ids).logits[0, :-1], dim=-1)
                 targets = input_ids[0, 1:]
                 token_log_probs = log_probs.gather(1, targets.unsqueeze(1)).squeeze(1)
-                log_likelihoods[choice] = token_log_probs[-choice_ids.shape[1] :].sum().item()
+                log_likelihoods[choice] = token_log_probs[-encoded.shape[1] :].sum().item()
         best = max(log_likelihoods.values())
         return Answer(
             {choice: math.exp(value - best) for choice, value in log_likelihoods.items()},

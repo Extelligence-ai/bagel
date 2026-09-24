@@ -230,3 +230,25 @@ def test_jev_url_override_must_be_https_unless_local(monkeypatch: pytest.MonkeyP
         backends.JevBackend(url="http://proxy.example.com/v1/systemone")
     backends.JevBackend(url="http://127.0.0.1:9/v1/systemone")  # loopback is fine
     backends.JevBackend(url="http://localhost:9/v1/systemone")
+
+
+def test_an_all_zero_reply_is_unavailable(jev: backends.JevBackend, server: DecisionServer) -> None:
+    # Every choice at 0 is not a distribution; accepting it made the anomaly gate pick the
+    # first choice with zero confidence and drop a flagged slice (Codex P1).
+    server.reply = _jev_reply({"stall": 0.0, "other_unusual": 0.0, "normal": 0.0})
+    with pytest.raises(backends.BackendUnavailable, match="positive"):
+        jev.decide(STATE, "q?", CHOICES)
+
+
+def test_local_choices_are_tokenized_without_sequence_start_tokens() -> None:
+    # Llama-style tokenizers prepend BOS by default; a BOS mid-sequence would score the
+    # choice as a fresh sequence instead of the prompt's continuation (Codex P2).
+    calls: list[dict] = []
+
+    class Tokenizer:
+        def __call__(self, text: str, **kwargs: object) -> object:
+            calls.append({"text": text, **kwargs})
+            return type("Encoded", (), {"input_ids": [[1, 2]]})()
+
+    backends.choice_ids(Tokenizer(), "stall")
+    assert calls == [{"text": " stall", "return_tensors": "pt", "add_special_tokens": False}]

@@ -107,6 +107,7 @@ preview_anomalies("./shift_042", window_seconds=10,
      "advice": [] }
 ```
 
+Pass `cadence_topic` so windows end exactly where the saved pipeline will fire.
 `advice` names signals that trip the screen in most windows (they drift by design, drop
 them), topics that read as dropouts every window (raise `dropout_seconds`), and a
 warm-up that swallows the log. Iterate until the flags look like real events, then
@@ -118,7 +119,7 @@ write the YAML. The LLM recipe `compose/anomaly_pipeline` walks these steps.
 | --- | --- | --- |
 | `anomalies` | *(required)* | Named anomaly types and a plain-language description of each. `normal`, `other_unusual` and `screen_only` are reserved. |
 | `topics` | all | Topics to watch. |
-| `signals` | all numeric fields except `header`/`stamp` | Exact dotted signals, e.g. `/imu.linear_acceleration.x`. ROS header timestamps are skipped by default because they grow every message. **Watch rates and errors, not states:** accelerations, angular rates, currents, lane offset. Positions, velocities and orientations drift by design as the robot moves, so "far from the baseline mean" says nothing about them (on a nuScenes drive, quaternion fields flagged every window after the first turn). |
+| `signals` | all numeric fields except `header`/`stamp` | Exact dotted signals, e.g. `/imu.linear_acceleration.x`. ROS header timestamps are skipped by default because they grow every message. `[]` watches no signals (dropouts only). **Watch rates and errors, not states:** accelerations, angular rates, currents, lane offset. Positions, velocities and orientations drift by design as the robot moves, so "far from the baseline mean" says nothing about them (on a nuScenes drive, quaternion fields flagged every window after the first turn). |
 | `max_signals` | `64` | Refuse to watch more signals than this. Each adds to the summary query and to the request Jev reads (64k-token context); a PX4 log exposes ~2,000, so pick `topics` or `signals`. |
 | `mode` | `screen` | `screen`: ask Jev only about windows the on-robot check flags. `always`: ask about every window (more calls, catches what the screen misses). |
 | `z_threshold` | `3.0` | Flag a window whose mean is this many baseline std devs from normal. A single sample must clear this plus the extreme its sample count explains (about 3σ more at 50 Hz), so noisy signals don't trip every window. |

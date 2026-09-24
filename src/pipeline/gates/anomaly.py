@@ -64,7 +64,8 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
             topics (list[str] | None, optional): Topics to watch. If None, all topics.
             signals (list[str] | None, optional): Dotted numeric signals to watch, e.g.
                 "/imu.linear_acceleration.x". If None, every numeric field of the watched
-                topics except `header`/`stamp` fields.
+                topics except `header`/`stamp` fields; `[]` watches no signals, so only
+                dropouts can trip the screen.
             max_signals (int, optional): Refuse to watch more signals than this. Every
                 signal adds to the summary query and to the request sent to Jev (64k
                 token context); PX4 logs expose ~2000. Defaults to 64.
@@ -141,7 +142,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
     def _watched(self, relation: Any) -> summary.Signals:  # noqa: ANN401
         """Resolve the watched signals once; the schema does not change between windows."""
         if self._resolved is None:
-            if self._signals:
+            if self._signals is not None:  # [] is a choice: dropouts only
                 resolved = summary.resolve_signals(relation, self._signals)
             else:
                 resolved = summary.numeric_signals(relation)

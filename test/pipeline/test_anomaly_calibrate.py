@@ -101,3 +101,32 @@ def test_window_must_be_a_positive_whole_number_of_seconds(
     # not match the request (Codex P2).
     with pytest.raises(ValueError, match="whole"):
         calibrate.calibrate(str(log_path), window_seconds=window)
+
+
+def test_an_explicit_empty_signal_list_is_preserved(log_path: pathlib.Path) -> None:
+    report = _run(log_path, signals=[])
+    assert report["signals"] == []
+    assert [round(f["offset_seconds"]) for f in report["flagged"]] == [510]
+
+
+def test_windows_follow_the_cadence_topic_when_given(log_path: pathlib.Path) -> None:
+    # The saved pipeline fires on cadence-topic messages, not on a fixed grid (Codex P2).
+    # /heartbeat is silent for 505..520 s, so no window can end inside that gap -- and
+    # that is why the cadence topic can never be seen dropping out: the preview shows
+    # the user exactly what the pipeline would (and would not) catch.
+    report = _run(log_path, cadence_topic="/heartbeat")
+    ends = [round(f["offset_seconds"], 1) for f in report["flagged"]]
+    assert ends == [410.0]
+    assert report["cadence_topic"] == "/heartbeat"
+    assert all(not (505 < o < 520) for o in report["asof_offsets_seconds"])
+
+
+def test_mcp_tool_accepts_a_cadence_topic(log_path: pathlib.Path) -> None:
+    result = server.preview_anomalies(
+        str(log_path),
+        window_seconds=10,
+        cadence_topic="/motor/current",
+        baseline_window_minutes=5,
+        warmup_minutes=1,
+    )
+    assert result["cadence_topic"] == "/motor/current"

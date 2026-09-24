@@ -23,6 +23,28 @@ class _Reader(messages.TopicMessageMixin):
     """Just the message access of a gate, without being one."""
 
 
+def _asof_timestamps(
+    reader: _Reader, cadence_topic: str | None, start: float, end: float, every: float
+) -> list[float]:
+    """When the pipeline would fire: the same rule as `Pipeline._asof_timestamps`."""
+    if cadence_topic is None:
+        asofs = []
+        asof = start
+        while asof <= end + 1e-9:
+            asofs.append(asof)
+            asof += every
+        return asofs
+    relation = reader.to_duckdb(topics=[cadence_topic], asof_seconds=_FAR_FUTURE)
+    rows = relation.project("timestamp_seconds").order("timestamp_seconds").fetchall()
+    asofs = []
+    last: float | None = None
+    for (timestamp,) in rows:
+        if last is None or timestamp - last >= every:
+            asofs.append(float(timestamp))
+            last = float(timestamp)
+    return asofs
+
+
 def _advice(report: dict[str, Any]) -> list[str]:
     advice = []
     screened = report["screened_windows"]
@@ -59,13 +81,15 @@ def calibrate(  # noqa: PLR0913
     dropout_seconds: float = 2.0,
     baseline_window_minutes: float = 30.0,
     warmup_minutes: float = 5.0,
+    cadence_topic: str | None = None,
     source_args: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the on-robot screen over every window of a recorded log and report the flags.
 
-    Windows are `window_seconds` long on a fixed grid from the start of the log (the
-    gate itself fires on its cadence topic, so timestamps can differ slightly). Flagged
-    windows are kept out of the rolling baseline, exactly as the gate does.
+    With `cadence_topic`, windows end at the same timestamps the saved pipeline would
+    fire on (that topic's messages, at least `window_seconds` apart); without it, on a
+    fixed grid from the start of the log. Flagged windows are kept out of the rolling
+    baseline, exactly as the gate does.
 
     Returns:
         ``windows``, ``warmup_windows``, ``screened_windows``, ``flagged`` (each with
@@ -83,7 +107,10 @@ def calibrate(  # noqa: PLR0913
     start, end = whole.aggregate("min(timestamp_seconds), max(timestamp_seconds)").fetchall()[0]
     if start is None:
         raise ValueError(f"No messages found in {path!r} for topics {topics}")
-    watched = summary.resolve_signals(whole, signals) if signals else summary.numeric_signals(whole)
+    if signals is not None:  # [] is a choice: dropouts only
+        watched = summary.resolve_signals(whole, signals)
+    else:
+        watched = summary.numeric_signals(whole)
     if len(watched) > max_signals:
         raise ValueError(
             f"{len(watched)} numeric signals exceed max_signals={max_signals}. Set 'topics' "
@@ -96,8 +123,9 @@ def calibrate(  # noqa: PLR0913
     by_topic: collections.Counter[str] = collections.Counter()
     windows = warmup = 0
     last_seen: dict[str, float] = {}
-    asof = float(start)
-    while asof <= end + 1e-9:
+    asofs: list[float] = []
+    for asof in _asof_timestamps(reader, cadence_topic, float(start), float(end), window_seconds):
+        asofs.append(asof)
         windows += 1
         relation = reader.to_duckdb(topics=topics, asof_seconds=asof, lookback=lookback)
         window = summary.summarize(relation, watched)
@@ -119,13 +147,14 @@ def calibrate(  # noqa: PLR0913
             by_topic.update({r["topic"] for r in reasons if "topic" in r})
         else:
             rolling.add(window)
-        asof += window_seconds
 
     screened = windows - warmup
     report: dict[str, Any] = {
         "path": path,
         "span_seconds": float(end) - float(start),
         "window_seconds": window_seconds,
+        "cadence_topic": cadence_topic,
+        "asof_offsets_seconds": [asof - float(start) for asof in asofs],
         "signals": sorted(watched),
         "windows": windows,
         "warmup_windows": warmup,

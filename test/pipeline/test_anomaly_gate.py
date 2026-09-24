@@ -408,3 +408,25 @@ def test_dropout_threshold_longer_than_the_window_waits_for_it(
     (reason,) = _records(produced)[520.0]["screen_reasons"]
     # the last heartbeat before the gap is at 504.8 s (5 Hz)
     assert reason["kind"] == "dropout" and reason["silent_seconds"] == pytest.approx(15.2, abs=0.01)
+
+
+def test_an_all_zero_jev_reply_falls_back_to_screen_only(
+    log_path: pathlib.Path, server: DecisionServer
+) -> None:
+    server.reply = lambda body: jev_reply(
+        {c: 0.0 for c in body["questions"]["decision"]["criteria"]}
+    )
+    produced = _pipeline(log_path, _gate_args(server), SNIP_AND_WRITE).run_all()
+    records = _records(produced)
+    assert sorted(records) == [410.0, 510.0]
+    assert all(r["label"] == "screen_only" for r in records.values())
+
+
+def test_an_explicit_empty_signal_list_watches_only_dropouts(
+    log_path: pathlib.Path, server: DecisionServer
+) -> None:
+    # `signals: []` is a choice, not an omission (Codex P2): no mean-shift screening,
+    # so only the heartbeat gap is kept.
+    server.reply = _label_from_screen
+    produced = _pipeline(log_path, _gate_args(server, signals=[]), SNIP_AND_WRITE).run_all()
+    assert sorted(_records(produced)) == [510.0]
