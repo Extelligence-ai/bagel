@@ -35,6 +35,7 @@ COPY --chown=${USERNAME}:${USERNAME} pyproject.toml ./
 COPY --chown=${USERNAME}:${USERNAME} uv.lock ./
 COPY --chown=${USERNAME}:${USERNAME} docker/sync-deps.sh ./sync-deps.sh
 ARG DEV_MODE
+ARG JEV_MODE=false
 RUN bash ./sync-deps.sh "${DEV_MODE}"
 ENV UV_NO_SYNC=1
 

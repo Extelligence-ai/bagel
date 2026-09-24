@@ -31,6 +31,7 @@ jobs:
         service:
           - ros2-kilted
           - ros2-jazzy
+          - ros2-jazzy-jev
           - ros2-iron
           - ros2-humble
           - ros1-noetic

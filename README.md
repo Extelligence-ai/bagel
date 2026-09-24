@@ -117,6 +117,7 @@ Pick the service that matches your environment:
 | ----------------- | ----------------------- |
 | `ros2-kilted`     | ROS2 Kilted (latest)    |
 | `ros2-jazzy`      | ROS2 Jazzy              |
+| `ros2-jazzy-jev`  | ROS2 Jazzy + on-robot decision model (GPU) |
 | `ros2-iron`       | ROS2 Iron               |
 | `ros2-humble`     | ROS2 Humble             |
 | `ros1-noetic`     | ROS1 Noetic             |

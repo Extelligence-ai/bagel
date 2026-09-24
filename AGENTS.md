@@ -5,7 +5,7 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
 ## Set up Bagel for a user
 
 1. Requires Docker. Pick the service matching their stack (see the table in
-   README Quickstart): `ros2-kilted`, `ros2-jazzy`, `ros2-iron`, `ros2-humble`,
+   README Quickstart): `ros2-kilted`, `ros2-jazzy`, `ros2-jazzy-jev`, `ros2-iron`, `ros2-humble`,
    `ros1-noetic`, `ros1-noetic-cv`, `px4`, `ardupilot`, `betaflight`, or `iot`.
 2. Start it: `docker compose run --service-ports <service>` and wait for
    `Uvicorn running on http://0.0.0.0:8000`.

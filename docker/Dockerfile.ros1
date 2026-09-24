@@ -108,6 +108,7 @@ COPY --chown=${USERNAME}:${USERNAME} pyproject.toml ./
 COPY --chown=${USERNAME}:${USERNAME} uv.lock ./
 COPY --chown=${USERNAME}:${USERNAME} docker/sync-deps.sh ./sync-deps.sh
 ARG DEV_MODE
+ARG JEV_MODE=false
 ARG CV_MODE
 # hadolint ignore=SC2086
 RUN set -eux; \
