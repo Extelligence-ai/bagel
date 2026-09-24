@@ -5,7 +5,8 @@
 # learned on the robot. When a signal shifts outside its normal spread, it asks Jev
 # which of the named anomalies this is (or `other_unusual` / `normal`). Set
 # `mode: always` to ask Jev about every window instead. If Jev is unreachable,
-# flagged slices are still uploaded, labelled `screen_only`.
+# flagged slices are still uploaded, labelled `screen_only`; if Jev is unsure,
+# labelled `unverified`. Only a confident `normal` from Jev drops a flagged slice.
 #
 # Beta: recorded logs only. A `sensor_dropout`-style anomaly needs a watched topic
 # other than the cadence topic (the pipeline only runs when that one publishes).

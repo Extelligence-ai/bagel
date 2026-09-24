@@ -226,14 +226,32 @@ def test_windows_jev_calls_normal_are_not_uploaded(
     assert produced == []
 
 
-def test_low_confidence_answers_are_not_uploaded(
+def test_low_confidence_answers_keep_screened_windows_as_unverified(
     log_path: pathlib.Path, server: DecisionServer
 ) -> None:
+    # Jev answered but committed to nothing. The screen still fired, and an uncertain
+    # verdict must not fare worse than an unreachable Jev (which keeps the window as
+    # `screen_only`): a dropped window is gone for good.
     server.reply = lambda body: jev_reply(
         {c: 0.25 for c in body["questions"]["decision"]["criteria"]}
     )
     produced = _pipeline(log_path, _gate_args(server), SNIP_AND_WRITE).run_all()
-    assert produced == []
+    records = _records(produced)
+    assert sorted(records) == [410.0, 510.0]
+    assert all(r["label"] == "unverified" and r["verified"] is False for r in records.values())
+    assert all(r["model"] == "jev-1.13.0" for r in records.values())
+    assert records[410.0]["probabilities"]["overcurrent"] == pytest.approx(0.25)
+
+
+def test_low_confidence_answers_in_always_mode_only_keep_screened_windows(
+    log_path: pathlib.Path, server: DecisionServer
+) -> None:
+    # Without a screen reason there is nothing to keep: an uncertain Jev is not evidence.
+    server.reply = lambda body: jev_reply(
+        {c: 0.25 for c in body["questions"]["decision"]["criteria"]}
+    )
+    produced = _pipeline(log_path, _gate_args(server, mode="always"), SNIP_AND_WRITE).run_all()
+    assert sorted(_records(produced)) == [410.0, 510.0]
 
 
 def test_unreachable_jev_uploads_screened_windows_as_screen_only(
@@ -306,7 +324,7 @@ def test_needs_at_least_one_named_anomaly(server: DecisionServer) -> None:
         anomaly.Anomaly(**_gate_args(server, anomalies={}))
 
 
-@pytest.mark.parametrize("reserved", ["normal", "other_unusual", "screen_only"])
+@pytest.mark.parametrize("reserved", ["normal", "other_unusual", "screen_only", "unverified"])
 def test_reserved_labels_cannot_be_named_anomalies(server: DecisionServer, reserved: str) -> None:
     with pytest.raises(ValueError, match=reserved):
         anomaly.Anomaly(**_gate_args(server, anomalies={reserved: "x"}))
@@ -458,8 +476,9 @@ def test_a_zero_lookback_is_rejected(log_path: pathlib.Path, server: DecisionSer
 def test_a_weak_normal_verdict_keeps_the_window_out_of_the_baseline(
     log_path: pathlib.Path, server: DecisionServer
 ) -> None:
-    # Jev ranks `normal` first but below min_probability: not confident enough to keep the
-    # slice, and not confident enough to teach the baseline that the fault is normal.
+    # Jev ranks `normal` first but below min_probability: not confident enough to clear
+    # the screened slice (kept, unverified), and not confident enough to teach the
+    # baseline that the fault is normal.
     server.reply = lambda body: jev_reply(
         {c: (0.4 if c == "normal" else 0.2) for c in body["questions"]["decision"]["criteria"]}
     )
@@ -467,8 +486,11 @@ def test_a_weak_normal_verdict_keeps_the_window_out_of_the_baseline(
     gate.setup(path=str(log_path))
     gate._name = "anomaly"
     lookback = base.Lookback(last=10, unit=base.Unit.SECOND)
+    kept = {}
     for offset in range(0, 421, 10):
-        gate.evaluate(EPOCH + offset, lookback)
+        if gate.evaluate(EPOCH + offset, lookback):
+            kept[offset] = gate.annotations()["label"]
+    assert kept == {410: "unverified"}
     mean = gate.baseline.stats(EPOCH + 420)["signals"]["/motor/current.value"]["mean"]
     assert mean == pytest.approx(1.0, abs=0.01)
 
