@@ -61,10 +61,18 @@ event in words and let your LLM write the predicate; that's the point.
 
 ### Gates and tasks · what it does
 
-A **gate** decides whether a fired pipeline proceeds (e.g. `SqlQuery`: run a boolean SQL
-check at the fire timestamp). **Tasks** do the work. Ask Bagel to
-*"list the pipeline capabilities"* (`list_pipeline_capabilities`) for the live catalog on
-your install; today it includes:
+A **gate** decides whether a fired pipeline proceeds. **Tasks** do the work. Gates can
+also hand details to the tasks after them (for example, an anomaly label that
+`write_annotations` saves next to the slice).
+
+| Gate (`src.pipeline.gates.`…) | Proceeds when |
+| --- | --- |
+| `sql` | A boolean SQL check at the fire timestamp is true |
+| `cv.object_too_close`* | A detected object is closer than a threshold (images; needs the `cv` image) |
+| `anomaly` *(beta)* | The window deviates from the robot's rolling baseline and Jev labels it an anomaly; dry-run with `preview_anomalies` ([guide](./anomaly_detection.md)) |
+| `decide` *(beta)* | A typed-decision model answers a multiple-choice question with an accepted choice |
+ Ask Bagel to *"list the pipeline capabilities"* (`list_pipeline_capabilities`) for the
+live catalog on your install; today the tasks include:
 
 | Task (`src.pipeline.tasks.`…) | What it does |
 | --- | --- |
@@ -75,11 +83,12 @@ your install; today it includes:
 | `generate_gif` | Render an image topic into a GIF |
 | `cloudini.decode_pointcloud` | Decode compressed pointclouds mid-pipeline |
 | `upload.s3`, `upload.gcs`, `upload.azure` | Ship artifacts to the cloud, skipping files already there |
+| `write_annotations` | Save the gates' labels for this run as JSON, next to the run's other artifacts |
 | `notify.slack` | Post to a Slack (or compatible) webhook, with `{asset}`-style message templates |
 | `rsync_files`, `send_email` | Pull files in; send results out |
 
 \* the `ros2.db3` and `ros1.bag` writers need rosbag CLIs, so they show up inside the
-ROS compose services.
+ROS compose services; `cv.object_too_close` needs the `ros1-noetic-cv` image.
 
 Tasks chain: this is one standing pipeline on a live stream:
 
@@ -104,5 +113,6 @@ Tasks chain: this is one standing pipeline on a live stream:
 ## Go deeper
 
 - [Event-driven data reduction](./data_reduction.md) · the flagship use, end to end
+- [Anomaly detection with Jev](./anomaly_detection.md) *(beta)* · upload only anomalous slices, each labelled
 - [PlotJuggler](./plotjuggler.md) · pre-framed sessions from pipeline outputs
 - [MQTT](./iot_mqtt.md) · standing pipelines on live IoT streams

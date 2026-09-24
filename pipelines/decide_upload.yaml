@@ -1,0 +1,41 @@
+# Every 10 seconds, ask a typed-decision model whether the last 10 seconds should
+# leave the robot, and write a snippet of that window only when it confidently
+# answers "upload". Below `min_probability` the gate abstains and nothing is kept.
+#
+# Backends:
+#   remote -- POST {state, question, choices} to `url`, expect
+#             {"probabilities": {choice: p}}. Works in every image (CPU-only robots).
+#   local  -- run `model` on the robot. Needs an image built with JEV_MODE=true,
+#             e.g. the `ros2-jazzy-jev` service.
+name: decide_upload
+site: warehouse
+asset: forklift
+path: ./data/sample/ros2/mcap # <-- point this at your log
+allow_failure: false
+cadence:
+  topic: /fluid_pressure
+  when:
+    every: 10
+    unit: second
+gates:
+  - module: src.pipeline.gates.decide
+    lookback:
+      last: 10
+      unit: second
+    args:
+      question: "Is anything in this window worth sending to the cloud for review?"
+      choices: [upload, keep_local, discard]
+      accept: [upload]
+      min_probability: 0.6
+      topics: [/fluid_pressure]
+      backend: remote
+      url: http://localhost:9000/decide # <-- your decision endpoint
+      # api_key_env: DECIDE_API_KEY # bearer token; the variable must be set when named,
+      #   and reach the container: `docker compose run -e DECIDE_API_KEY ...`
+      # backend: local
+      # model: <hugging-face-model-id-or-path>
+tasks:
+  - module: src.pipeline.tasks.snippet.mcap
+    lookback:
+      last: 10
+      unit: second

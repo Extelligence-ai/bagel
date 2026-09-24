@@ -1,11 +1,13 @@
 """Base classes and utilities for defining and running data processing pipelines."""
 
 import abc
+import copy
 import importlib
 import logging
 import pathlib
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from enum import Enum
+from types import MappingProxyType
 from typing import Any
 
 import boto3
@@ -178,6 +180,10 @@ class Cadence(BaseModel):
 class Operator(abc.ABC):
     """Abstract base class for gate and task operators."""
 
+    # False for operators that block (e.g. a synchronous network call) and therefore
+    # cannot run on a live ingest thread; see `src.sink.base.require_live_safe`.
+    live_safe: bool = True
+
     # Attributes set during Pipeline.build
     _name: str
     _pipeline: str
@@ -303,6 +309,17 @@ class Gate(Operator):
 
         """
 
+    def annotations(self) -> dict[str, Any]:
+        """Return details about the latest evaluation for downstream tasks.
+
+        When every gate passes, the pipeline exposes each gate's annotations to tasks as
+        `Task.gate_annotations[<gate name>]`, e.g. a label to write next to a log slice.
+        Keyed by gate name so two gates reporting the same fields never overwrite each
+        other. Gates that have nothing to share keep this default.
+
+        """
+        return {}
+
 
 class Task(Operator):
     """Abstract base class for task operators.
@@ -310,6 +327,10 @@ class Task(Operator):
     A task performs a specific action when executed, such as sending an email or generating a GIF.
 
     """
+
+    # Read-only annotations of the gates that let this execution run, keyed by gate name
+    # (see `Gate.annotations`).
+    gate_annotations: Mapping[str, Any] = MappingProxyType({})
 
     @abc.abstractmethod
     def execute(self, asof_seconds: float, lookback: Lookback | None) -> list[pathlib.Path] | None:
@@ -533,11 +554,28 @@ class Pipeline:
         )
         yield from windows.iter_rising_edges(rows, when.min_gap_seconds())
 
+    @property
+    def batch_only_gates(self) -> list[str]:
+        """Names of gates that cannot be attached to a live subscription."""
+        return [gate.name for gate, _ in self._gates if not gate.live_safe]
+
     def run_at(self, asof_seconds: float) -> None:
         """Run the pipeline at the given timestamp (in seconds)."""
         try:
             if all(gate.evaluate(asof_seconds, lookback) for gate, lookback in self._gates):
+                annotations: dict[str, Any] = {}
+                for gate, _ in self._gates:
+                    if gate_annotations := gate.annotations():
+                        if gate.name in annotations:
+                            raise ValueError(
+                                f"Two annotating gates share the name {gate.name!r}; give "
+                                "each a distinct `name` so their records stay apart"
+                            )
+                        annotations[gate.name] = gate_annotations
                 for task, lookback in self._tasks:
+                    # A deep copy per task: nested records must not be shared with the
+                    # gate or with the next task.
+                    task.gate_annotations = MappingProxyType(copy.deepcopy(annotations))
                     produced = task.execute(asof_seconds, lookback)
                     if produced:
                         self._produced.extend(produced)

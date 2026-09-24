@@ -105,6 +105,7 @@ def test_on_event_pipeline_fires_on_live_messages(make_sink: MakeSink) -> None:
     sink = make_sink(retained={"freezer/1/status": [b'{"temp": -18.5, "t": 0.0}']})
 
     pipeline = MagicMock()
+    pipeline.batch_only_gates = []  # a live-safe pipeline (see require_live_safe)
     pipeline.cadence = Cadence(
         topic="freezer/1/status",
         when=OnEvent(predicate="\"freezer/1/status\"['temp'] > -15"),
@@ -263,6 +264,7 @@ def test_wildcard_with_pipeline_requires_single_match(make_sink: MakeSink) -> No
         }
     )
     pipeline = MagicMock()
+    pipeline.batch_only_gates = []  # a live-safe pipeline (see require_live_safe)
     pipeline.cadence = Cadence(
         topic="freezer/1/status",
         when=OnEvent(predicate="\"freezer/1/status\"['temp'] > -15"),

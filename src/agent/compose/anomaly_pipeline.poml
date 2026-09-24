@@ -1,0 +1,63 @@
+<poml>
+    <task>
+        Turn the user's request to "watch this robot for anomalies" into a Bagel anomaly
+        pipeline (a YAML config with the `src.pipeline.gates.anomaly` gate), calibrate it
+        with a dry run, and only run it after the user confirms. BETA: recorded logs only,
+        and the Jev backend needs TYPESAFE_API_KEY in the environment.
+        <stepwise-instructions>
+            <list listStyle="decimal">
+                <item>
+                    Inspect the data source with `describe_data_source`, then call
+                    `describe_topic` on the candidate topics to learn field names and units.
+                </item>
+                <item>
+                    Choose SIGNALS: rates and errors, never states. Good: linear
+                    accelerations, angular rates, motor currents, temperatures, lane offset,
+                    heading error. Bad: positions, velocities, orientation quaternions,
+                    odometry - they drift by design as the robot moves, so "far from the
+                    baseline mean" fires on every window. Keep 5-20 signals (the gate's
+                    `max_signals` defaults to 64) as dotted labels: `/imu.linear_acceleration.x`.
+                </item>
+                <item>
+                    Name the ANOMALIES in plain language, three to five types, one sentence
+                    each that the decision model will read, e.g.
+                    `overcurrent: "motor current far above normal"`. The gate adds
+                    `other_unusual` and `normal` itself. A dropout-style anomaly needs a
+                    watched topic other than the cadence topic: the pipeline only runs when
+                    the cadence topic publishes, so that topic is never silent.
+                </item>
+                <item>
+                    CALIBRATE before writing anything: call `preview_anomalies` with the
+                    path, `window_seconds` (the lookback you intend, e.g. 10), the `signals`,
+                    the `cadence_topic` the pipeline will use (and `cadence_seconds` if it
+                    evaluates less often than the window), and `warmup_minutes` that fits
+                    the log (never longer than `baseline_window_minutes`) (a 20 s scene cannot warm up for
+                    5 min). Report the flagged windows and their reasons, and act on the
+                    `advice`: drop signals it says drift, adjust `z_threshold`,
+                    `dropout_seconds` or `warmup_minutes`, and re-run until the flags look
+                    like real events. Ask the user to confirm the signals and thresholds.
+                </item>
+                <item>
+                    Confirm module paths and argument names with `list_pipeline_capabilities`
+                    before emitting YAML. The pipeline has: a `cadence` on one watched topic
+                    (`every` N seconds), the gate
+                    `src.pipeline.gates.anomaly` with `lookback: {last: N, unit: second}` and
+                    args `anomalies`, `topics`, `signals` and the calibrated thresholds, then
+                    tasks `src.pipeline.tasks.snippet.mcap` (same lookback),
+                    `src.pipeline.tasks.write_annotations`, and an upload task
+                    (`upload.s3`, `upload.gcs` or `upload.azure`) whose `source` is the
+                    pipeline's artifact directory. Start `mode: always` for a first run on a
+                    known log if the user wants to see everything the model would label;
+                    switch to `mode: screen` for routine use.
+                </item>
+                <item>
+                    Only after confirmation, run the pipeline:
+                    <code lang="bash">uv run python run.py &lt;file&gt;</code>
+                    Each kept window produces a log slice and a JSON label beside it (the
+                    label, probabilities, the screen's reasons, the baseline at that moment,
+                    and `verified: false` when the model was unreachable).
+                </item>
+            </list>
+        </stepwise-instructions>
+    </task>
+</poml>

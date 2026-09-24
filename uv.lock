@@ -284,6 +284,10 @@ iot = [
     { name = "influxdb3-python" },
     { name = "paho-mqtt" },
 ]
+jev = [
+    { name = "torch" },
+    { name = "transformers" },
+]
 px4 = [
     { name = "gitpython" },
     { name = "pyulog" },
@@ -366,6 +370,10 @@ dev = [
 iot = [
     { name = "influxdb3-python", specifier = ">=0.10.0" },
     { name = "paho-mqtt", specifier = ">=2.1.0,<3.0.0" },
+]
+jev = [
+    { name = "torch", specifier = ">=2.8.0,<3.0.0" },
+    { name = "transformers", specifier = ">=4.57.0,<5.0.0" },
 ]
 px4 = [
     { name = "gitpython", specifier = ">=3.1.0,<4.0.0" },

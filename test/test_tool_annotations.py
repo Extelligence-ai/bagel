@@ -23,6 +23,7 @@ EXPECTED = {
     "delete_capability": (False, True, True, False),
     "list_pipeline_capabilities": (True, True, False, False),
     "preview_pipeline": (True, True, False, False),
+    "preview_anomalies": (True, True, False, False),
     "save_pipeline": (False, True, False, False),
     "list_pipelines": (True, True, False, False),
     "delete_pipeline": (False, True, True, False),

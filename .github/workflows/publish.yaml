@@ -94,6 +94,7 @@ jobs:
           # ROS
           - service: ros2-kilted
           - service: ros2-jazzy
+          - service: ros2-jazzy-jev
           - service: ros2-iron
           - service: ros2-humble
           - service: ros1-noetic
