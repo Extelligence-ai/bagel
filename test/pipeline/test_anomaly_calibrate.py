@@ -149,3 +149,10 @@ def test_cadence_interval_defaults_to_the_window(log_path: pathlib.Path) -> None
 def test_warmup_longer_than_the_baseline_is_rejected(log_path: pathlib.Path) -> None:
     with pytest.raises(ValueError, match="warmup_minutes"):
         _run(log_path, baseline_window_minutes=1, warmup_minutes=5)
+
+
+def test_a_cadence_shorter_than_the_window_keeps_the_baseline(log_path: pathlib.Path) -> None:
+    # 10 s windows every 5 s overlap; the baseline must not reset on each one (Codex P1).
+    report = _run(log_path, cadence_seconds=5)
+    assert report["warmup_windows"] == 12  # 60 s of history at a 5 s cadence
+    assert [round(f["offset_seconds"]) for f in report["flagged"]] == [405, 410, 510, 515]

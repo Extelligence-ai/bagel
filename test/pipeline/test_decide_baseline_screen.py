@@ -272,3 +272,14 @@ def test_time_running_backwards_resets_the_baseline() -> None:
     rolling.add(_window(20, [5.0]))
     assert rolling.stats(20)["signals"]["/m.v"]["mean"] == 5.0
     assert rolling.stats(20)["span_seconds"] == pytest.approx(10.0)
+
+
+def test_overlapping_windows_do_not_reset_the_baseline() -> None:
+    # A 10 s lookback evaluated every second: each window starts before the previous
+    # one ended. That is overlap, not time running backwards (Codex P1).
+    rolling = baseline.RollingBaseline(window_minutes=30, warmup_minutes=0)
+    for end in (10.0, 11.0, 12.0):
+        rolling.add(_window(end, [1.0, 3.0]))
+    stats = rolling.stats(asof_seconds=12.0)
+    assert stats["signals"]["/m.v"]["count"] == 6
+    assert stats["span_seconds"] == pytest.approx(12.0)

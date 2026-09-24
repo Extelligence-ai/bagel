@@ -58,10 +58,12 @@ class RollingBaseline:
             mean, std = signal["mean"], signal["std"] or 0.0
             moments[label] = (count, mean * count, (std**2 + mean**2) * count)
         topics = {topic for topic, stats in window["topics"].items() if stats["messages"]}
-        if self._windows and bounds["start_seconds"] < self._windows[-1][1]:
+        if self._windows and bounds["end_seconds"] < self._windows[-1][1]:
             # Data time went backwards (a looped bag, a sim reset, a rewound timestamp
-            # field): the old windows would never prune, so start over.
-            logging.warning("Baseline reset: window starts before the previous one ended")
+            # field): the old windows would never prune, so start over. Windows that
+            # merely overlap (a cadence shorter than the lookback) end later each time
+            # and are fine.
+            logging.warning("Baseline reset: window ends before the previous one did")
             self._windows.clear()
         self._windows.append((bounds["start_seconds"], bounds["end_seconds"], moments, topics))
 
