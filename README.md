@@ -127,6 +127,11 @@ Pick the service that matches your environment:
 | `betaflight`      | Betaflight flight logs  |
 | `iot`             | IoT / MQTT (live)       |
 
+The `-jev` image adds PyTorch for running a decision model on the robot
+(`backend: local` in the [anomaly gate](./doc/runbooks/anomaly_detection.md)). Build any
+other service the same way with `--build-arg JEV_MODE=true`. CPU-only robots don't need
+it: the hosted Jev backend works in every image.
+
 > [!TIP]
 > To give Bagel access to your local files, edit `compose.yaml` before starting Docker:
 > uncomment and update the `volumes` section under your chosen service.
@@ -237,6 +242,11 @@ Here it is in one conversation:
     <img src="./doc/assets/nl_reduction_light_mode.gif" width="80%">
   </picture>
 </p>
+
+Don't know the event in advance? The [anomaly gate](./doc/runbooks/anomaly_detection.md)
+*(beta)* learns what normal looks like on the robot, asks
+[Jev](https://docs.typesafe.ai/models) to name whatever isn't, and keeps only those
+slices, each with a JSON label, for any bucket: S3, GCS, Azure, MinIO or R2.
 
 The session above: a 20-minute (1,200 s) recording and the prompt *"keep 10 seconds
 before and after every deceleration harder than −10 m/s²"*. The preview detects
@@ -386,6 +396,8 @@ before starting the container so the mount is owned by you, not root.
   and tasks; preview → run → save → batch → standing at the edge
 - [Event-driven data reduction](./doc/runbooks/data_reduction.md) · detect events, keep
   windows around them (snippets or one reduced bag), batch across fleets, upload to the cloud
+- [Anomaly detection with Jev](./doc/runbooks/anomaly_detection.md) *(beta)* · learn normal on
+  the robot, ask Jev to label what isn't, upload only those slices with a JSON label
 - [Live ROS2 robots over rosbridge](./doc/tutorials/live_ros2_bridge.md) · a step-by-step tutorial
 - [ROS text logs](./doc/runbooks/ros_text_logs.md) · inspect `~/.ros/log` errors and warnings without opening a bag
 - [MQTT](./doc/runbooks/iot_mqtt.md) · live IoT topics, Sparkplug B, edge recording
@@ -412,6 +424,9 @@ Rough edges we know about, so you don't find them the hard way:
   real CANape/INCA/Vector-produced captures haven't crossed our test bench yet.
   LeRobot exports load-test clean with the real `lerobot` package, but no policy
   has been trained from a Bagel export yet.
+- **The Jev anomaly gate is beta.** Its Jev backend follows TypeSafe's documented API
+  and is tested against a stand-in server, not yet against the live TypeSafe API.
+  Its baseline is learned per run, so the first minutes of each run are never flagged.
 - **Reduction ratios are workload-dependent, and unbenchmarked.** The ratio is
   event-window duration over total duration: quiet recordings reduce dramatically,
   eventful ones much less. The figures in this README are illustrative demo output,

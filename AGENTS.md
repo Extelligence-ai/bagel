@@ -28,6 +28,9 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
   kept seconds, get user confirmation, then `run_pipeline`.
 - Output artifacts are written under the artifacts directory; tools return the
   paths.
+- Anomaly detection (beta): `src.pipeline.gates.anomaly` + `snippet.mcap` +
+  `write_annotations` + an `upload.*` task keeps only anomalous slices with a JSON
+  label. It needs `TYPESAFE_API_KEY`; see `doc/runbooks/anomaly_detection.md`.
 
 ## Develop on Bagel
 
