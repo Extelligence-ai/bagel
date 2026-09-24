@@ -15,7 +15,6 @@ import yaml
 from settings import settings
 from src import artifacts
 from src.pipeline.base import OnceAtEnd, Pipeline
-
 from src.sink.buffer import TopicBufferWriter
 
 
