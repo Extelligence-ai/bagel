@@ -7,10 +7,10 @@ backend works in both.
 
 import os
 import pathlib
+import re
 import stat
 import subprocess
 
-import tomllib
 import yaml
 
 DOCKERFILES = sorted(pathlib.Path("docker").glob("Dockerfile.*"))
@@ -37,10 +37,12 @@ def _services() -> dict:
 
 
 def test_jev_group_holds_the_model_runtime() -> None:
-    pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))
-    jev = " ".join(pyproject["dependency-groups"]["jev"])
-    assert "torch" in jev
-    assert "transformers" in jev
+    # No tomllib on Python 3.10 (still supported), so read the group textually.
+    pyproject = pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r"^jev = \[(.*?)^\]", pyproject, re.MULTILINE | re.DOTALL)
+    assert match, "no `jev` dependency group in pyproject.toml"
+    assert "torch" in match.group(1)
+    assert "transformers" in match.group(1)
 
 
 def test_sync_adds_the_jev_group_only_when_jev_mode_is_true(tmp_path: pathlib.Path) -> None:
