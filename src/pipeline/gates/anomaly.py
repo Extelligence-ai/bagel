@@ -12,8 +12,8 @@ If Jev cannot be reached, windows the screen flagged still pass, labelled
 ``screen_only`` (``verified: false``), so no anomaly is lost while offline.
 
 BETA limits: batch (recorded) sources only -- the Jev call is synchronous and would
-block a live ingest thread; and the Jev backend follows TypeSafe's documented
-/v1/systemone format without having been validated against the live API.
+block a live ingest thread. The Jev backend has been exercised against live Jev via
+Vercel AI Gateway; a direct TypeSafe key has not been used yet.
 """
 
 import logging
@@ -106,10 +106,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
             ValueError: On invalid arguments, or a missing API key for the jev backend.
 
         """
-        logging.warning(
-            "The anomaly gate is BETA: batch sources only, and its Jev backend has not "
-            "been validated against the live TypeSafe API."
-        )
+        logging.warning("The anomaly gate is BETA: recorded (batch) sources only.")
         if not anomalies:
             raise ValueError("The anomaly gate needs at least one named type in 'anomalies'")
         if any(not isinstance(k, str) or not isinstance(v, str) for k, v in anomalies.items()):

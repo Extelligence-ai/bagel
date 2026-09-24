@@ -12,12 +12,12 @@ to it, and upload both to any bucket Bagel supports.
 
 > **Beta.** Recorded logs only (a completed sink recording counts): the Jev call is
 > synchronous and would stall a live ingest thread, so `subscribe_live_topics` refuses
-> pipelines that contain this gate. The Jev backend follows TypeSafe's
-> documented `/v1/systemone` request and response format and is tested against a
-> stand-in server; it has not yet been run against the live TypeSafe API. **It
-> graduates** when a pipeline has run against live Jev on a real robot log with the
-> label format confirmed, the reference-log baseline has shipped so warm-up no longer
-> hides the start of every run, and the backend call has moved off the ingest thread.
+> pipelines that contain this gate. The Jev backend has been run against live Jev
+> through Vercel AI Gateway on a real drive (a nuScenes scene) and on a synthetic fault
+> log, with the documented reply format confirmed; a direct TypeSafe key has not been
+> exercised yet. **It graduates** when the reference-log baseline has shipped so
+> warm-up no longer hides the start of every run, and the backend call has moved off
+> the ingest thread.
 
 ## How it works
 
@@ -217,7 +217,8 @@ also hands its decision to `write_annotations`.
 
 ## Limits
 
-- **Beta:** not yet validated against the live TypeSafe API, and recorded logs only.
+- **Beta:** recorded logs only; live Jev exercised through Vercel AI Gateway, not yet
+  with a direct TypeSafe key.
 - **Dropouts are judged at the window's end.** A topic that went quiet for 5 s in the
   middle of a 10 s window and came back is not a dropout.
 - **The baseline is per run.** It is learned from the data the pipeline sees and
