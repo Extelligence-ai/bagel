@@ -173,3 +173,30 @@ def test_preview_rejects_what_the_gate_would_reject(log_path: pathlib.Path, bad:
     # A preview that accepts settings Pipeline.build refuses is misleading (Codex P2).
     with pytest.raises(ValueError):
         _run(log_path, **bad)
+
+
+def test_a_one_off_publication_during_warmup_is_not_an_expected_topic(
+    tmp_path: pathlib.Path,
+) -> None:
+    # 10 s windows every second overlap, so one /event message inside warm-up lands in
+    # ten windows and would win the majority vote; it must not later count as a
+    # permanent dropout (Codex P2).
+    from google.protobuf.wrappers_pb2 import DoubleValue
+    from mcap_protobuf.writer import Writer as ProtobufWriter
+
+    from test._fixtures.fault_log import EPOCH, SECOND_NS, write_fault_log
+
+    write_fault_log(tmp_path / "base.mcap", duration_seconds=60)
+    with open(tmp_path / "oneoff.mcap", "wb") as stream, ProtobufWriter(stream) as writer:
+        stamp = int((EPOCH + 5.0) * SECOND_NS)
+        writer.write_message("/event", DoubleValue(value=1.0), stamp, stamp)
+    report = calibrate.calibrate(
+        str(tmp_path),
+        window_seconds=10,
+        cadence_seconds=1,
+        baseline_window_minutes=5,
+        warmup_minutes=0.25,
+        dropout_seconds=2,
+    )
+    assert "/event" not in report["by_topic"]
+    assert all(r.get("topic") != "/event" for f in report["flagged"] for r in f["reasons"])

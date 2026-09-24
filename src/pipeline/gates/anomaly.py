@@ -155,6 +155,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         )
         self._annotations: dict[str, Any] = {}
         self._last_seen: dict[str, float] = {}
+        self._first_seen: dict[str, float] = {}
 
     def _watched(self, relation: Any) -> summary.Signals:  # noqa: ANN401
         """Resolve the watched signals once; the schema does not change between windows."""
@@ -190,6 +191,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
                 self._z_threshold,
                 self._dropout_seconds,
                 last_seen=self._last_seen,
+                first_seen=self._first_seen,
             )
             if normal
             else []
@@ -197,6 +199,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
         for topic, stats in window["topics"].items():
             if stats["last_seconds"] is not None:
                 self._last_seen[topic] = stats["last_seconds"]
+                self._first_seen.setdefault(topic, stats["last_seconds"])
         present = _present_topics(window, self._last_seen, asof_seconds, self._dropout_seconds)
         self._annotations = {}
         if self._mode == "screen" and not reasons:

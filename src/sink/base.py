@@ -271,10 +271,10 @@ class TopicSink(abc.ABC):
         if topic not in self.available_topics:
             raise TopicNotFoundError(topic)
 
+        if pipeline is not None:
+            require_live_safe(pipeline)
         if topic in self._buffers and not overwrite:
             raise TopicAlreadySubscribedError(topic)
-            if pipeline is not None:
-                require_live_safe(pipeline)
 
         total_limit = settings.SINK_TOTAL_BUFFER_BYTES
         if total_limit:

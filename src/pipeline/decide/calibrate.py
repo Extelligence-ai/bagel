@@ -174,6 +174,7 @@ def calibrate(  # noqa: PLR0913
     by_topic: collections.Counter[str] = collections.Counter()
     windows = warmup = 0
     last_seen: dict[str, float] = {}
+    first_seen: dict[str, float] = {}
     asofs: list[float] = []
     for asof in _asof_timestamps(reader, cadence_topic, float(start), float(end), cadence_seconds):
         asofs.append(asof)
@@ -182,7 +183,13 @@ def calibrate(  # noqa: PLR0913
         window = summary.summarize(relation, watched)
         if rolling.ready(asof):
             reasons = screen.screen(
-                window, rolling.stats(asof), asof, z_threshold, dropout_seconds, last_seen
+                window,
+                rolling.stats(asof),
+                asof,
+                z_threshold,
+                dropout_seconds,
+                last_seen,
+                first_seen,
             )
         else:
             warmup += 1
@@ -190,6 +197,7 @@ def calibrate(  # noqa: PLR0913
         for topic, stats in window["topics"].items():
             if stats["last_seconds"] is not None:
                 last_seen[topic] = stats["last_seconds"]
+                first_seen.setdefault(topic, stats["last_seconds"])
         present = _present_topics(window, last_seen, asof, dropout_seconds)
         if reasons:
             flagged.append(

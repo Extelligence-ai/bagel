@@ -29,6 +29,24 @@ def extreme_threshold(z_threshold: float, samples: int) -> float:
     return z_threshold + math.sqrt(2.0 * math.log(max(samples, 1)))
 
 
+def _has_a_period(
+    topic: str,
+    first_seen: dict[str, float] | None,
+    last_seen: dict[str, float] | None,
+    dropout_seconds: float,
+) -> bool:
+    """Whether a topic's publications span more than the dropout threshold.
+
+    Without history to judge by, every expected topic qualifies. One message seen in
+    many overlapping windows is not evidence of a period.
+    """
+    if first_seen is None or last_seen is None:
+        return True
+    if topic not in first_seen or topic not in last_seen:
+        return False
+    return last_seen[topic] - first_seen[topic] > dropout_seconds
+
+
 def screen(  # noqa: PLR0913
     window: dict,
     baseline: dict,
@@ -36,6 +54,7 @@ def screen(  # noqa: PLR0913
     z_threshold: float,
     dropout_seconds: float,
     last_seen: dict[str, float] | None = None,
+    first_seen: dict[str, float] | None = None,
 ) -> list[dict]:
     """Return the reasons a window looks anomalous (empty if it looks normal).
 
@@ -48,7 +67,9 @@ def screen(  # noqa: PLR0913
         has been silent for more than `dropout_seconds` at the window's end. Silence is
         measured from the topic's last message, which `last_seen` carries across windows
         (a window shorter than the threshold is not a dropout on its own); None means the
-        topic was never seen.
+        topic was never seen. With `first_seen`, a topic counts as expected only once its
+        publications span more than `dropout_seconds`: one message seen in many
+        overlapping windows is not evidence of a period.
 
     """
     reasons = []
@@ -68,6 +89,8 @@ def screen(  # noqa: PLR0913
         if z > extreme_threshold(z_threshold, current["count"]):
             reasons.append({"kind": "z_score", "signal": label, "value": extreme, "z": z})
     for topic in baseline["topics"]:
+        if not _has_a_period(topic, first_seen, last_seen, dropout_seconds):
+            continue
         last = window["topics"].get(topic, {}).get("last_seconds")
         if last is None and last_seen is not None:
             last = last_seen.get(topic)

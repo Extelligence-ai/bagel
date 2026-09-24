@@ -25,12 +25,15 @@ def current_at(offset: float) -> float:
 
 
 def write_fault_log(
-    path: pathlib.Path, state_topic: bool = False, gap: tuple[float, float] = GAP
+    path: pathlib.Path,
+    state_topic: bool = False,
+    gap: tuple[float, float] = GAP,
+    duration_seconds: int = DURATION_SECONDS,
 ) -> pathlib.Path:
     """Write the log to `path`; with `state_topic`, add `/odom` whose `value` is a state that
     steps to a new level at t=70 s and stays there (like a heading after a turn)."""
     with open(path, "wb") as stream, ProtobufWriter(stream) as writer:
-        for i in range(DURATION_SECONDS * 10 + 1):
+        for i in range(duration_seconds * 10 + 1):
             offset = i / 10
             stamp = int((EPOCH + offset) * SECOND_NS)
             writer.write_message(

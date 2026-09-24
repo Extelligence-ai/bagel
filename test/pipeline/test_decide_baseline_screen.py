@@ -328,3 +328,30 @@ def test_a_topic_silent_within_its_grace_stays_expected() -> None:
         window["topics"]["/m"] = {"messages": 0, "last_seconds": None}
         rolling.add(window, present_topics={"/m"})
     assert rolling.stats(asof_seconds=120.0)["topics"] == ["/m"]
+
+
+def test_expected_topics_need_publications_spanning_the_dropout_threshold() -> None:
+    # `screen` only treats a topic as expected if it has been seen publishing over a span
+    # longer than dropout_seconds; a single publication is not evidence of a period.
+    window = _window(100, [], topic_last=None)
+    window["topics"]["/m"] = {"messages": 0, "last_seconds": None}
+    reasons = screen.screen(
+        window,
+        _baseline(),
+        asof_seconds=100,
+        z_threshold=3.0,
+        dropout_seconds=2.0,
+        last_seen={"/m": 90.0},
+        first_seen={"/m": 89.5},  # seen once, effectively
+    )
+    assert reasons == []
+    reasons = screen.screen(
+        window,
+        _baseline(),
+        asof_seconds=100,
+        z_threshold=3.0,
+        dropout_seconds=2.0,
+        last_seen={"/m": 90.0},
+        first_seen={"/m": 10.0},
+    )
+    assert reasons == [{"kind": "dropout", "topic": "/m", "silent_seconds": 10.0}]
