@@ -95,7 +95,7 @@ upload task you choose.
 | --- | --- | --- |
 | `anomalies` | *(required)* | Named anomaly types and a plain-language description of each. `normal`, `other_unusual` and `screen_only` are reserved. |
 | `topics` | all | Topics to watch. |
-| `signals` | all numeric fields except `header`/`stamp` | Exact dotted signals, e.g. `/imu.linear_acceleration.x`. ROS header timestamps are skipped by default because they grow every message. |
+| `signals` | all numeric fields except `header`/`stamp` | Exact dotted signals, e.g. `/imu.linear_acceleration.x`. ROS header timestamps are skipped by default because they grow every message. **Watch rates and errors, not states:** accelerations, angular rates, currents, lane offset. Positions, velocities and orientations drift by design as the robot moves, so "far from the baseline mean" says nothing about them (on a nuScenes drive, quaternion fields flagged every window after the first turn). |
 | `max_signals` | `64` | Refuse to watch more signals than this. Each adds to the summary query and to the request Jev reads (64k-token context); a PX4 log exposes ~2,000, so pick `topics` or `signals`. |
 | `mode` | `screen` | `screen`: ask Jev only about windows the on-robot check flags. `always`: ask about every window (more calls, catches what the screen misses). |
 | `z_threshold` | `3.0` | Flag a window whose mean is this many baseline std devs from normal. A single sample must clear this plus the extreme its sample count explains (about 3σ more at 50 Hz), so noisy signals don't trip every window. |
