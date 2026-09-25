@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <em>Don't tell me you're still doing things the *bleeping* old way.</em>
+  <em>If you still have a script called <code>parse_bag_final_v7.py</code>, we need to talk.</em>
 </p>
 
 <h1 align="center">
