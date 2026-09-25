@@ -153,3 +153,14 @@ def test_a_stopped_worker_refuses_new_fires() -> None:
     worker.stop()
     with pytest.raises(RuntimeError, match="stopped"):
         worker.submit(1.0)
+
+
+def test_shutdown_stops_and_joins_every_worker() -> None:
+    # Registered with atexit: a worker thread still alive at interpreter exit holds a
+    # thread-local DuckDB connection, and tearing that down aborts the process on Linux.
+    from src.sink import worker as worker_module
+
+    workers = [PipelineWorker(SlowPipeline()) for _ in range(3)]
+    workers[0].submit(1.0)
+    worker_module.shutdown_all(timeout_seconds=5)
+    assert all(w.stopped and not w._thread.is_alive() for w in workers)

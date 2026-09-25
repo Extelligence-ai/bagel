@@ -14,15 +14,36 @@ window that has already rotated out of the topic buffer:
   when its turn comes.
 
 Dropped fires are counted in `pipeline.summary.dropped` and logged.
+
+Every worker is stopped and joined at interpreter exit (`shutdown_all`): a thread still
+alive then would hold a thread-local DuckDB connection (`src.query`) through
+finalization, which aborts the process.
 """
 
+import atexit
 import collections
 import logging
 import threading
 import time
+import weakref
 from typing import Any
 
 from settings import settings
+
+_workers: "weakref.WeakSet[PipelineWorker]" = weakref.WeakSet()
+
+
+def shutdown_all(timeout_seconds: float = 5.0) -> None:
+    """Stop every live worker and wait up to `timeout_seconds` for its thread to end."""
+    deadline = time.monotonic() + timeout_seconds
+    workers = list(_workers)
+    for worker in workers:
+        worker.stop()
+    for worker in workers:
+        worker.join(max(0.0, deadline - time.monotonic()))
+
+
+atexit.register(shutdown_all)
 
 
 class PipelineWorker:
@@ -39,6 +60,7 @@ class PipelineWorker:
             target=self._run, name=f"pipeline:{getattr(pipeline, 'name', '?')}", daemon=True
         )
         self._thread.start()
+        _workers.add(self)
 
     @property
     def stopped(self) -> bool:
@@ -76,6 +98,11 @@ class PipelineWorker:
             self._stopped = True
             self._pending.clear()
             self._condition.notify_all()
+
+    def join(self, timeout_seconds: float | None = None) -> None:
+        """Wait for the thread to end after `stop()` (the fire in progress finishes)."""
+        if self._thread is not threading.current_thread():
+            self._thread.join(timeout_seconds)
 
     def _drop(self, asof_seconds: float, why: str) -> None:
         self._pipeline.summary.dropped += 1
