@@ -1,6 +1,7 @@
 """Abstract base class for topic sinks."""
 
 import abc
+import functools
 import logging
 import pathlib
 import threading
@@ -69,6 +70,29 @@ class TopicSink(abc.ABC):
     """
 
     _is_singleton_initialized: bool
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Make each subclass `__init__` a no-op on an already-initialized singleton.
+
+        `__new__` hands back the live instance for a known `(host, port)`, but Python
+        still calls `__init__` on it. Subclasses build their client (paho, roslibpy)
+        before calling `super().__init__`, so a second construction -- e.g.
+        `list_live_topics` then `subscribe_live_topics` -- would swap the connected
+        client for a fresh, never-connected one and the subscription would receive
+        nothing.
+        """
+        super().__init_subclass__(**kwargs)
+        init = cls.__dict__.get("__init__")
+        if init is None:
+            return
+
+        @functools.wraps(init)
+        def _init_once(self: "TopicSink", *args: object, **init_kwargs: object) -> None:
+            if getattr(self, "_is_singleton_initialized", False):
+                return  # the live singleton keeps its client, buffers and settings
+            init(self, *args, **init_kwargs)
+
+        cls.__init__ = _init_once
 
     def __new__(cls, host: str, port: str, *args: object, **kwargs: object) -> "TopicSink":
         """Implement singleton pattern to ensure only one instance per (host, port)."""
