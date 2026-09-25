@@ -10,6 +10,14 @@ name: codex-gate
 # Codex app ignores bot-authored triggers, comment "@codex review" manually
 # and the gate turns green when the review lands.
 #
+# The auto-trigger fires only on opened/reopened/ready_for_review. It used to
+# fire on every `synchronize` too, which bought a full review of the whole
+# diff per pushed commit -- and since the gate only accepts a review of the
+# FINAL head, each intermediate one was discarded by the next push. Iterating
+# is now free; add the `codex-rerequest` label (codex-rerequest.yaml) when the
+# branch is ready for another round. The gate still evaluates on every push,
+# so a head without a review is still visibly red -- it just costs nothing.
+#
 # Claude's reviews are posted by a deterministic, non-model shell step in
 # claude-review.yaml (see that file's header) -- the model itself is given
 # no posting capability at all, because any tool that lets it publish
@@ -52,33 +60,166 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
         run: |
           set -euo pipefail
+          # Fetched once, and NOT with `|| true`: a reviews API failure that reads as
+          # "no bodies" would report zero body findings and let the gate pass. Every
+          # read this job makes fails closed.
+          # `|| return 1` on each call, not just errexit: this runs inside an `if`
+          # condition, where bash suppresses errexit for the command and its subshells,
+          # so a failure of the FIRST call would otherwise be masked by the second
+          # succeeding.
+          # One base64 record per body: bodies are multi-line, so a concatenated blob
+          # cannot tell which review said what -- and body_findings below must judge
+          # each body on its own.
+          accepted_bodies() {
+            gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+              --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "claude[bot]" or .user.login == "arunvenkatadri") | .body | @base64' || return 1
+            gh api "repos/$REPO/issues/$PR/comments" --paginate \
+              --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body | @base64' || return 1
+          }
+          if ! BODIES_B64="$(accepted_bodies)"; then
+            echo "::error::Could not read this PR's reviews and comments (GitHub API error). Failing closed."
+            exit 1
+          fi
+          decoded_bodies() {
+            for encoded in $BODIES_B64; do
+              printf '%s' "$encoded" | base64 --decode 2>/dev/null || true
+              printf '\n'
+            done
+          }
+          # The sha a single body says it reviewed, empty if it names none.
+          body_sha() {
+            printf '%s\n' "$1" \
+              | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \
+              | grep -oE '[a-f0-9]{7,40}$' | head -1 || true
+          }
           reviewed_shas() {
-            {
-              gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
-                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]" or .user.login == "claude[bot]" or .user.login == "arunvenkatadri") | .body' || true
-              gh api "repos/$REPO/issues/$PR/comments" --paginate \
-                --jq '.[] | select(.user.login == "chatgpt-codex-connector[bot]") | .body' || true
-            } | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \
+            decoded_bodies \
+              | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \
               | grep -oE '[a-f0-9]{7,40}$' || true
           }
+          # Any commit-ish token in an accepted review body, however phrased. Used only
+          # to explain a near miss -- never to satisfy the gate.
+          mentioned_shas() {
+            decoded_bodies | grep -oE '[a-f0-9]{7,40}' || true
+          }
+          # A review only proves someone looked. #181 merged green with a Codex P2 still
+          # open, because the gate never asked whether the findings were addressed.
+          # Outdated threads are skipped: their code is gone, and the head-commit review
+          # requirement above re-surfaces anything that survived the rewrite.
+          # --paginate with pageInfo/$endCursor: a PR past 100 threads must not hide an
+          # unresolved finding on page two. Each page emits its own count; sum them.
+          unresolved_findings() {
+            # $owner/$name/$pr/$endCursor below are GraphQL variables bound by the -F
+            # flags; the shell must NOT expand them, hence the single quotes.
+            # shellcheck disable=SC2016
+            gh api graphql --paginate \
+              -f query='query($owner:String!,$name:String!,$pr:Int!,$endCursor:String){
+                repository(owner:$owner,name:$name){
+                  pullRequest(number:$pr){
+                    reviewThreads(first:100, after:$endCursor){
+                      pageInfo{ hasNextPage endCursor }
+                      nodes{ isResolved isOutdated comments(first:1){nodes{author{login}}} }
+                    }
+                  }
+                }
+              }' \
+              -F owner="${REPO%%/*}" -F name="${REPO##*/}" -F pr="$PR" \
+              --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+                     | select(.isResolved == false and .isOutdated == false)
+                     | select(.comments.nodes[0].author.login == "chatgpt-codex-connector"
+                              or .comments.nodes[0].author.login == "claude")] | length' \
+              | awk '{ total += $1 } END { print total + 0 }'
+          }
+          # Findings reported in a review BODY rather than as inline threads, which
+          # reviewThreads cannot see. Two shapes, one per reviewer:
+          #   - Claude: claude-review.yaml posts with `gh pr review --comment
+          #     --body-file`, and its posting step validates a closed-enum verdict
+          #     line deterministically, so "Findings: present" is trustworthy.
+          #   - Codex: its findings normally arrive as inline threads, but the review
+          #     body that accompanies them is distinguishable from the clean one
+          #     ("automated review suggestions" vs "Didn't find any major issues"),
+          #     which covers findings that never became threads.
+          #
+          # ONLY bodies that reviewed the CURRENT head count. A review body is
+          # immutable history: unlike an inline thread it has no isResolved and no
+          # isOutdated, so matching against every body ever posted made one findings
+          # review block the PR forever, however many fixes landed after it (this gate
+          # did exactly that to its own PR). Keying on the head sha gives a body the
+          # same lifecycle a thread already has -- pushing a fix moves the head, the
+          # stale body stops counting, and the new head needs its own review anyway.
+          body_findings() {
+            count=0
+            for encoded in $BODIES_B64; do
+              body="$(printf '%s' "$encoded" | base64 --decode 2>/dev/null || true)"
+              [ -n "$body" ] || continue
+              sha="$(body_sha "$body")"
+              [ -n "$sha" ] || continue
+              case "$HEAD_SHA" in
+                "$sha"*) ;;
+                *) continue ;;
+              esac
+              if printf '%s\n' "$body" \
+                   | grep -qE '^Findings: present[[:space:]]*$|automated review suggestions'; then
+                count=$((count + 1))
+              fi
+            done
+            echo "$count"
+          }
+          # Fail closed: an API outage, rate limit, or schema change must never read as
+          # "nothing unresolved" and let an existing attestation carry the PR green.
+          if ! open_threads="$(unresolved_findings)"; then
+            echo "::error::Could not read this PR's review threads (GitHub API error). Failing closed rather than assuming there are no findings."
+            exit 1
+          fi
+          open_bodies="$(body_findings)"
+          open_findings=$(( open_threads + open_bodies ))
+          if [ "$open_findings" -gt 0 ]; then
+            echo "::error::$open_findings unresolved review finding(s) on this PR ($open_threads inline thread(s), $open_bodies body-reported). A green gate means a review happened, not that its findings were addressed -- fix or resolve each before merging."
+            exit 1
+          fi
           for sha in $(reviewed_shas); do
             case "$HEAD_SHA" in
               "$sha"*)
-                echo "An AI reviewer (Codex or Claude) reviewed the head commit ($sha)."
+                echo "An AI reviewer (Codex or Claude) reviewed the head commit ($sha), with no unresolved findings."
                 exit 0
                 ;;
             esac
           done
-          marker="<!-- codex-gate:$HEAD_SHA -->"
-          if gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[].body' \
-               | grep -qF "$marker"; then
-            echo "Codex review already requested for $HEAD_SHA; waiting for it to land."
-          else
-            gh api -X POST "repos/$REPO/issues/$PR/comments" \
-              -f body="$(printf '@codex review\n\n%s' "$marker")" >/dev/null
-            echo "Requested a Codex review of $HEAD_SHA."
-          fi
-          echo "::error::Codex has not yet reviewed head commit $HEAD_SHA. The gate re-runs when its review is submitted."
+          # Distinguish "nobody reviewed" from "someone attested, but not in the exact
+          # words this gate matches" -- the latter used to fail identically and silently.
+          for sha in $(mentioned_shas); do
+            case "$HEAD_SHA" in
+              "$sha"*)
+                echo "::error::Found a review naming head commit $sha, but without the required phrase. A maintainer attestation must contain literally: Reviewed commit: $HEAD_SHA"
+                break
+                ;;
+            esac
+          done
+          # Only `opened` and `ready_for_review` buy a review round. A `synchronize`
+          # used to request one per pushed head, and since the gate only ever accepts
+          # a review of the FINAL head, every intermediate review was paid for and
+          # then discarded on the next push -- #250 bought two rounds for one PR.
+          # Iterating on a PR now costs nothing; add the `codex-rerequest` label
+          # (codex-rerequest.yaml) when the branch is ready for another look.
+          case "$GITHUB_EVENT_NAME:$ACTION" in
+            pull_request:opened|pull_request:reopened|pull_request:ready_for_review)
+              marker="<!-- codex-gate:$HEAD_SHA -->"
+              if gh api "repos/$REPO/issues/$PR/comments" --paginate --jq '.[].body' \
+                   | grep -qF "$marker"; then
+                echo "Codex review already requested for $HEAD_SHA; waiting for it to land."
+              else
+                gh api -X POST "repos/$REPO/issues/$PR/comments" \
+                  -f body="$(printf '@codex review\n\n%s' "$marker")" >/dev/null
+                echo "Requested a Codex review of $HEAD_SHA."
+              fi
+              ;;
+            *)
+              echo "Not requesting a review for $HEAD_SHA: this is a $GITHUB_EVENT_NAME/$ACTION, and intermediate pushes are not worth a review round. Add the 'codex-rerequest' label when the branch is ready."
+              ;;
+          esac
+          echo "::error::Codex has not yet reviewed head commit $HEAD_SHA. Add the 'codex-rerequest' label when this branch is ready for review; the gate re-runs when the review lands."
           exit 1
