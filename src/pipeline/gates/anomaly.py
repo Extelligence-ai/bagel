@@ -27,6 +27,8 @@ from src.pipeline.decide import backends, baseline, screen, summary
 NORMAL = "normal"
 OTHER = "other_unusual"
 SCREEN_ONLY = "screen_only"
+UNVERIFIED = "unverified"
+RESERVED = frozenset({NORMAL, OTHER, SCREEN_ONLY, UNVERIFIED})
 MODES = ("screen", "always")
 DEFAULT_QUESTION = (
     "Compared with this robot's baseline, does this window of sensor data show one of "
@@ -55,7 +57,7 @@ def _validate_names(anomalies: dict[str, str], mode: str) -> None:
             "Anomaly names and descriptions must be strings. YAML reads bare yes/no/on/off "
             "as booleans: quote them."
         )
-    if reserved := sorted({NORMAL, OTHER, SCREEN_ONLY} & set(anomalies)):
+    if reserved := sorted(RESERVED & set(anomalies)):
         raise ValueError(f"Anomaly names {reserved} are reserved labels")
     if mode not in MODES:
         raise ValueError(f"Unknown mode {mode!r}; use one of {MODES}")
@@ -257,14 +259,20 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
             for choice, score in answer.probabilities.items()
         }
         label = max(probabilities, key=probabilities.__getitem__)
-        flagged = label != NORMAL and probabilities[label] >= self._min_probability
-        if flagged:
+        confident = probabilities[label] >= self._min_probability
+        if confident and label != NORMAL:
             self._record(label, probabilities, answer.model, True, window, normal, reasons)
-        elif not reasons or (label == NORMAL and probabilities[NORMAL] >= self._min_probability):
+            return True
+        if not reasons or confident:
             # Only a confident `normal` verdict teaches the baseline that a screened window
             # was fine; a weak one keeps it out, as an unreachable backend would.
             self.baseline.add(window, present)
-        return flagged
+            return False
+        # The screen fired and Jev committed to nothing. Keep the slice, as an unreachable
+        # Jev would (`screen_only`): dropping it loses the data for good, and Jev's
+        # spread of probabilities is still worth recording next to it.
+        self._record(UNVERIFIED, probabilities, answer.model, False, window, normal, reasons)
+        return True
 
     def _record(  # noqa: PLR0913
         self,

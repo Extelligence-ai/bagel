@@ -125,7 +125,7 @@ write the YAML. The LLM recipe `compose/anomaly_pipeline` walks these steps.
 
 | Arg | Default | What it does |
 | --- | --- | --- |
-| `anomalies` | *(required)* | Named anomaly types and a plain-language description of each. `normal`, `other_unusual` and `screen_only` are reserved. |
+| `anomalies` | *(required)* | Named anomaly types and a plain-language description of each. `normal`, `other_unusual`, `screen_only` and `unverified` are reserved. |
 | `topics` | all | Topics to watch. |
 | `signals` | all numeric fields except `header`/`stamp` | Exact dotted signals, e.g. `/imu.linear_acceleration.x`. ROS header timestamps are skipped by default because they grow every message. `[]` watches no signals (dropouts only). **Watch rates and errors, not states:** accelerations, angular rates, currents, lane offset. Positions, velocities and orientations drift by design as the robot moves, so "far from the baseline mean" says nothing about them (on a nuScenes drive, quaternion fields flagged every window after the first turn). |
 | `max_signals` | `64` | Refuse to watch more signals than this. Each adds to the summary query and to the request Jev reads (64k-token context); a PX4 log exposes ~2,000, so pick `topics` or `signals`. |
@@ -134,7 +134,7 @@ write the YAML. The LLM recipe `compose/anomaly_pipeline` walks these steps.
 | `dropout_seconds` | `2` | Flag an expected topic silent this long at the window's end, measured from its last message even across windows (so a threshold longer than the window waits for it). Expected = publishes in most baseline windows, so event-driven topics don't count. The cadence topic can never drop out: the pipeline only runs when it publishes. |
 | `baseline_window_minutes` | `30` | How much recent history defines "normal". |
 | `warmup_minutes` | `5` | History needed before screening starts; in screen mode nothing is flagged before then (in `always` mode Jev is still asked, without baseline statistics). Must not exceed `baseline_window_minutes`. |
-| `min_probability` | `0.6` | Confidence Jev needs for its label to count; less confident answers count as normal. |
+| `min_probability` | `0.6` | Confidence Jev needs for its verdict to count, whether that verdict is an anomaly or `normal`. A confident `normal` clears a screened window; a less confident answer keeps it, labelled `unverified` (see below). Calibrated for the `jev` backend; the `local` backend's scores are a different distribution, so tune it separately there. |
 | `question` | built in | The instructions Jev receives. |
 | `backend` | `jev` | `jev` (TypeSafe), `remote` (any endpoint answering `{"probabilities": {...}}`) or `local` (model on the robot, see below). |
 | `model` | `jev-latest` | Pin a version such as `jev-1.13.0` for reproducible labels. |
@@ -186,6 +186,15 @@ crash the pipeline.
 A window the screen flagged is still kept and uploaded, labelled `screen_only` with
 `verified: false` and no model, so nothing is lost while the robot is offline or
 TypeSafe is busy. Windows the screen didn't flag are dropped as usual.
+
+## When Jev isn't sure
+
+The same rule holds when Jev answers but no choice reaches `min_probability`: a
+screened window is kept and uploaded, labelled `unverified` with `verified: false`,
+the model name and Jev's probabilities, so an uncertain verdict never fares worse
+than an unreachable one. Only a confident `normal` clears a screened window (and
+teaches the baseline it was fine). In `always` mode, an unsure answer about a window
+the screen did not flag drops it, as before: uncertainty alone is not evidence.
 
 ## CPU-only robots and the on-robot model
 
