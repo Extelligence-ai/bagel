@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     # rotation.
     SINK_TOTAL_BUFFER_BYTES: int = 0
 
+    # Live pipelines run on a worker thread, off the ingest thread (src/sink/worker.py).
+    # Fires waiting beyond either bound are dropped and counted in the run summary.
+    # The topic buffer must hold a pipeline's lookback plus MAX_LAG_SECONDS of data.
+    LIVE_PIPELINE_MAX_PENDING: int = 100
+    LIVE_PIPELINE_MAX_LAG_SECONDS: float = 120.0
+    # How long closing a sink waits for queued fires to finish.
+    LIVE_PIPELINE_DRAIN_SECONDS: float = 60.0
+
     # Number of messages to buffer in rosbridge before sending over the WebSocket
     ROSBRIDGE_QUEUE_LENGTH: int = 1000
 

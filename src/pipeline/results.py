@@ -11,6 +11,9 @@ class RunSummary:
     succeeded: int = 0
     skipped: int = 0
     failed: int = 0
+    # Live fires dropped before running, because the pipeline fell too far behind
+    # the stream (see `src.sink.worker`).
+    dropped: int = 0
     errors: list[str] = field(default_factory=list)
 
     @property

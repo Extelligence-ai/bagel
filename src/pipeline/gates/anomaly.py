@@ -9,11 +9,13 @@ but a confident ``normal``, so downstream tasks (snippet, write_annotations, upl
 keep only anomalous log segments, each with a JSON label from `annotations()`.
 
 If Jev cannot be reached, windows the screen flagged still pass, labelled
-``screen_only`` (``verified: false``), so no anomaly is lost while offline.
+``screen_only`` (``verified: false``), so no anomaly is lost while offline; if Jev
+answers without confidence, they pass labelled ``unverified``.
 
-BETA limits: batch (recorded) sources only -- the Jev call is synchronous and would
-block a live ingest thread. The Jev backend has been exercised against live Jev via
-Vercel AI Gateway; a direct TypeSafe key has not been used yet.
+Runs on recorded logs and on live subscriptions: live pipelines run on a worker thread
+(`src.sink.worker`), so the Jev call never blocks ingest. BETA: the Jev backend has
+been exercised against live Jev via Vercel AI Gateway; a direct TypeSafe key has not
+been used yet, and the rolling baseline restarts with the process.
 """
 
 import logging
@@ -100,8 +102,6 @@ def _validate_numbers(  # noqa: PLR0913
 class Anomaly(messages.TopicMessageMixin, base.Gate):
     """Detect anomalies on the robot and ask Jev to label them. BETA."""
 
-    live_safe = False  # synchronous backend call: recorded sources only
-
     def __init__(  # noqa: PLR0913
         self,
         anomalies: dict[str, str],
@@ -144,8 +144,9 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
                 cadence topic (the pipeline only runs when it publishes).
             baseline_window_minutes (float, optional): Span of the rolling baseline.
             warmup_minutes (float, optional): History needed before screening starts.
-            min_probability (float, optional): Confidence Jev needs for its label to
-                count. A less confident answer counts as normal. Defaults to 0.6.
+            min_probability (float, optional): Confidence Jev needs for its verdict
+                (an anomaly or `normal`) to count. A less confident answer about a
+                screened window keeps it, labelled `unverified`. Defaults to 0.6.
             question (str, optional): The instructions given to Jev.
             backend (str, optional): "jev" (TypeSafe, default), "remote" or "local".
             model (str | None, optional): Model id; defaults to "jev-latest" for jev.
@@ -158,7 +159,7 @@ class Anomaly(messages.TopicMessageMixin, base.Gate):
             ValueError: On invalid arguments, or a missing API key for the jev backend.
 
         """
-        logging.warning("The anomaly gate is BETA: recorded (batch) sources only.")
+        logging.warning("The anomaly gate is BETA.")
         _validate_names(anomalies, mode)
         _validate_numbers(
             z_threshold,

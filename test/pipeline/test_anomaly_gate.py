@@ -518,8 +518,7 @@ def test_completed_sink_recordings_are_accepted(
     server: DecisionServer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # A persisted TopicSink recording uses the same source class as a live sink; the gate
-    # must not refuse it (Codex P2). The batch-only rule is enforced where a pipeline is
-    # attached to a live subscription instead.
+    # must not refuse it (Codex P2).
     from src.pipeline import messages
     from src.source.bagel import sink as bagel_sink
 
@@ -529,18 +528,7 @@ def test_completed_sink_recordings_are_accepted(
         messages.SourceContext, "build", staticmethod(lambda path, kwargs: recording)
     )
     gate = anomaly.Anomaly(**_gate_args(server))
-    gate.setup(path="./recorded-sink")
-    assert gate.live_safe is False
-
-
-def test_live_subscriptions_refuse_the_anomaly_gate(
-    log_path: pathlib.Path, server: DecisionServer
-) -> None:
-    from src.sink import base as sink_base
-
-    pipeline = _pipeline(log_path, _gate_args(server), SNIP_AND_WRITE)
-    with pytest.raises(ValueError, match="batch-only"):
-        sink_base.require_live_safe(pipeline)
+    gate.setup(path="./recorded-sink")  # no error
 
 
 @pytest.mark.parametrize(

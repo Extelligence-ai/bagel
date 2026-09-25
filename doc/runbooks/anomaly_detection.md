@@ -10,14 +10,12 @@ against it, and asks [Jev](https://docs.typesafe.ai/models) (TypeSafe's typed-de
 model) to name anything unusual. Downstream tasks cut the slice, write a JSON label next
 to it, and upload both to any bucket Bagel supports.
 
-> **Beta.** Recorded logs only (a completed sink recording counts): the Jev call is
-> synchronous and would stall a live ingest thread, so `subscribe_live_topics` refuses
-> pipelines that contain this gate. The Jev backend has been run against live Jev
-> through Vercel AI Gateway on a real drive (a nuScenes scene) and on a synthetic fault
-> log, with the documented reply format confirmed; a direct TypeSafe key has not been
+> **Beta.** Runs on recorded logs and on live subscriptions (see
+> [Run it live](#run-it-live)). The Jev backend has been run against live Jev through
+> Vercel AI Gateway on a real drive (a nuScenes scene) and on a synthetic fault log,
+> with the documented reply format confirmed; a direct TypeSafe key has not been
 > exercised yet. **It graduates** when the reference-log baseline has shipped so
-> warm-up no longer hides the start of every run, and the backend call has moved off
-> the ingest thread.
+> warm-up no longer hides the start of every run.
 
 ## How it works
 
@@ -35,7 +33,7 @@ every window (e.g. 10 s)
   │                  "which of these anomalies is it?"
   │                  → one of your named types, other_unusual, or normal
   │
-  └─ pass? ──────── yes unless Jev says normal (or isn't confident enough)
+  └─ pass? ──────── yes unless Jev confidently says normal
         │
         ├─ snippet.mcap        cut the window
         ├─ write_annotations   JSON label next to it
@@ -60,7 +58,7 @@ of every statistic.
 name: anomaly_upload
 site: warehouse
 asset: forklift
-path: ./data/logs/shift_042          # a recorded log (live sources: after beta)
+path: ./data/logs/shift_042          # a recorded log; see "Run it live" for a stream
 allow_failure: false
 cadence:
   topic: /motor/current
@@ -179,6 +177,28 @@ real record (rounded) from a test run with a planted current spike:
 `screen_reasons` says what tripped the on-robot check (`mean_shift`, `z_score` or
 `dropout`); `baseline` is what "normal" meant at that moment.
 
+## Run it live
+
+Attach the same pipeline to a live subscription (`subscribe_live_topics`, or an entry in
+`STARTUP_PIPELINES_FILE` so the edge container restores it on every boot) and drop its
+`path`: it defaults to the live buffer. Every window is screened as the data arrives,
+and anomalous slices are labelled and uploaded while the robot is still running.
+
+Live pipelines run on a worker thread, one per pipeline, never on the thread that
+receives messages, so waiting on Jev (up to `timeout_seconds` per window) never stalls
+ingest. If a pipeline falls behind the stream, the worker drops fires rather than
+fall further behind, and counts them in the run summary's `dropped`:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `LIVE_PIPELINE_MAX_PENDING` | `100` | Fires allowed to wait; beyond it the oldest is dropped. |
+| `LIVE_PIPELINE_MAX_LAG_SECONDS` | `120` | A fire that waited longer than this is dropped when its turn comes. The topic buffer (`JSONL_BUFFER_SIZE_PER_TOPIC_BYTES`, 1 GB by default) must hold the gate's lookback plus this much data. |
+| `LIVE_PIPELINE_DRAIN_SECONDS` | `60` | On shutdown, how long to wait for queued fires before discarding them. |
+
+In `screen` mode a live pipeline rarely falls behind: Jev is only asked about flagged
+windows. In `always` mode every window waits on Jev, so keep `cadence` longer than
+Jev's typical reply time.
+
 ## When Jev can't be reached
 
 Timeouts, rate limits, dropped connections, HTTP errors and malformed replies never
@@ -226,13 +246,13 @@ also hands its decision to `write_annotations`.
 
 ## Limits
 
-- **Beta:** recorded logs only; live Jev exercised through Vercel AI Gateway, not yet
-  with a direct TypeSafe key.
+- **Beta:** live Jev exercised through Vercel AI Gateway, not yet with a direct
+  TypeSafe key.
 - **Dropouts are judged at the window's end.** A topic that went quiet for 5 s in the
   middle of a 10 s window and came back is not a dropout.
 - **The baseline is per run.** It is learned from the data the pipeline sees and
-  resets when the pipeline restarts; in screen mode the first `warmup_minutes` are never
-  flagged.
+  resets when the pipeline restarts, including a live pipeline when the container
+  restarts; in screen mode the first `warmup_minutes` are never flagged.
   Known-good reference logs and fleet baselines pushed from Matcha are planned.
 - **Slow drift can hide.** A signal that creeps up over longer than
   `baseline_window_minutes` moves the baseline with it.

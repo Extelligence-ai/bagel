@@ -260,58 +260,6 @@ def test_numeric_settings_are_validated(bad: dict) -> None:
         )
 
 
-def test_live_subscriptions_refuse_the_decide_gate() -> None:
-    from src.sink import base as sink_base
-
-    pipeline = base.Pipeline.build(
-        {
-            "name": "decide_live",
-            "site": "s",
-            "asset": "a",
-            "path": "./data/sample/pyarrow/csv",
-            "allow_failure": False,
-            "cadence": {"topic": "message", "when": "once_at_end"},
-            "gates": [
-                {
-                    "module": "src.pipeline.gates.decide",
-                    "args": {
-                        "question": "q?",
-                        "choices": CHOICES,
-                        "accept": ["upload"],
-                        "url": "http://127.0.0.1:9/",
-                    },
-                }
-            ],
-            "tasks": [{"module": "src.pipeline.tasks.write_annotations"}],
-        }
-    )
-    with pytest.raises(ValueError, match="batch-only"):
-        sink_base.require_live_safe(pipeline)
-
-
-def test_live_subscriptions_accept_pipelines_without_batch_only_gates() -> None:
-    from src.sink import base as sink_base
-
-    pipeline = base.Pipeline.build(
-        {
-            "name": "sql_live",
-            "site": "s",
-            "asset": "a",
-            "path": "./data/sample/pyarrow/csv",
-            "allow_failure": False,
-            "cadence": {"topic": "message", "when": "once_at_end"},
-            "gates": [
-                {
-                    "module": "src.pipeline.gates.sql",
-                    "args": {"topic": "message", "statement": "SELECT true"},
-                }
-            ],
-            "tasks": [{"module": "src.pipeline.tasks.write_annotations"}],
-        }
-    )
-    sink_base.require_live_safe(pipeline)  # no error
-
-
 def test_non_finite_scores_from_a_backend_make_the_gate_abstain() -> None:
     class Unstable:
         def decide(self, state: dict, question: str, choices: dict[str, str]) -> backends.Answer:

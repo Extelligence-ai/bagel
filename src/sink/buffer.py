@@ -17,6 +17,7 @@ import yaml
 from settings import settings
 from src.pipeline import live
 from src.pipeline.base import Cadence, Frequency, OnceAtEnd, OnEvent, Pipeline, Unit
+from src.sink.worker import PipelineWorker
 
 
 def _topic_uuid(topic: str) -> str:
@@ -73,6 +74,7 @@ class TopicBufferWriter:
                 evicting old messages. If None, the buffer size is unbounded.
             overwrite (bool): If True, overwrite any existing topic buffers.
             pipeline (Pipeline | None): An callback pipeline to execute on incoming messages.
+                Its fires run on a `PipelineWorker` thread, never on the caller's.
             extract_timestamp (Callable[[dict[str, Any]], float] | None, optional):
                 A function to extract a timestamp in seconds from a message. If None,
                 the current system time is used.
@@ -120,6 +122,7 @@ class TopicBufferWriter:
                 self._overflow_data_file.unlink(missing_ok=True)
 
         self._pipeline = pipeline
+        self._worker = PipelineWorker(pipeline) if pipeline is not None else None
         self._message_count = 0
         self._last_run_at = None
         self._last_timestamp_seconds = None
@@ -201,12 +204,12 @@ class TopicBufferWriter:
                 self._topic, self._struct, msg, self.pipeline.cadence.when.predicate
             )
             for event_seconds in self._event_trigger.feed(timestamp_seconds, hit):
-                self.pipeline.run_at(event_seconds)
+                self._worker.submit(event_seconds)
                 self._last_run_at = event_seconds
         elif self.pipeline and self._should_run(
             self.pipeline.cadence, self.message_count, self.last_run_at, timestamp_seconds
         ):
-            self.pipeline.run_at(timestamp_seconds)
+            self._worker.submit(timestamp_seconds)
             self._last_run_at = timestamp_seconds
 
         self._message_count += 1
@@ -221,8 +224,22 @@ class TopicBufferWriter:
         if self._event_trigger is None or self._pipeline is None:
             return
         for event_seconds in self._event_trigger.flush():
-            self._pipeline.run_at(event_seconds)
+            self._worker.submit(event_seconds)
             self._last_run_at = event_seconds
+
+    @property
+    def stopped(self) -> bool:
+        """True once this writer's pipeline worker was stopped (or it has no pipeline)."""
+        return self._worker is None or self._worker.stopped
+
+    def drain(self, timeout_seconds: float | None = None) -> bool:
+        """Wait for the pipeline's queued fires to run; False if the timeout ran out."""
+        return self._worker.drain(timeout_seconds) if self._worker is not None else True
+
+    def stop(self) -> None:
+        """Stop the pipeline worker; queued fires are discarded (`drain()` first)."""
+        if self._worker is not None:
+            self._worker.stop()
 
     def _should_run(
         self, cadence: Cadence, message_count: int, last_run_at: float | None, asof_seconds: float

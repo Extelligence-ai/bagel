@@ -35,7 +35,7 @@ def make_writer(path: pathlib.Path, **overrides: object) -> TopicBufferWriter:
 
 
 class PipelineStub:
-    """Duck-typed stand-in: the writer only touches `.cadence` and `.run_at`."""
+    """Duck-typed stand-in: the writer touches `.name`, `.cadence` and `.run_at`."""
 
     def __init__(self, when: object) -> None:
         self.name = "stub"
@@ -108,6 +108,7 @@ def test_frame_cadence_fires_every_nth_message(tmp_path: pathlib.Path) -> None:
         writer.append({"x": float(i), "note": ""})
 
     # Fires on the first message (never ran), then on every 2nd frame.
+    writer.drain()  # fires run on the pipeline worker
     assert pipeline.ran_at == [0.0, 2.0, 4.0]
 
 
@@ -117,6 +118,7 @@ def test_second_cadence_fires_by_elapsed_time(tmp_path: pathlib.Path) -> None:
     for t in [0.0, 5.0, 10.0, 15.0, 21.0]:
         writer.append({"x": t, "note": ""})
 
+    writer.drain()  # fires run on the pipeline worker
     assert pipeline.ran_at == [0.0, 10.0, 21.0]
 
 
@@ -130,10 +132,12 @@ def test_on_event_forward_window_flushes_at_close(tmp_path: pathlib.Path) -> Non
 
     writer.append({"x": -20.0, "note": "hard brake"})  # rising edge at t=-20.0? no: ts=x
     # The event is pending its 5s forward window, so nothing has run yet.
+    writer.drain()  # fires run on the pipeline worker
     assert pipeline.ran_at == []
 
     # Stream ends before the post-window elapsed: flush fires it best-effort.
     writer.flush_pending_events()
+    writer.drain()  # fires run on the pipeline worker
     assert pipeline.ran_at == [-20.0]
 
 
@@ -170,6 +174,7 @@ def test_once_at_end_never_runs_from_append(tmp_path: pathlib.Path) -> None:
     writer = make_writer(tmp_path, pipeline=pipeline)
     for timestamp in (1.0, 2.0):
         writer.append({"x": timestamp, "note": "end-only"})
+    writer.drain()  # fires run on the pipeline worker
     assert pipeline.ran_at == []
     assert writer.last_timestamp_seconds == 2.0
 
@@ -192,4 +197,5 @@ def test_once_at_end_runs_only_once_when_sink_closes(
     )
     TopicSink.close(sink)
     TopicSink.close(sink)
+    writer.drain()  # fires run on the pipeline worker
     assert pipeline.ran_at == timestamps[-1:]

@@ -105,7 +105,6 @@ def test_on_event_pipeline_fires_on_live_messages(make_sink: MakeSink) -> None:
     sink = make_sink(retained={"freezer/1/status": [b'{"temp": -18.5, "t": 0.0}']})
 
     pipeline = MagicMock()
-    pipeline.batch_only_gates = []  # a live-safe pipeline (see require_live_safe)
     pipeline.cadence = Cadence(
         topic="freezer/1/status",
         when=OnEvent(predicate="\"freezer/1/status\"['temp'] > -15"),
@@ -118,6 +117,7 @@ def test_on_event_pipeline_fires_on_live_messages(make_sink: MakeSink) -> None:
 
     for t, temp in ((1.0, -18.0), (2.0, -12.0), (3.0, -11.5), (4.0, -18.0)):
         sink._fake.deliver("freezer/1/status", json.dumps({"temp": temp, "t": t}).encode())
+    sink.drain()
 
     # One rising edge at t=2.0 (sustained warm reading counts once).
     assert [call.args[0] for call in pipeline.run_at.call_args_list] == [2.0]
@@ -264,7 +264,6 @@ def test_wildcard_with_pipeline_requires_single_match(make_sink: MakeSink) -> No
         }
     )
     pipeline = MagicMock()
-    pipeline.batch_only_gates = []  # a live-safe pipeline (see require_live_safe)
     pipeline.cadence = Cadence(
         topic="freezer/1/status",
         when=OnEvent(predicate="\"freezer/1/status\"['temp'] > -15"),
@@ -275,6 +274,7 @@ def test_wildcard_with_pipeline_requires_single_match(make_sink: MakeSink) -> No
     # A wildcard resolving to exactly one topic accepts a pipeline.
     sink.subscribe("freezer/1/+", pipeline=pipeline, extract_timestamp=lambda m: m["t"])
     sink._fake.deliver("freezer/1/status", json.dumps({"temp": -12.0, "t": 1.0}).encode())
+    sink.drain()
     assert [call.args[0] for call in pipeline.run_at.call_args_list] == [1.0]
 
 

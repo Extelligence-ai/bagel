@@ -1,4 +1,4 @@
-"""Attaching a batch-only pipeline to a live subscription is refused (Codex P1)."""
+"""Decision gates attach to live subscriptions: pipelines run off the ingest thread."""
 
 import itertools
 import pathlib
@@ -23,7 +23,7 @@ class _FakeSink(base.TopicSink):
         pass
 
     def _available_topics(self) -> list[str]:
-        return ["/a"]
+        return ["/a", "/b"]
 
     def _type_name(self, topic: str) -> str:
         return "test/type"
@@ -44,69 +44,17 @@ class _FakeSink(base.TopicSink):
 @pytest.fixture
 def sink(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> _FakeSink:
     monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+    monkeypatch.setenv("TYPESAFE_API_KEY", "k")
     return _FakeSink("localhost", next(_port_counter))
 
 
-def _anomaly_pipeline(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> pipeline_base.Pipeline:
-    monkeypatch.setenv("TYPESAFE_API_KEY", "k")
-    log = write_fault_log(tmp_path / "log.mcap", duration_seconds=30)
-    return pipeline_base.Pipeline.build(
-        {
-            "name": "p",
-            "site": "s",
-            "asset": "a",
-            "path": str(log),
-            "allow_failure": False,
-            "cadence": {"topic": "/motor/current", "when": {"every": 10, "unit": "second"}},
-            "gates": [
-                {
-                    "module": "src.pipeline.gates.anomaly",
-                    "lookback": {"last": 10, "unit": "second"},
-                    "args": {"anomalies": {"overcurrent": "too much current"}},
-                }
-            ],
-            "tasks": [{"module": "src.pipeline.tasks.write_annotations"}],
-        }
-    )
-
-
-def test_subscribing_a_fresh_topic_with_a_batch_only_pipeline_is_refused(
-    sink: _FakeSink, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The normal subscribe_live_topics path: the topic is not yet subscribed.
-    with pytest.raises(ValueError, match="batch-only"):
-        sink.subscribe("/a", pipeline=_anomaly_pipeline(tmp_path, monkeypatch))
-    assert "/a" not in sink._buffers
-
-
-def test_subscribing_without_a_pipeline_still_works(sink: _FakeSink) -> None:
-    sink.subscribe("/a", buffer_size_bytes=None)
-    assert "/a" in sink._buffers
-
-
-def test_multi_topic_subscription_is_refused_before_any_topic_is_subscribed(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # subscribe_live_topics subscribes topics in order; with the cadence topic listed
-    # last, earlier topics used to be subscribed before the guard fired, leaving a
-    # partial live subscription with no way to undo it (Codex P2).
-    from src.sink import startup
-
-    class _TwoTopicSink(_FakeSink):
-        def _available_topics(self) -> list[str]:
-            return ["/a", "/b"]
-
-    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
-    monkeypatch.setenv("TYPESAFE_API_KEY", "k")
-    sink = _TwoTopicSink("localhost", next(_port_counter))
-    config = {
+def _config(cadence_topic: str) -> dict:
+    return {
         "name": "p",
         "site": "s",
         "asset": "a",
         "allow_failure": False,
-        "cadence": {"topic": "/b", "when": {"every": 10, "unit": "second"}},
+        "cadence": {"topic": cadence_topic, "when": {"every": 10, "unit": "second"}},
         "gates": [
             {
                 "module": "src.pipeline.gates.anomaly",
@@ -116,6 +64,30 @@ def test_multi_topic_subscription_is_refused_before_any_topic_is_subscribed(
         ],
         "tasks": [{"module": "src.pipeline.tasks.write_annotations"}],
     }
-    with pytest.raises(ValueError, match="batch-only"):
-        startup.subscribe_with_pipeline(sink, ["/a", "/b"], config)
-    assert sink._buffers == {}
+
+
+def test_a_live_topic_accepts_an_anomaly_pipeline(sink: _FakeSink, tmp_path: pathlib.Path) -> None:
+    log = write_fault_log(tmp_path / "log.mcap", duration_seconds=30)
+    pipeline = pipeline_base.Pipeline.build({**_config("/motor/current"), "path": str(log)})
+    sink.subscribe("/a", pipeline=pipeline)
+    assert sink._buffers["/a"].pipeline is pipeline
+    sink.close()
+
+
+def test_subscribe_with_pipeline_accepts_an_anomaly_pipeline(sink: _FakeSink) -> None:
+    from src.sink import startup
+
+    assert startup.subscribe_with_pipeline(sink, ["/a", "/b"], _config("/b")) == ["/a", "/b"]
+    assert sink._buffers["/b"].pipeline is not None
+    sink.close()
+
+
+def test_resubscribing_a_topic_stops_the_replaced_pipeline_worker(sink: _FakeSink) -> None:
+    from src.sink import startup
+
+    startup.subscribe_with_pipeline(sink, ["/b"], _config("/b"))
+    old = sink._buffers["/b"]
+    startup.subscribe_with_pipeline(sink, ["/b"], _config("/b"), overwrite=True)
+    assert old.stopped
+    assert not sink._buffers["/b"].stopped
+    sink.close()

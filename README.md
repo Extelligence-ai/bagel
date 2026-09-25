@@ -425,11 +425,12 @@ Rough edges we know about, so you don't find them the hard way:
   real CANape/INCA/Vector-produced captures haven't crossed our test bench yet.
   LeRobot exports load-test clean with the real `lerobot` package, but no policy
   has been trained from a Bagel export yet.
-- **The Jev anomaly gate is beta.** Recorded logs only for now. Its Jev backend has
-  been run against live Jev through Vercel AI Gateway on a real drive and a synthetic
-  fault log; a direct TypeSafe key is not yet exercised. Its baseline is learned per
-  run, so in screen mode the first minutes of each run are never flagged. It graduates
-  with a reference-log baseline and the backend call moved off the ingest thread.
+- **The Jev anomaly gate is beta.** It runs on recorded logs and on live
+  subscriptions. Its Jev backend has been run against live Jev through Vercel AI
+  Gateway on a real drive and a synthetic fault log; a direct TypeSafe key is not yet
+  exercised. Its baseline is learned per run and restarts with the process, so in
+  screen mode the first minutes of each run are never flagged. It graduates with a
+  reference-log baseline.
 - **Reduction ratios are workload-dependent, and unbenchmarked.** The ratio is
   event-window duration over total duration: quiet recordings reduce dramatically,
   eventful ones much less. The figures in this README are illustrative demo output,

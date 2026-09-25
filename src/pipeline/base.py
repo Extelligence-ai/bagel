@@ -180,10 +180,6 @@ class Cadence(BaseModel):
 class Operator(abc.ABC):
     """Abstract base class for gate and task operators."""
 
-    # False for operators that block (e.g. a synchronous network call) and therefore
-    # cannot run on a live ingest thread; see `src.sink.base.require_live_safe`.
-    live_safe: bool = True
-
     # Attributes set during Pipeline.build
     _name: str
     _pipeline: str
@@ -553,11 +549,6 @@ class Pipeline:
             relation.project(f"{ts_column} AS ts, ({when.predicate}) AS hit").order("ts")
         )
         yield from windows.iter_rising_edges(rows, when.min_gap_seconds())
-
-    @property
-    def batch_only_gates(self) -> list[str]:
-        """Names of gates that cannot be attached to a live subscription."""
-        return [gate.name for gate, _ in self._gates if not gate.live_safe]
 
     def run_at(self, asof_seconds: float) -> None:
         """Run the pipeline at the given timestamp (in seconds)."""

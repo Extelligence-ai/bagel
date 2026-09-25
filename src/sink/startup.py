@@ -37,7 +37,6 @@ from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
 from src.pipeline import base
-from src.sink import base as base_sink
 
 
 def subscribe_with_pipeline(
@@ -72,7 +71,6 @@ def subscribe_with_pipeline(
     if pipeline_config is not None:
         pipeline_config = {"path": str(sink.directory), **pipeline_config}
         pipeline = base.Pipeline.build(pipeline_config)
-        base_sink.require_live_safe(pipeline)  # before any topic is subscribed
         pipeline_topic = pipeline.cadence.topic
         if pipeline_topic not in topics:
             raise ValueError(

@@ -8,8 +8,11 @@
 # flagged slices are still uploaded, labelled `screen_only`; if Jev is unsure,
 # labelled `unverified`. Only a confident `normal` from Jev drops a flagged slice.
 #
-# Beta: recorded logs only. A `sensor_dropout`-style anomaly needs a watched topic
-# other than the cadence topic (the pipeline only runs when that one publishes).
+# Beta. Runs on a recorded log (below) or as a standing pipeline on a live subscription
+# (`subscribe_live_topics` / STARTUP_PIPELINES_FILE); live pipelines run on a worker
+# thread, so waiting on Jev never stalls ingest. A `sensor_dropout`-style anomaly needs
+# a watched topic other than the cadence topic (the pipeline only runs when that one
+# publishes).
 #
 # Needs TYPESAFE_API_KEY in the environment (or `backend: remote` + `url`).
 # Uploads work with any supported store: swap upload.s3 for upload.gcs / upload.azure,

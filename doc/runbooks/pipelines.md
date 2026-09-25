@@ -108,7 +108,10 @@ Tasks chain: this is one standing pipeline on a live stream:
 5. **Stand it up** · attach a pipeline to a live subscription
    (`subscribe_live_topics`), or list it in `STARTUP_PIPELINES_FILE` so the edge
    container re-establishes it on every restart: record continuously, keep only what
-   matters.
+   matters. Live pipelines run on a worker thread, so a slow task (an upload, a
+   decision model) never stalls ingest; a pipeline that falls too far behind drops
+   fires and counts them in its run summary (`LIVE_PIPELINE_*` settings, see
+   [Anomaly detection: Run it live](./anomaly_detection.md#run-it-live)).
 
 ## Go deeper
 

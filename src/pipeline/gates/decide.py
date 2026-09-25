@@ -81,8 +81,6 @@ def decide_window(  # noqa: PLR0913
 class Decide(messages.TopicMessageMixin, base.Gate):
     """Ask a typed-decision model a multiple-choice question about the lookback window."""
 
-    live_safe = False  # synchronous backend call: recorded sources only
-
     def __init__(  # noqa: PLR0913
         self,
         question: str,
