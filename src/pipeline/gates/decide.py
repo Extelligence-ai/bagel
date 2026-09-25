@@ -1,4 +1,4 @@
-"""Ask a typed-decision model (Jev-style) a multiple-choice question about a time window.
+"""Ask a typed-decision model (Jev-style) a multiple-choice question about a time window. BETA.
 
 The window is summarized into compact per-signal statistics, the model returns a
 probability for each choice, and the gate passes when the most likely choice is one of
@@ -79,7 +79,7 @@ def decide_window(  # noqa: PLR0913
 
 
 class Decide(messages.TopicMessageMixin, base.Gate):
-    """Ask a typed-decision model a multiple-choice question about the lookback window."""
+    """Ask a typed-decision model a multiple-choice question about the lookback window. BETA."""
 
     def __init__(  # noqa: PLR0913
         self,

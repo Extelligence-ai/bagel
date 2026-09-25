@@ -10,12 +10,13 @@ against it, and asks [Jev](https://docs.typesafe.ai/models) (TypeSafe's typed-de
 model) to name anything unusual. Downstream tasks cut the slice, write a JSON label next
 to it, and upload both to any bucket Bagel supports.
 
-> **Beta.** Runs on recorded logs and on live subscriptions (see
-> [Run it live](#run-it-live)). The Jev backend has been run against live Jev through
-> Vercel AI Gateway on a real drive (a nuScenes scene) and on a synthetic fault log,
-> with the documented reply format confirmed; a direct TypeSafe key has not been
-> exercised yet. **It graduates** when the reference-log baseline has shipped so
-> warm-up no longer hides the start of every run.
+> **Beta, and it stays beta while we learn from real deployments.** Runs on recorded
+> logs and on live subscriptions (see [Run it live](#run-it-live)). The Jev backend has
+> been run against live Jev through Vercel AI Gateway on a real drive (a nuScenes
+> scene), a synthetic fault log and a live MQTT stream, with the documented reply format
+> confirmed; a direct TypeSafe key has not been exercised yet, and detection quality has
+> not been measured on logs with known incidents. Labels, settings and defaults may
+> change between releases.
 
 ## How it works
 
@@ -179,6 +180,8 @@ real record (rounded) from a test run with a planted current spike:
 
 ## Run it live
 
+*Beta, like the rest of this page.*
+
 Attach the same pipeline to a live subscription (`subscribe_live_topics`, or an entry in
 `STARTUP_PIPELINES_FILE` so the edge container restores it on every boot) and drop its
 `path`: it defaults to the live buffer. Every window is screened as the data arrives,
@@ -247,7 +250,7 @@ also hands its decision to `write_annotations`.
 ## Limits
 
 - **Beta:** live Jev exercised through Vercel AI Gateway, not yet with a direct
-  TypeSafe key.
+  TypeSafe key; precision and recall not yet measured on logs with known incidents.
 - **Dropouts are judged at the window's end.** A topic that went quiet for 5 s in the
   middle of a 10 s window and came back is not a dropout.
 - **The baseline is per run.** It is learned from the data the pipeline sees and
