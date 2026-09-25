@@ -6,6 +6,10 @@
   <strong>Bits to atoms.<br>Atoms to bits.</strong>
 </p>
 
+<p align="center">
+  <em>Don't tell me you're still doing things the *bleeping* old way.</em>
+</p>
+
 <h1 align="center">
   <a href="https://github.com/Extelligence-ai/bagel/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square">
