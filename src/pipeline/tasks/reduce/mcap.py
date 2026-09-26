@@ -28,6 +28,8 @@ class ReduceMcap(base.ArtifactMixin, ReduceMixin, messages.TopicMessageMixin, ba
     serialization is required.
     """
 
+    needs_recorded_log = True
+
     def __init__(  # noqa: PLR0913
         self,
         event_topic: str,

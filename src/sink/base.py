@@ -5,6 +5,7 @@ import functools
 import logging
 import pathlib
 import threading
+import time
 import uuid
 import weakref
 from collections.abc import Callable
@@ -18,25 +19,15 @@ from src import artifacts
 from src.pipeline.base import OnceAtEnd, Pipeline
 from src.sink.buffer import TopicBufferWriter
 
-
-def require_live_safe(pipeline: Pipeline) -> None:
-    """Refuse pipelines whose gates cannot run on the ingest thread.
-
-    The anomaly and decide gates call a decision backend synchronously (up to their
-    timeout per window); on a live subscription that would stall every topic. They run
-    on recorded sources, including completed sink recordings.
-    """
-    if batch_only := pipeline.batch_only_gates:
-        raise ValueError(
-            f"Gates {batch_only} are batch-only in this beta: they call a decision backend "
-            "synchronously, which would block a live ingest thread. Run this pipeline on "
-            "recorded logs (a completed sink recording is fine) instead of a live subscription."
-        )
-
-
 # A global registry to hold singleton instances of TopicSink instances.
 _global_sink_singletons: dict[tuple[str, int], "TopicSink"] = {}  # (host, port) -> instance
 _global_sink_singletons_lock = threading.Lock()
+
+# Writers of closed sinks whose pipeline fire was still running, keyed by (sink
+# directory, topic). A sink reopened for the same endpoint shares that directory, so
+# subscribe() waits for (or refuses on) these before resetting the topic's files.
+_closing_writers: dict[tuple[str, str], "TopicBufferWriter"] = {}
+_closing_writers_lock = threading.Lock()
 
 
 class TopicNotFoundError(Exception):
@@ -49,6 +40,15 @@ class TopicAlreadySubscribedError(Exception):
 
 class BufferCapacityExceededError(Exception):
     """Raised when a subscription would exceed SINK_TOTAL_BUFFER_BYTES."""
+
+
+class PipelineStillRunningError(Exception):
+    """Raised when an overwrite would reset buffer files a running pipeline still reads."""
+
+
+def live_sinks() -> list["TopicSink"]:
+    """Snapshot of all currently live TopicSink singletons."""
+    return list(_global_sink_singletons.values())
 
 
 class TopicSink(abc.ABC):
@@ -329,8 +329,6 @@ class TopicSink(abc.ABC):
         if topic not in self.available_topics:
             raise TopicNotFoundError(topic)
 
-        if pipeline is not None:
-            require_live_safe(pipeline)
         if topic in self._buffers and not overwrite:
             raise TopicAlreadySubscribedError(topic)
 
@@ -358,6 +356,18 @@ class TopicSink(abc.ABC):
                     "2x nominal during overflow rotation."
                 )
 
+        self._wait_for_closed_sinks_fire(topic)
+        if (replaced := self._buffers.get(topic)) is not None:
+            # Its pipeline worker must not outlive the subscription, nor still be reading
+            # the buffer files the replacement is about to reset.
+            replaced.stop()
+            if not replaced.join(settings.LIVE_PIPELINE_DRAIN_SECONDS):
+                raise PipelineStillRunningError(
+                    f"Cannot overwrite {topic}: its pipeline's fire is still running after "
+                    f"LIVE_PIPELINE_DRAIN_SECONDS={settings.LIVE_PIPELINE_DRAIN_SECONDS}. The "
+                    "old subscription keeps recording with its pipeline stopped; retry once "
+                    "the fire finishes, or raise LIVE_PIPELINE_DRAIN_SECONDS."
+                )
         self._buffers[topic] = TopicBufferWriter(
             self.directory,
             topic,
@@ -373,7 +383,31 @@ class TopicSink(abc.ABC):
         if topic in self._buffers and overwrite:
             self._unsubscribe(self._buffers[topic])
 
-        self._subscribe(self._buffers[topic])
+        try:
+            self._subscribe(self._buffers[topic])
+        except Exception:
+            # Roll back: no half-registered writer, no pipeline worker left waiting.
+            failed = self._buffers.pop(topic)
+            failed.stop()
+            failed.join(settings.LIVE_PIPELINE_DRAIN_SECONDS)
+            raise
+
+    def _wait_for_closed_sinks_fire(self, topic: str) -> None:
+        """Refuse to reuse `topic`'s files while a closed sink's fire still reads them."""
+        key = (str(self.directory), topic)
+        with _closing_writers_lock:
+            closing = _closing_writers.get(key)
+        if closing is None:
+            return
+        if not closing.join(settings.LIVE_PIPELINE_DRAIN_SECONDS):
+            raise PipelineStillRunningError(
+                f"Cannot subscribe to {topic}: a closed sink's pipeline fire on it is still "
+                f"running after LIVE_PIPELINE_DRAIN_SECONDS="
+                f"{settings.LIVE_PIPELINE_DRAIN_SECONDS}; retry once it finishes."
+            )
+        with _closing_writers_lock:
+            if _closing_writers.get(key) is closing:
+                del _closing_writers[key]
 
     def pause(self, topics: list[str] | None = None) -> None:
         """Pause subscriptions for topics.
@@ -389,12 +423,29 @@ class TopicSink(abc.ABC):
             TopicNotFoundError: If any requested topic is not currently subscribed.
 
         """
-        topics = topics or list(self._buffers.keys())
+        topics = list(self._buffers) if topics is None else topics
         missing_topics = [t for t in topics if t not in self._buffers]
         if missing_topics:
             raise TopicNotFoundError(missing_topics)
         for topic in topics:
             self._unsubscribe(self._buffers[topic])
+
+    def drain(self, timeout_seconds: float | None = None) -> bool:
+        """Wait until every standing pipeline on this sink has run its queued fires.
+
+        Pipelines run on worker threads, so a fire can still be queued after the
+        message that triggered it was appended.
+
+        Returns:
+            False if `timeout_seconds` ran out before every queue emptied.
+
+        """
+        deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+        for writer in list(self._buffers.values()):
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            if not writer.drain(remaining):
+                return False
+        return True
 
     def close(self) -> None:
         """Disconnect from the data stream, run any pending pipelines, and release all resources.
@@ -411,6 +462,11 @@ class TopicSink(abc.ABC):
             except Exception:
                 logging.debug("Best-effort disconnect of a partially constructed sink failed")
             return
+        # Record every writer before unregistering: a sink reopened for this endpoint
+        # (same directory) must not reset files one of these fires still reads.
+        with _closing_writers_lock:
+            for topic, writer in self._buffers.items():
+                _closing_writers[(str(self.directory), topic)] = writer
         try:
             self.pause()
             self._disconnect()
@@ -420,27 +476,96 @@ class TopicSink(abc.ABC):
 
             while self._buffers:
                 topic, writer = self._buffers.popitem()
-                # Fire any live OnEvent events still waiting on their forward window.
-                writer.flush_pending_events()
-                if writer.pipeline is not None and isinstance(
-                    writer.pipeline.cadence.when, OnceAtEnd
-                ):
-                    if writer.last_timestamp_seconds is None:
-                        logging.info(
-                            "No messages received on topic '%s', skipping pipeline '%s'",
-                            topic,
-                            writer.pipeline.name,
-                        )
-                    elif writer.last_run_at == writer.last_timestamp_seconds:
-                        logging.info(
-                            "Pipeline '%s' already executed on topic '%s' at the end, skipping",
-                            topic,
-                            writer.pipeline.name,
-                        )
-                    else:
-                        writer.pipeline.run_at(writer.last_timestamp_seconds)
-                if writer.pipeline is not None:
-                    logging.info("Pipeline '%s' completed.", writer.pipeline.name)
+                if TopicSink._finish(topic, writer):
+                    with _closing_writers_lock:
+                        if _closing_writers.get((str(self.directory), topic)) is writer:
+                            del _closing_writers[(str(self.directory), topic)]
+                else:
+                    logging.warning(
+                        "Pipeline '%s' on topic '%s' is still running a fire at close",
+                        writer.pipeline.name,
+                        topic,
+                    )
+
+    def unsubscribe(self, topics: list[str] | None = None) -> list[str]:
+        """Stop recording topics and finish their standing pipelines.
+
+        Each topic's pipeline runs its queued fires (up to `LIVE_PIPELINE_DRAIN_SECONDS`)
+        and its end-of-stream run, as on `close()`. The recorded buffer stays on disk. The
+        sink stays connected; `close()` it once nothing is subscribed.
+
+        Args:
+            topics (list[str] | None, optional): Topics to stop. If None, all of them.
+
+        Returns:
+            The topics that were unsubscribed. An empty list stops nothing.
+
+        Raises:
+            TopicNotFoundError: If any requested topic is not subscribed; nothing changes.
+            PipelineStillRunningError: If a pipeline's fire is still running after
+                `LIVE_PIPELINE_DRAIN_SECONDS`. That topic stays listed (paused, pipeline
+                stopped) so its buffer is not reused under the fire; the others are
+                unsubscribed. Call again once the fire finishes.
+
+        """
+        topics = list(self._buffers) if topics is None else list(topics)
+        if not topics:
+            return []
+        self.pause(topics)  # validates every topic before anything is torn down
+        done, running = [], []
+        for topic in topics:
+            if TopicSink._finish(topic, self._buffers[topic]):
+                del self._buffers[topic]
+                done.append(topic)
+            else:
+                running.append(topic)
+        if running:
+            raise PipelineStillRunningError(
+                f"Topics {running} still have a pipeline fire running after "
+                f"LIVE_PIPELINE_DRAIN_SECONDS={settings.LIVE_PIPELINE_DRAIN_SECONDS}; they "
+                f"stay subscribed (paused, pipeline stopped). Unsubscribed: {done}. Retry "
+                "once the fire finishes."
+            )
+        return topics
+
+    @staticmethod
+    def _finish(topic: str, writer: TopicBufferWriter) -> bool:
+        """Run a writer's remaining pipeline work and stop its worker.
+
+        Returns False, before the end-of-stream run, if the fire in progress is still
+        running after `LIVE_PIPELINE_DRAIN_SECONDS`.
+        """
+        # Fire any live OnEvent events still waiting on their forward window, and let the
+        # worker finish what is queued before the end-of-stream run.
+        writer.flush_pending_events()
+        if not writer.drain(settings.LIVE_PIPELINE_DRAIN_SECONDS):
+            logging.warning(
+                "Pipeline '%s' on topic '%s' still had queued fires after %.0f s; discarding them",
+                writer.pipeline.name,
+                topic,
+                settings.LIVE_PIPELINE_DRAIN_SECONDS,
+            )
+        writer.stop()
+        if not writer.join(settings.LIVE_PIPELINE_DRAIN_SECONDS):
+            return False
+        if writer.pipeline is not None and isinstance(writer.pipeline.cadence.when, OnceAtEnd):
+            if writer.last_timestamp_seconds is None:
+                logging.info(
+                    "No messages received on topic '%s', skipping pipeline '%s'",
+                    topic,
+                    writer.pipeline.name,
+                )
+            elif writer.last_run_at == writer.last_timestamp_seconds:
+                logging.info(
+                    "Pipeline '%s' already executed on topic '%s' at the end, skipping",
+                    writer.pipeline.name,
+                    topic,
+                )
+            else:
+                writer.pipeline.run_at(writer.last_timestamp_seconds)
+        if writer.pipeline is not None:
+            logging.info("Pipeline '%s' completed.", writer.pipeline.name)
+        return True
 
     def __enter__(self) -> "TopicSink":  # noqa: D105
         return self

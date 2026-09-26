@@ -81,6 +81,15 @@
     ]
   },
   {
+    "id": "read_saved",
+    "track": "routing",
+    "category": "indirect",
+    "prompt": "Show me the full configuration of the pipeline I saved as hard_decel_reduce so I can change its cadence.",
+    "expected_tools": [
+      "get_pipeline"
+    ]
+  },
+  {
     "id": "building_blocks",
     "track": "routing",
     "category": "indirect",
@@ -153,12 +162,12 @@
     ]
   },
   {
-    "id": "stop_missing",
+    "id": "stop_live",
     "track": "routing",
-    "category": "negative",
-    "prompt": "Stop the existing live subscription using a dedicated stop or unsubscribe tool. If none exists, explain that limitation without calling an unrelated tool.",
+    "category": "direct",
+    "prompt": "Stop the live MQTT subscription I started earlier; keep what it recorded.",
     "expected_tools": [
-      "NONE"
+      "unsubscribe_live_topics"
     ]
   },
   {

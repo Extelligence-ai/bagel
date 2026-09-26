@@ -6,6 +6,10 @@
   <strong>Bits to atoms.<br>Atoms to bits.</strong>
 </p>
 
+<p align="center">
+  <em>If you still have a script called <code>parse_bag_final_v7.py</code>, we need to talk.</em>
+</p>
+
 <h1 align="center">
   <a href="https://github.com/Extelligence-ai/bagel/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square">
@@ -117,7 +121,7 @@ Pick the service that matches your environment:
 | ----------------- | ----------------------- |
 | `ros2-kilted`     | ROS2 Kilted (latest)    |
 | `ros2-jazzy`      | ROS2 Jazzy              |
-| `ros2-jazzy-jev`  | ROS2 Jazzy + on-robot decision model (GPU) |
+| `ros2-jazzy-jev`  | ROS2 Jazzy + on-robot decision model (GPU, beta) |
 | `ros2-iron`       | ROS2 Iron               |
 | `ros2-humble`     | ROS2 Humble             |
 | `ros1-noetic`     | ROS1 Noetic             |
@@ -127,7 +131,7 @@ Pick the service that matches your environment:
 | `betaflight`      | Betaflight flight logs  |
 | `iot`             | IoT / MQTT (live)       |
 
-The `-jev` image adds PyTorch for running a decision model on the robot
+The `-jev` image *(beta)* adds PyTorch for running a decision model on the robot
 (`backend: local` in the [anomaly gate](./doc/runbooks/anomaly_detection.md)). Build any
 other service the same way with `--build-arg JEV_MODE=true`. CPU-only robots don't need
 it: the hosted Jev backend works in every image.
@@ -425,11 +429,17 @@ Rough edges we know about, so you don't find them the hard way:
   real CANape/INCA/Vector-produced captures haven't crossed our test bench yet.
   LeRobot exports load-test clean with the real `lerobot` package, but no policy
   has been trained from a Bagel export yet.
-- **The Jev anomaly gate is beta.** Recorded logs only for now. Its Jev backend has
-  been run against live Jev through Vercel AI Gateway on a real drive and a synthetic
-  fault log; a direct TypeSafe key is not yet exercised. Its baseline is learned per
-  run, so in screen mode the first minutes of each run are never flagged. It graduates
-  with a reference-log baseline and the backend call moved off the ingest thread.
+- **The Jev integration is beta, and stays beta while we learn from real
+  deployments.** That covers the `anomaly` and `decide` gates (recorded logs and live
+  subscriptions), `preview_anomalies`, the on-robot `local` backend and the
+  `ros2-jazzy-jev` image. Its Jev backend has been run against live Jev through Vercel
+  AI Gateway on a real drive, a synthetic fault log and a live MQTT stream; a direct
+  TypeSafe key is not yet exercised, and detection quality has not been measured on
+  logs with known incidents. On a live subscription the flagged window is kept as
+  Parquet (`write_topics_to_file`); MCAP/rosbag snippets need a recorded log and are
+  refused there. The baseline is learned per run and restarts with the
+  process, so in screen mode the first minutes of each run are never flagged. Labels,
+  settings and defaults may change between releases.
 - **Reduction ratios are workload-dependent, and unbenchmarked.** The ratio is
   event-window duration over total duration: quiet recordings reduce dramatically,
   eventful ones much less. The figures in this README are illustrative demo output,

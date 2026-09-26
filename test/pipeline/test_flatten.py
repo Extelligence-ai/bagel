@@ -122,3 +122,44 @@ def test_end_to_end_flattened_parquet(
     assert "message/accel_x" in table.columns
     (minimum,) = duckdb.sql(f"SELECT MIN(\"message/accel_x\") FROM '{artifact}'").fetchone()
     assert minimum == -13.0
+
+
+@pytest.mark.parametrize(("post_seconds", "last_t"), [(0.0, 20.0), (5.0, 25.0)])
+def test_write_topics_to_file_keeps_a_post_window(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, post_seconds: float, last_t: float
+) -> None:
+    # Live edge recording fires at the event time once its forward window has arrived;
+    # post_seconds keeps [event - lookback, event + post], as snippet tasks do.
+    import csv
+
+    from src.pipeline import base
+
+    monkeypatch.setattr(settings, "ARTIFACT_DIRECTORY", str(tmp_path / "artifacts"))
+    pipeline = base.Pipeline.build(
+        {
+            "name": "window_export",
+            "site": "test_site",
+            "asset": "test_asset",
+            "path": "./data/sample/pyarrow/csv/flight.csv",
+            "allow_failure": False,
+            "cadence": {"topic": "message", "when": "once_at_end"},
+            "tasks": [
+                {
+                    "module": "src.pipeline.tasks.write_topics_to_file",
+                    "setup": {"timestamp_column": "t", "timestamp_format": "seconds"},
+                    "args": {
+                        "topics": ["message"],
+                        "output_format": "csv",
+                        "flatten": True,
+                        "post_seconds": post_seconds,
+                    },
+                }
+            ],
+        }
+    )
+    (task,) = pipeline.tasks
+    (artifact,) = task.execute(20.0, base.Lookback(last=5, unit=base.Unit.SECOND))
+    rows = list(csv.DictReader(pathlib.Path(artifact).open()))
+    times = [float(row["message/t"]) for row in rows]
+    assert min(times) == 15.0
+    assert max(times) == last_t

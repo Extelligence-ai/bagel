@@ -17,8 +17,8 @@ assessment's exact code revision. Source: [Bagel's Glama listing](https://glama.
 
 Some completeness comments overlap features now present: `list_pipelines`,
 `delete_pipeline`, and `delete_capability`, plus `save_agent_capability`'s overwrite
-option. The live subscription API still lacks a dedicated stop/unsubscribe tool.
-Document that limitation; do not imply that a rescan implements it.
+option. As of 2.4.0 the lifecycle is complete: `unsubscribe_live_topics` stops a
+live subscription and `get_pipeline` returns a saved pipeline's full configuration.
 
 The public website returned 404 for robots.txt and sitemap.xml. This is not proof
 of blocked crawling. The website draft adds these files and task pages; CDN/WAF
@@ -55,13 +55,14 @@ report was collected, not that the surfaces are healthy.
 
 ## Prepared maintainer rescan note — not sent
 
-> Bagel's current catalog contains 22 tools. The public tool-definition assessment
+> Bagel's current catalog contains 25 tools. The public tool-definition assessment
 > discusses 18 and mentions missing saved-pipeline and capability lifecycle tools
 > that current source now exposes. Please rebuild the intended released revision
 > and compare the attached tools/list JSON. We are intentionally retaining the
 > full tool set. We have clarified routing, prerequisites, output types and side
 > effects; please assess those descriptions without assuming a tool-count target.
-> A dedicated live unsubscribe tool is still absent and is documented as such.
+> 2.4.0 adds `unsubscribe_live_topics` and `get_pipeline`, closing the two
+> lifecycle gaps (stopping a live subscription, reading a saved pipeline).
 
 Attach the exact release/commit, catalog JSON, build output and this listing URL.
 Fill in the released revision when one exists; do not claim this draft was scanned.

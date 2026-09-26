@@ -221,3 +221,12 @@ def test_preview_reports_ground_truth_events(tmp_path: pathlib.Path) -> None:
     assert [round(e - synth.EPOCH, 3) for e in result["events"]] == [
         start for start, _, _ in synth.EVENTS
     ]
+
+
+def test_ros2_db3_tasks_are_refused_on_live_subscriptions() -> None:
+    # They serialize with rclpy from a bag; a live sink buffer holds decoded dicts.
+    from src.pipeline.tasks.reduce.ros2 import db3 as reduce_db3
+    from src.pipeline.tasks.snippet.ros2 import db3 as snippet_db3
+
+    assert reduce_db3.ReduceRosbag.needs_recorded_log
+    assert snippet_db3.SnipRosbag.needs_recorded_log

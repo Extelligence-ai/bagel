@@ -118,14 +118,17 @@ cadence:
       debounce: {last: 2, unit: second}
       forward: {last: 10, unit: second}   # buffer 10s past each event before firing
 tasks:
-  - module: src.pipeline.tasks.snippet.ros2.db3
+  - module: src.pipeline.tasks.write_topics_to_file
     lookback: {last: 10, unit: second}
-    args: {post_seconds: 10}
+    args: {topics: null, output_format: parquet, post_seconds: 10}
 ```
 
-Pass this pipeline to `subscribe_live_topics` (via the `pipeline` argument of
-`TopicSink.subscribe`); it runs on the sink's live message callback and fires once per
-deceleration event, recording only the window around each.
+Pass this pipeline to `subscribe_live_topics` (its `pipeline` argument). It runs on a
+worker thread fed by the live subscription and fires once per deceleration event,
+writing the 20 s window around each as Parquet. The live source is the sink buffer, not
+a bag file, so the MCAP / rosbag / db3 snippet and reduce tasks are recorded-log only:
+Bagel refuses them on a live subscription. To get a bag, run those tasks afterwards on
+a recording. Stop the subscription with `unsubscribe_live_topics`.
 
 ## Batch: reduce many logs at once
 

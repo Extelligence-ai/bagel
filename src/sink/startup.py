@@ -37,7 +37,6 @@ from src.di import module
 from src.di.types.base_module import BaseModule
 from src.di.types.topic_sink import TopicSink, guess_host, guess_port
 from src.pipeline import base
-from src.sink import base as base_sink
 
 
 def subscribe_with_pipeline(
@@ -62,7 +61,8 @@ def subscribe_with_pipeline(
         The list of subscribed topics.
 
     Raises:
-        ValueError: If the pipeline's cadence topic is not among the subscribed topics.
+        ValueError: If the pipeline's cadence topic is not among the subscribed topics,
+            or a task needs a recorded log file (MCAP / rosbag snippets and reductions).
 
     """
     topics = topics or sink.available_topics
@@ -72,7 +72,14 @@ def subscribe_with_pipeline(
     if pipeline_config is not None:
         pipeline_config = {"path": str(sink.directory), **pipeline_config}
         pipeline = base.Pipeline.build(pipeline_config)
-        base_sink.require_live_safe(pipeline)  # before any topic is subscribed
+        recorded_only = [type(task).__name__ for task in pipeline.tasks if task.needs_recorded_log]
+        if recorded_only:
+            raise ValueError(
+                f"Pipeline '{pipeline.name}' cannot run on a live subscription: "
+                f"{', '.join(recorded_only)} read a recorded log (MCAP / rosbag / db3), and a "
+                "live topic's source is the sink buffer. To keep the flagged window, use "
+                "src.pipeline.tasks.write_topics_to_file (output_format: parquet) instead."
+            )
         pipeline_topic = pipeline.cadence.topic
         if pipeline_topic not in topics:
             raise ValueError(

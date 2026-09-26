@@ -20,6 +20,8 @@ SECOND = 1_000 * MILLISECOND
 class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
     """Create a new ROS2 DB3 bag snippet."""
 
+    needs_recorded_log = True
+
     def __init__(
         self,
         topics: list[str] | None = None,

@@ -2,8 +2,9 @@
     <task>
         Turn the user's request to "watch this robot for anomalies" into a Bagel anomaly
         pipeline (a YAML config with the `src.pipeline.gates.anomaly` gate), calibrate it
-        with a dry run, and only run it after the user confirms. BETA: recorded logs only,
-        and the Jev backend needs TYPESAFE_API_KEY in the environment.
+        with a dry run, and only run it after the user confirms. It runs on a recorded log
+        or as a standing pipeline on a live subscription. BETA: the Jev backend needs
+        TYPESAFE_API_KEY in the environment.
         <stepwise-instructions>
             <list listStyle="decimal">
                 <item>

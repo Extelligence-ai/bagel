@@ -8,7 +8,7 @@ import pathlib
 from collections.abc import Iterator, Mapping
 from enum import Enum
 from types import MappingProxyType
-from typing import Any
+from typing import Any, ClassVar
 
 import boto3
 import botocore
@@ -180,10 +180,6 @@ class Cadence(BaseModel):
 class Operator(abc.ABC):
     """Abstract base class for gate and task operators."""
 
-    # False for operators that block (e.g. a synchronous network call) and therefore
-    # cannot run on a live ingest thread; see `src.sink.base.require_live_safe`.
-    live_safe: bool = True
-
     # Attributes set during Pipeline.build
     _name: str
     _pipeline: str
@@ -331,6 +327,11 @@ class Task(Operator):
     # Read-only annotations of the gates that let this execution run, keyed by gate name
     # (see `Gate.annotations`).
     gate_annotations: Mapping[str, Any] = MappingProxyType({})
+
+    # True for tasks that read a recorded log file (MCAP, rosbag, db3) directly. A live
+    # subscription's source is the sink buffer, not a bag file, so these are refused on
+    # standing pipelines (`src.sink.startup.subscribe_with_pipeline`).
+    needs_recorded_log: ClassVar[bool] = False
 
     @abc.abstractmethod
     def execute(self, asof_seconds: float, lookback: Lookback | None) -> list[pathlib.Path] | None:
@@ -496,6 +497,16 @@ class Pipeline:
         return self._asset
 
     @property
+    def allow_failure(self) -> bool:
+        """Whether a failed fire is tolerated (False stops the run on the first failure)."""
+        return self._allow_failure
+
+    @property
+    def tasks(self) -> list["Task"]:
+        """The pipeline's task operators, in execution order."""
+        return [task for task, _ in self._tasks]
+
+    @property
     def cadence(self) -> Cadence:
         """How often to run the pipeline."""
         return self._cadence
@@ -553,11 +564,6 @@ class Pipeline:
             relation.project(f"{ts_column} AS ts, ({when.predicate}) AS hit").order("ts")
         )
         yield from windows.iter_rising_edges(rows, when.min_gap_seconds())
-
-    @property
-    def batch_only_gates(self) -> list[str]:
-        """Names of gates that cannot be attached to a live subscription."""
-        return [gate.name for gate, _ in self._gates if not gate.live_safe]
 
     def run_at(self, asof_seconds: float) -> None:
         """Run the pipeline at the given timestamp (in seconds)."""

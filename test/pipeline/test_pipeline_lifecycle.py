@@ -270,3 +270,59 @@ def test_save_pipeline_holds_lock_during_write(
     monkeypatch.setattr("builtins.open", spy_open)
     _save("csv_smoke")
     assert seen["locked"] is True
+
+
+def test_get_pipeline_returns_the_full_saved_config(pipelines_dir: pathlib.Path) -> None:
+    path = _save("csv_smoke")
+    got = server.get_pipeline("csv_smoke")
+    assert got == {"name": "csv_smoke", "path": path, "config": _config("csv_smoke")}
+
+
+def test_get_pipeline_unknown_name_lists_available(pipelines_dir: pathlib.Path) -> None:
+    _save("csv_smoke")
+    with pytest.raises(ValueError, match="csv_smoke"):
+        server.get_pipeline("nope")
+
+
+@pytest.mark.parametrize("bad_name", ["../x", "a/b", "..", "."])
+def test_get_pipeline_rejects_traversal(pipelines_dir: pathlib.Path, bad_name: str) -> None:
+    with pytest.raises(ValueError, match="plain file name|outside"):
+        server.get_pipeline(bad_name)
+
+
+def test_get_pipeline_does_not_follow_a_symlink_out_of_the_directory(
+    tmp_path: pathlib.Path, pipelines_dir: pathlib.Path
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.yaml"
+    secret.write_text("name: top_secret_config\n", encoding="utf-8")
+    (pipelines_dir / "escape.yaml").symlink_to(secret)
+    with pytest.raises(ValueError, match="outside") as error:
+        server.get_pipeline("escape")
+    assert "top_secret_config" not in str(error.value)
+
+
+def test_get_pipeline_reports_a_file_that_is_not_a_pipeline(pipelines_dir: pathlib.Path) -> None:
+    (pipelines_dir / "broken.yaml").write_text("tasks: [unclosed\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="broken"):
+        server.get_pipeline("broken")
+
+
+def test_get_pipeline_reads_under_the_save_lock(
+    pipelines_dir: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A concurrent save truncates then writes; an unlocked read could see it half-written.
+    _save("csv_smoke")
+    shared_lock = server._pipeline_lock(pipelines_dir)
+    monkeypatch.setattr(server, "_pipeline_lock", lambda directory: shared_lock)
+    seen: dict[str, bool] = {}
+    real_read_text = pathlib.Path.read_text
+
+    def spy_read_text(self: pathlib.Path, *args: object, **kwargs: object) -> str:
+        seen["locked"] = shared_lock.is_locked
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "read_text", spy_read_text)
+    server.get_pipeline("csv_smoke")
+    assert seen["locked"] is True

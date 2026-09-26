@@ -48,6 +48,8 @@ class CompressPointCloud(base.ArtifactMixin, base.Task):
     logs and skips rather than failing the pipeline.
     """
 
+    needs_recorded_log = True
+
     def __init__(self, cloudini: bool = True) -> None:
         """Initialize the task.
 

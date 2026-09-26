@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     USER_CAPABILITIES_DIRECTORY: str = str(pathlib.Path.home() / ".bagel" / "capabilities")
 
     # Directory saved pipelines are written to by save_pipeline (its default
-    # target) and the ONLY directory list_pipelines / delete_pipeline read
+    # target) and the ONLY directory list_pipelines / get_pipeline / delete_pipeline read
     # from and delete from. The single source of truth for "the trusted
     # pipelines root": those two tools accept no directory argument, so an
     # MCP caller cannot point deletion at an arbitrary path (review #224).
@@ -77,6 +77,14 @@ class Settings(BaseSettings):
     # nominal because a rotated overflow file is retained until the next
     # rotation.
     SINK_TOTAL_BUFFER_BYTES: int = 0
+
+    # Live pipelines run on a worker thread, off the ingest thread (src/sink/worker.py).
+    # Fires waiting beyond either bound are dropped and counted in the run summary.
+    # The topic buffer must hold a pipeline's lookback plus MAX_LAG_SECONDS of data.
+    LIVE_PIPELINE_MAX_PENDING: int = 100
+    LIVE_PIPELINE_MAX_LAG_SECONDS: float = 120.0
+    # How long closing a sink waits for queued fires to finish.
+    LIVE_PIPELINE_DRAIN_SECONDS: float = 60.0
 
     # Number of messages to buffer in rosbridge before sending over the WebSocket
     ROSBRIDGE_QUEUE_LENGTH: int = 1000
