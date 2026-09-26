@@ -8,7 +8,7 @@ import pathlib
 from collections.abc import Iterator, Mapping
 from enum import Enum
 from types import MappingProxyType
-from typing import Any
+from typing import Any, ClassVar
 
 import boto3
 import botocore
@@ -328,6 +328,11 @@ class Task(Operator):
     # (see `Gate.annotations`).
     gate_annotations: Mapping[str, Any] = MappingProxyType({})
 
+    # True for tasks that read a recorded log file (MCAP, rosbag, db3) directly. A live
+    # subscription's source is the sink buffer, not a bag file, so these are refused on
+    # standing pipelines (`src.sink.startup.subscribe_with_pipeline`).
+    needs_recorded_log: ClassVar[bool] = False
+
     @abc.abstractmethod
     def execute(self, asof_seconds: float, lookback: Lookback | None) -> list[pathlib.Path] | None:
         """Execute the task at a specific point in time.
@@ -495,6 +500,11 @@ class Pipeline:
     def allow_failure(self) -> bool:
         """Whether a failed fire is tolerated (False stops the run on the first failure)."""
         return self._allow_failure
+
+    @property
+    def tasks(self) -> list["Task"]:
+        """The pipeline's task operators, in execution order."""
+        return [task for task, _ in self._tasks]
 
     @property
     def cadence(self) -> Cadence:

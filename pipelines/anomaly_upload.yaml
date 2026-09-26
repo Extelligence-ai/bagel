@@ -10,9 +10,12 @@
 #
 # Beta. Runs on a recorded log (below) or as a standing pipeline on a live subscription
 # (`subscribe_live_topics` / STARTUP_PIPELINES_FILE); live pipelines run on a worker
-# thread, so waiting on Jev never stalls ingest. A `sensor_dropout`-style anomaly needs
-# a watched topic other than the cadence topic (the pipeline only runs when that one
-# publishes).
+# thread, so waiting on Jev never stalls ingest. For live use, remove `path` (it
+# defaults to the live buffer) and replace `snippet.mcap`, which needs a recorded log,
+# with `write_topics_to_file` (`output_format: parquet`) to keep each flagged window;
+# Bagel refuses recorded-log tasks on a live subscription. A `sensor_dropout`-style
+# anomaly needs a watched topic other than the cadence topic (the pipeline only runs
+# when that one publishes).
 #
 # Needs TYPESAFE_API_KEY in the environment (or `backend: remote` + `url`).
 # Uploads work with any supported store: swap upload.s3 for upload.gcs / upload.azure,

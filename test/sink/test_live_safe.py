@@ -166,3 +166,45 @@ def test_a_failed_transport_subscribe_leaves_no_writer_or_worker(
 
     assert not [t for t in threading.enumerate() if t.name == "pipeline:slow" and t.is_alive()]
     broken.close()
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        {"module": "src.pipeline.tasks.snippet.mcap"},
+        {"module": "src.pipeline.tasks.snippet.ros1.bag"},
+        {
+            "module": "src.pipeline.tasks.reduce.mcap",
+            "args": {"event_topic": "/b", "predicate": "x > 1", "pre_seconds": 5},
+        },
+    ],
+)
+def test_a_live_pipeline_refuses_tasks_that_need_a_recorded_log(
+    sink: _FakeSink, task: dict
+) -> None:
+    # The live sink buffer is not a bag file: these tasks would fail on every fire (and
+    # with allow_failure false, stop the pipeline). Refuse them before subscribing.
+    from src.sink import startup
+
+    config = _config("/b")
+    config["tasks"] = [task, *config["tasks"]]
+    with pytest.raises(ValueError, match=r"recorded log.*write_topics_to_file"):
+        startup.subscribe_with_pipeline(sink, ["/a", "/b"], config)
+    assert not sink._buffers
+    sink.close()
+
+
+def test_a_live_pipeline_can_slice_the_window_to_parquet(sink: _FakeSink) -> None:
+    from src.sink import startup
+
+    config = _config("/b")
+    config["tasks"] = [
+        {
+            "module": "src.pipeline.tasks.write_topics_to_file",
+            "lookback": {"last": 10, "unit": "second"},
+            "args": {"topics": None, "output_format": "parquet"},
+        },
+        *config["tasks"],
+    ]
+    assert startup.subscribe_with_pipeline(sink, ["/a", "/b"], config) == ["/a", "/b"]
+    sink.close()

@@ -25,6 +25,8 @@ class SnipMcap(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
     ``asof + post_seconds`` when no lookback is given.
     """
 
+    needs_recorded_log = True
+
     def __init__(
         self,
         topics: list[str] | None = None,

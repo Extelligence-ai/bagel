@@ -13,6 +13,8 @@ from src.pipeline import base, messages
 class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
     """Create a new ROS1 bag snippet using the `rosbag filter` CLI tool."""
 
+    needs_recorded_log = True
+
     def __init__(
         self,
         topics: list[str] | None = None,

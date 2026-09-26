@@ -435,7 +435,9 @@ Rough edges we know about, so you don't find them the hard way:
   `ros2-jazzy-jev` image. Its Jev backend has been run against live Jev through Vercel
   AI Gateway on a real drive, a synthetic fault log and a live MQTT stream; a direct
   TypeSafe key is not yet exercised, and detection quality has not been measured on
-  logs with known incidents. The baseline is learned per run and restarts with the
+  logs with known incidents. On a live subscription the flagged window is kept as
+  Parquet (`write_topics_to_file`); MCAP/rosbag snippets need a recorded log and are
+  refused there. The baseline is learned per run and restarts with the
   process, so in screen mode the first minutes of each run are never flagged. Labels,
   settings and defaults may change between releases.
 - **Reduction ratios are workload-dependent, and unbenchmarked.** The ratio is
