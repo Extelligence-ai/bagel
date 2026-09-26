@@ -35,6 +35,10 @@ class BufferCapacityExceededError(Exception):
     """Raised when a subscription would exceed SINK_TOTAL_BUFFER_BYTES."""
 
 
+class PipelineStillRunningError(Exception):
+    """Raised when an overwrite would reset buffer files a running pipeline still reads."""
+
+
 def live_sinks() -> list["TopicSink"]:
     """Snapshot of all currently live TopicSink singletons."""
     return list(_global_sink_singletons.values())
@@ -292,7 +296,13 @@ class TopicSink(abc.ABC):
             # Its pipeline worker must not outlive the subscription, nor still be reading
             # the buffer files the replacement is about to reset.
             replaced.stop()
-            replaced.join(settings.LIVE_PIPELINE_DRAIN_SECONDS)
+            if not replaced.join(settings.LIVE_PIPELINE_DRAIN_SECONDS):
+                raise PipelineStillRunningError(
+                    f"Cannot overwrite {topic}: its pipeline's fire is still running after "
+                    f"LIVE_PIPELINE_DRAIN_SECONDS={settings.LIVE_PIPELINE_DRAIN_SECONDS}. The "
+                    "old subscription keeps recording with its pipeline stopped; retry once "
+                    "the fire finishes, or raise LIVE_PIPELINE_DRAIN_SECONDS."
+                )
         self._buffers[topic] = TopicBufferWriter(
             self.directory,
             topic,

@@ -129,6 +129,26 @@ def test_overwrite_waits_for_the_replaced_pipelines_fire_to_finish(sink: _FakeSi
     sink.close()
 
 
+def test_overwrite_refuses_while_the_replaced_fire_is_still_running(
+    sink: _FakeSink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # If the old fire outlasts the drain window, resetting its buffer files under it
+    # would corrupt what it reads: refuse the overwrite instead.
+    import time
+
+    monkeypatch.setattr(settings, "LIVE_PIPELINE_DRAIN_SECONDS", 0.1)
+    old = _SlowPipeline(0.6)
+    sink.subscribe("/a", pipeline=old, buffer_size_bytes=None)
+    replaced = sink._buffers["/a"]
+    replaced.append({"x": 1.0})
+    time.sleep(0.05)  # the fire is now running
+    with pytest.raises(base.PipelineStillRunningError, match="/a"):
+        sink.subscribe("/a", overwrite=True, buffer_size_bytes=None)
+    assert sink._buffers["/a"] is replaced  # nothing was reset under the old fire
+    replaced.join(5)
+    sink.close()
+
+
 def test_a_failed_transport_subscribe_leaves_no_writer_or_worker(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

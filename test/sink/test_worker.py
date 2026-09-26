@@ -182,3 +182,22 @@ def test_shutdown_stops_and_joins_every_worker() -> None:
     workers[0].submit(1.0)
     worker_module.shutdown_all(timeout_seconds=5)
     assert all(w.stopped and not w._thread.is_alive() for w in workers)
+
+
+def test_shutdown_waits_the_drain_window_and_names_a_straggler(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A fire can outlast a few seconds (the anomaly gate's backend timeout is 10 s), so
+    # exit waits the drain window, not a fixed short deadline, and says who is still
+    # running if even that runs out.
+    from src.sink import worker as worker_module
+
+    monkeypatch.setattr(settings, "LIVE_PIPELINE_DRAIN_SECONDS", 0.1)
+    worker = PipelineWorker(SlowPipeline(delay_seconds=0.6))
+    worker.submit(1.0)
+    time.sleep(0.05)  # the fire is now running
+    with caplog.at_level(logging.WARNING):
+        worker_module.shutdown_all()
+    assert "still running" in caplog.text
+    assert "slow" in caplog.text
+    worker.join(5)

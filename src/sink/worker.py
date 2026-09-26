@@ -17,7 +17,9 @@ Dropped fires are counted in `pipeline.summary.dropped` and logged.
 
 Every worker is stopped and joined at interpreter exit (`shutdown_all`): a thread still
 alive then would hold a thread-local DuckDB connection (`src.query`) through
-finalization, which aborts the process.
+finalization, which aborts the process. Exit waits up to `LIVE_PIPELINE_DRAIN_SECONDS`
+for a fire in progress (an anomaly-gate fire can take its backend's full timeout); a
+fire that is still running after that is logged by name rather than hanging exit.
 """
 
 import atexit
@@ -33,14 +35,26 @@ from settings import settings
 _workers: "weakref.WeakSet[PipelineWorker]" = weakref.WeakSet()
 
 
-def shutdown_all(timeout_seconds: float = 5.0) -> None:
-    """Stop every live worker and wait up to `timeout_seconds` for its thread to end."""
+def shutdown_all(timeout_seconds: float | None = None) -> None:
+    """Stop every live worker and wait for its fire in progress to finish.
+
+    Waits up to `timeout_seconds` in total (default `LIVE_PIPELINE_DRAIN_SECONDS`) and
+    logs any pipeline whose fire is still running when that runs out.
+    """
+    if timeout_seconds is None:
+        timeout_seconds = settings.LIVE_PIPELINE_DRAIN_SECONDS
     deadline = time.monotonic() + timeout_seconds
     workers = list(_workers)
     for worker in workers:
         worker.stop()
     for worker in workers:
-        worker.join(max(0.0, deadline - time.monotonic()))
+        if not worker.join(max(0.0, deadline - time.monotonic())):
+            logging.warning(
+                "Pipeline '%s' is still running at exit after %.0f s; its fire is "
+                "abandoned (raise LIVE_PIPELINE_DRAIN_SECONDS to wait longer)",
+                getattr(worker._pipeline, "name", "?"),
+                timeout_seconds,
+            )
 
 
 atexit.register(shutdown_all)
@@ -104,10 +118,12 @@ class PipelineWorker:
             self._pending.clear()
             self._condition.notify_all()
 
-    def join(self, timeout_seconds: float | None = None) -> None:
-        """Wait for the thread to end after `stop()` (the fire in progress finishes)."""
-        if self._thread is not threading.current_thread():
-            self._thread.join(timeout_seconds)
+    def join(self, timeout_seconds: float | None = None) -> bool:
+        """Wait for the thread to end after `stop()`; False if it is still running."""
+        if self._thread is threading.current_thread():
+            return False
+        self._thread.join(timeout_seconds)
+        return not self._thread.is_alive()
 
     def _drop(self, asof_seconds: float, why: str) -> None:
         self._pipeline.summary.dropped += 1
