@@ -341,7 +341,7 @@ class TopicSink(abc.ABC):
             TopicNotFoundError: If any requested topic is not currently subscribed.
 
         """
-        topics = topics or list(self._buffers.keys())
+        topics = list(self._buffers) if topics is None else topics
         missing_topics = [t for t in topics if t not in self._buffers]
         if missing_topics:
             raise TopicNotFoundError(missing_topics)
@@ -389,7 +389,12 @@ class TopicSink(abc.ABC):
 
             while self._buffers:
                 topic, writer = self._buffers.popitem()
-                TopicSink._finish(topic, writer)
+                if not TopicSink._finish(topic, writer):
+                    logging.warning(
+                        "Pipeline '%s' on topic '%s' is still running a fire at close",
+                        writer.pipeline.name,
+                        topic,
+                    )
 
     def unsubscribe(self, topics: list[str] | None = None) -> list[str]:
         """Stop recording topics and finish their standing pipelines.
@@ -402,21 +407,43 @@ class TopicSink(abc.ABC):
             topics (list[str] | None, optional): Topics to stop. If None, all of them.
 
         Returns:
-            The topics that were unsubscribed.
+            The topics that were unsubscribed. An empty list stops nothing.
 
         Raises:
             TopicNotFoundError: If any requested topic is not subscribed; nothing changes.
+            PipelineStillRunningError: If a pipeline's fire is still running after
+                `LIVE_PIPELINE_DRAIN_SECONDS`. That topic stays listed (paused, pipeline
+                stopped) so its buffer is not reused under the fire; the others are
+                unsubscribed. Call again once the fire finishes.
 
         """
         topics = list(self._buffers) if topics is None else list(topics)
+        if not topics:
+            return []
         self.pause(topics)  # validates every topic before anything is torn down
+        done, running = [], []
         for topic in topics:
-            TopicSink._finish(topic, self._buffers.pop(topic))
+            if TopicSink._finish(topic, self._buffers[topic]):
+                del self._buffers[topic]
+                done.append(topic)
+            else:
+                running.append(topic)
+        if running:
+            raise PipelineStillRunningError(
+                f"Topics {running} still have a pipeline fire running after "
+                f"LIVE_PIPELINE_DRAIN_SECONDS={settings.LIVE_PIPELINE_DRAIN_SECONDS}; they "
+                f"stay subscribed (paused, pipeline stopped). Unsubscribed: {done}. Retry "
+                "once the fire finishes."
+            )
         return topics
 
     @staticmethod
-    def _finish(topic: str, writer: TopicBufferWriter) -> None:
-        """Run a detached writer's remaining pipeline work, then stop its worker."""
+    def _finish(topic: str, writer: TopicBufferWriter) -> bool:
+        """Run a writer's remaining pipeline work and stop its worker.
+
+        Returns False, before the end-of-stream run, if the fire in progress is still
+        running after `LIVE_PIPELINE_DRAIN_SECONDS`.
+        """
         # Fire any live OnEvent events still waiting on their forward window, and let the
         # worker finish what is queued before the end-of-stream run.
         writer.flush_pending_events()
@@ -428,6 +455,8 @@ class TopicSink(abc.ABC):
                 settings.LIVE_PIPELINE_DRAIN_SECONDS,
             )
         writer.stop()
+        if not writer.join(settings.LIVE_PIPELINE_DRAIN_SECONDS):
+            return False
         if writer.pipeline is not None and isinstance(writer.pipeline.cadence.when, OnceAtEnd):
             if writer.last_timestamp_seconds is None:
                 logging.info(
@@ -445,6 +474,7 @@ class TopicSink(abc.ABC):
                 writer.pipeline.run_at(writer.last_timestamp_seconds)
         if writer.pipeline is not None:
             logging.info("Pipeline '%s' completed.", writer.pipeline.name)
+        return True
 
     def __enter__(self) -> "TopicSink":  # noqa: D105
         return self

@@ -233,8 +233,12 @@ def test_unsubscribe_an_unknown_topic_changes_nothing(sink: _FakeSink) -> None:
     sink.close()
 
 
-def test_the_unsubscribe_tool_stops_topics_and_closes_an_emptied_sink(sink: _FakeSink) -> None:
+def test_the_unsubscribe_tool_stops_topics_and_closes_an_emptied_sink(
+    sink: _FakeSink, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import server
+
+    monkeypatch.setattr(server, "_sink_class", lambda ts_type: _FakeSink)
 
     sink.subscribe("/a", buffer_size_bytes=None)
     sink.subscribe("/b", buffer_size_bytes=None)
@@ -255,7 +259,7 @@ def test_the_unsubscribe_tool_never_opens_a_new_connection(sink: _FakeSink) -> N
     import server
 
     before = base.live_sinks()
-    with pytest.raises(ValueError, match="No live subscription"):
+    with pytest.raises(ValueError, match="No live"):
         server.unsubscribe_live_topics("mqtt", host="nowhere.invalid", port=1)
     assert base.live_sinks() == before
     sink.close()
@@ -275,3 +279,52 @@ def test_ros2_db3_tasks_are_recorded_log_only(module: str) -> None:
         if "reduce" in module
         else (task_module.SnipRosbag.needs_recorded_log)
     )
+
+
+def test_unsubscribing_an_empty_topic_list_changes_nothing(
+    sink: _FakeSink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sink.subscribe("/a", buffer_size_bytes=None)
+    paused: list[str] = []
+    monkeypatch.setattr(sink, "_unsubscribe", lambda writer: paused.append(writer.topic))
+    assert sink.unsubscribe([]) == []
+    assert paused == []  # an explicit [] is not "all topics"
+    assert sink.subscribed_topics == ["/a"]
+    sink.close()
+
+
+def test_unsubscribe_keeps_a_topic_whose_fire_outlives_the_drain_window(
+    sink: _FakeSink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Dropping it would let the sink close and a new overwrite subscription reset the
+    # buffer files under the still-running fire.
+    import time
+
+    monkeypatch.setattr(settings, "LIVE_PIPELINE_DRAIN_SECONDS", 0.1)
+    pipeline = _SlowPipeline(0.6)
+    sink.subscribe("/a", pipeline=pipeline, buffer_size_bytes=None)
+    writer = sink._buffers["/a"]
+    writer.append({"x": 1.0})
+    time.sleep(0.05)  # the fire is now running
+    with pytest.raises(base.PipelineStillRunningError, match="/a"):
+        sink.unsubscribe(["/a"])
+    assert sink.subscribed_topics == ["/a"]
+    writer.join(5)
+    assert sink.unsubscribe(["/a"]) == ["/a"]  # a retry once it finished succeeds
+    sink.close()
+
+
+def test_the_unsubscribe_tool_matches_the_sink_type(
+    sink: _FakeSink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server
+
+    class _OtherSink(_FakeSink):
+        pass
+
+    monkeypatch.setattr(server, "_sink_class", lambda ts_type: _OtherSink)
+    sink.subscribe("/a", buffer_size_bytes=None)
+    with pytest.raises(ValueError, match="No live"):
+        server.unsubscribe_live_topics("ros2.bridge", host=sink.host, port=sink.port)
+    assert sink.subscribed_topics == ["/a"]
+    sink.close()

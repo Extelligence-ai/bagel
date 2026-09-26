@@ -426,6 +426,17 @@ def subscribe_live_topics(  # noqa: PLR0913
     return str(sink.directory)
 
 
+def _sink_class(ts_type: TopicSink) -> type:
+    """Return the TopicSink class for a sink type, without constructing (connecting) one."""
+    import importlib
+
+    from src.di.module import global_registry
+
+    import_path = f"{BaseModule.TOPIC_SINK.value}.{ts_type.value}"
+    importlib.import_module(import_path).register()
+    return global_registry[import_path]
+
+
 @server.tool(
     title="Stop live topic subscriptions",
     description=(
@@ -474,12 +485,20 @@ def unsubscribe_live_topics(
     ts_type = TopicSink(type_)
     host = host or guess_host(ts_type)
     port = port or guess_port(ts_type)
+    try:
+        sink_class = _sink_class(ts_type)
+    except ImportError as error:  # its client library is missing, so none can be running
+        raise ValueError(f"No live {type_} subscription on {host}:{port}: {error}") from error
     sink = next(
-        (s for s in live_sinks() if s.host == host and str(s.port) == str(port)),
+        (
+            s
+            for s in live_sinks()
+            if isinstance(s, sink_class) and s.host == host and str(s.port) == str(port)
+        ),
         None,
     )
     if sink is None:
-        raise ValueError(f"No live subscription on {host}:{port}; nothing to stop.")
+        raise ValueError(f"No live {type_} subscription on {host}:{port}; nothing to stop.")
     try:
         stopped = sink.unsubscribe(topics)
     except TopicNotFoundError as error:
