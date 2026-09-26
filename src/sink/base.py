@@ -289,7 +289,10 @@ class TopicSink(abc.ABC):
                 )
 
         if (replaced := self._buffers.get(topic)) is not None:
-            replaced.stop()  # its pipeline worker must not outlive the subscription
+            # Its pipeline worker must not outlive the subscription, nor still be reading
+            # the buffer files the replacement is about to reset.
+            replaced.stop()
+            replaced.join(settings.LIVE_PIPELINE_DRAIN_SECONDS)
         self._buffers[topic] = TopicBufferWriter(
             self.directory,
             topic,
@@ -305,7 +308,14 @@ class TopicSink(abc.ABC):
         if topic in self._buffers and overwrite:
             self._unsubscribe(self._buffers[topic])
 
-        self._subscribe(self._buffers[topic])
+        try:
+            self._subscribe(self._buffers[topic])
+        except Exception:
+            # Roll back: no half-registered writer, no pipeline worker left waiting.
+            failed = self._buffers.pop(topic)
+            failed.stop()
+            failed.join(settings.LIVE_PIPELINE_DRAIN_SECONDS)
+            raise
 
     def pause(self, topics: list[str] | None = None) -> None:
         """Pause subscriptions for topics.

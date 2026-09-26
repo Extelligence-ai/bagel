@@ -91,3 +91,58 @@ def test_resubscribing_a_topic_stops_the_replaced_pipeline_worker(sink: _FakeSin
     assert old.stopped
     assert not sink._buffers["/b"].stopped
     sink.close()
+
+
+class _SlowPipeline:
+    """Duck-typed live pipeline whose single fire takes a while."""
+
+    def __init__(self, seconds: float) -> None:
+        from src.pipeline.base import Cadence, Frequency, Unit
+        from src.pipeline.results import RunSummary
+
+        self.name = "slow"
+        self.cadence = Cadence(topic="/a", when=Frequency(every=1, unit=Unit.FRAME))
+        self.summary = RunSummary()
+        self.finished: list[float] = []
+        self._seconds = seconds
+
+    def run_at(self, asof_seconds: float) -> None:
+        import time
+
+        time.sleep(self._seconds)
+        self.finished.append(asof_seconds)
+
+
+def test_overwrite_waits_for_the_replaced_pipelines_fire_to_finish(sink: _FakeSink) -> None:
+    # The replacement writer resets the topic's buffer files; the old pipeline must not
+    # still be reading them.
+    import time
+
+    old = _SlowPipeline(0.4)
+    sink.subscribe("/a", pipeline=old, buffer_size_bytes=None)
+    sink._buffers["/a"].append({"x": 1.0})
+    time.sleep(0.05)  # the fire is now running
+    replaced = sink._buffers["/a"]
+    sink.subscribe("/a", overwrite=True, buffer_size_bytes=None)
+    assert len(old.finished) == 1
+    assert not replaced._worker._thread.is_alive()
+    sink.close()
+
+
+def test_a_failed_transport_subscribe_leaves_no_writer_or_worker(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _BrokenSink(_FakeSink):
+        def _subscribe(self, writer: TopicBufferWriter) -> None:
+            raise RuntimeError("broker refused the subscription")
+
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
+    broken = _BrokenSink("localhost", next(_port_counter))
+    pipeline = _SlowPipeline(0.0)
+    with pytest.raises(RuntimeError, match="refused"):
+        broken.subscribe("/a", pipeline=pipeline, buffer_size_bytes=None)
+    assert "/a" not in broken._buffers
+    import threading
+
+    assert not [t for t in threading.enumerate() if t.name == "pipeline:slow" and t.is_alive()]
+    broken.close()

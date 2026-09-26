@@ -67,16 +67,21 @@ class PipelineWorker:
         """True once `stop()` was called."""
         return self._stopped
 
-    def submit(self, asof_seconds: float) -> None:
-        """Queue a fire at `asof_seconds`; never blocks on the pipeline."""
+    def submit(self, asof_seconds: float) -> bool:
+        """Queue a fire at `asof_seconds`; never blocks on the pipeline, never raises.
+
+        Called from the transport's message callback. Returns False, and drops the
+        fire, once the worker has stopped (closed, replaced, or halted by a failure).
+        """
         with self._condition:
             if self._stopped:
-                raise RuntimeError(f"Pipeline worker for '{self._pipeline.name}' is stopped")
+                return False
             self._pending.append((asof_seconds, time.monotonic()))
             while len(self._pending) > settings.LIVE_PIPELINE_MAX_PENDING:
                 dropped, _ = self._pending.popleft()
                 self._drop(dropped, "the queue is full")
             self._condition.notify_all()
+        return True
 
     def drain(self, timeout_seconds: float | None = None) -> bool:
         """Wait until every queued fire has run; False if `timeout_seconds` ran out first."""
@@ -135,11 +140,22 @@ class PipelineWorker:
             try:
                 self._pipeline.run_at(asof_seconds)
             except Exception:
-                # run_at already counted the failure in the summary; a live stream keeps
-                # going rather than losing every later fire.
-                logging.exception(
-                    "Pipeline '%s' failed at %.4f s", self._pipeline.name, asof_seconds
-                )
+                # run_at already counted the failure in the summary. With
+                # allow_failure: false it re-raised to stop the run, as a batch run
+                # stops: halt this pipeline and drop what is queued, rather than run a
+                # broken or half-applied task again on the next fire. Ingest continues.
+                if getattr(self._pipeline, "allow_failure", True):
+                    logging.exception(
+                        "Pipeline '%s' failed at %.4f s", self._pipeline.name, asof_seconds
+                    )
+                else:
+                    logging.exception(
+                        "Pipeline '%s' failed at %.4f s and does not allow failures; "
+                        "stopping it. Messages are still recorded.",
+                        self._pipeline.name,
+                        asof_seconds,
+                    )
+                    self.stop()
             finally:
                 with self._condition:
                     self._busy = False

@@ -492,6 +492,11 @@ class Pipeline:
         return self._asset
 
     @property
+    def allow_failure(self) -> bool:
+        """Whether a failed fire is tolerated (False stops the run on the first failure)."""
+        return self._allow_failure
+
+    @property
     def cadence(self) -> Cadence:
         """How often to run the pipeline."""
         return self._cadence

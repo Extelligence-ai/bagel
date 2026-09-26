@@ -236,6 +236,11 @@ class TopicBufferWriter:
         """Wait for the pipeline's queued fires to run; False if the timeout ran out."""
         return self._worker.drain(timeout_seconds) if self._worker is not None else True
 
+    def join(self, timeout_seconds: float | None = None) -> None:
+        """Wait for a stopped pipeline worker's fire in progress to finish."""
+        if self._worker is not None:
+            self._worker.join(timeout_seconds)
+
     def stop(self) -> None:
         """Stop the pipeline worker; queued fires are discarded (`drain()` first)."""
         if self._worker is not None:

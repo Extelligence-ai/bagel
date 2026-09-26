@@ -148,11 +148,29 @@ def test_drain_gives_up_after_its_timeout() -> None:
     worker.stop()
 
 
-def test_a_stopped_worker_refuses_new_fires() -> None:
-    worker = PipelineWorker(SlowPipeline())
+def test_a_stopped_worker_ignores_new_fires() -> None:
+    # Submitting happens on the transport's callback thread: it must never raise there.
+    pipeline = SlowPipeline()
+    worker = PipelineWorker(pipeline)
     worker.stop()
-    with pytest.raises(RuntimeError, match="stopped"):
-        worker.submit(1.0)
+    assert worker.submit(1.0) is False
+    worker.drain(timeout_seconds=0.5)
+    assert pipeline.ran_at == []
+
+
+def test_a_failure_stops_a_pipeline_that_does_not_allow_failures(tmp_path: pathlib.Path) -> None:
+    # allow_failure: false means stop on the first failure, as a batch run does: no later
+    # fire may run a broken or half-applied task again.
+    pipeline = SlowPipeline(fail_at={2.0})
+    pipeline.allow_failure = False
+    writer = _writer(tmp_path, pipeline)
+    for t in (1.0, 2.0, 3.0, 4.0):
+        writer.append({"x": t})
+    writer.drain(timeout_seconds=2)
+    assert pipeline.ran_at == [1.0]
+    assert writer.stopped
+    writer.append({"x": 5.0})  # ingest keeps going; the pipeline stays stopped
+    assert pipeline.ran_at == [1.0]
 
 
 def test_shutdown_stops_and_joins_every_worker() -> None:
