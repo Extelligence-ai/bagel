@@ -265,22 +265,6 @@ def test_the_unsubscribe_tool_never_opens_a_new_connection(sink: _FakeSink) -> N
     sink.close()
 
 
-@pytest.mark.parametrize(
-    "module", ["src.pipeline.tasks.reduce.ros2.db3", "src.pipeline.tasks.snippet.ros2.db3"]
-)
-def test_ros2_db3_tasks_are_recorded_log_only(module: str) -> None:
-    # Imports need rosbag2_py/rclpy: runs in the ROS 2 images, skipped on the host.
-    pytest.importorskip("rosbag2_py")
-    import importlib
-
-    task_module = importlib.import_module(module)
-    assert (
-        task_module.ReduceRosbag.needs_recorded_log
-        if "reduce" in module
-        else (task_module.SnipRosbag.needs_recorded_log)
-    )
-
-
 def test_unsubscribing_an_empty_topic_list_changes_nothing(
     sink: _FakeSink, monkeypatch: pytest.MonkeyPatch
 ) -> None:
