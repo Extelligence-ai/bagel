@@ -1,6 +1,7 @@
 """Abstract base class for topic sinks."""
 
 import abc
+import functools
 import logging
 import pathlib
 import threading
@@ -70,6 +71,61 @@ class TopicSink(abc.ABC):
 
     _is_singleton_initialized: bool
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Make each subclass `__init__` a no-op on an already-initialized singleton.
+
+        `__new__` hands back the live instance for a known `(host, port)`, but Python
+        still calls `__init__` on it. Subclasses build their client (paho, roslibpy)
+        before calling `super().__init__`, so a second construction -- e.g.
+        `list_live_topics` then `subscribe_live_topics` -- would swap the connected
+        client for a fresh, never-connected one and the subscription would receive
+        nothing.
+        """
+        super().__init_subclass__(**kwargs)
+        init = cls.__dict__.get("__init__")
+        if init is None:
+            return
+
+        @functools.wraps(init)
+        def _init_once(self: "TopicSink", *args: object, **init_kwargs: object) -> None:
+            # Held across the whole subclass initializer: the base marks the singleton
+            # ready part-way through (before a ROS bridge's rosapi call), so a concurrent
+            # construction must wait here rather than return a half-built sink.
+            with self._singleton_init_lock:
+                if getattr(self, "_singleton_init_failed", False):
+                    raise RuntimeError(
+                        "A concurrent construction of this sink failed; construct it again."
+                    )
+                if getattr(self, "_is_singleton_initialized", False):
+                    return  # the live singleton keeps its client, buffers and settings
+                _init_guarded(self, *args, **init_kwargs)
+
+        def _init_guarded(self: "TopicSink", *args: object, **init_kwargs: object) -> None:
+            try:
+                init(self, *args, **init_kwargs)
+            except Exception:
+                # A subclass can fail after the base initializer marked the singleton
+                # ready (a ROS bridge's rosapi call). Tear it down and unregister it so
+                # the next construction builds a fresh one instead of reusing a
+                # half-built sink.
+                try:
+                    if getattr(self, "_is_singleton_initialized", False):
+                        self.close()
+                except Exception:
+                    # Keep the initialization error; the cleanup's is secondary.
+                    logging.exception("Cleanup of a sink whose initialization failed also failed")
+                finally:
+                    self._is_singleton_initialized = False
+                    with _global_sink_singletons_lock:
+                        for key in [k for k, v in _global_sink_singletons.items() if v is self]:
+                            del _global_sink_singletons[key]
+                    # A caller already holding this instance (it waited on the lock) must
+                    # not re-initialize an unregistered sink.
+                    self._singleton_init_failed = True
+                raise
+
+        cls.__init__ = _init_once
+
     def __new__(cls, host: str, port: str, *args: object, **kwargs: object) -> "TopicSink":
         """Implement singleton pattern to ensure only one instance per (host, port)."""
         key = (host, port)
@@ -78,7 +134,9 @@ class TopicSink(abc.ABC):
                 return _global_sink_singletons[key]
             instance = super().__new__(cls)
             instance._is_singleton_initialized = False
-            instance._singleton_init_lock = threading.Lock()
+            # Re-entrant: the subclass __init__ wrapper holds it across the whole
+            # subclass initializer, and the base __init__ takes it again inside.
+            instance._singleton_init_lock = threading.RLock()
             _global_sink_singletons[key] = instance
             return instance
 
