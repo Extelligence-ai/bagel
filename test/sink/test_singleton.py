@@ -159,3 +159,21 @@ def test_a_concurrent_construction_waits_for_the_whole_initializer() -> None:
     first.join()
     assert results[0] is second
     second.close()
+
+
+class _FlakyTeardownSink(_FlakySink):
+    """Its setup fails after the base initializer, and so does its disconnect."""
+
+    def _disconnect(self) -> None:
+        raise OSError("socket already gone")
+
+
+def test_a_failing_cleanup_still_marks_the_sink_failed() -> None:
+    port = next(_ports)
+    _FlakyTeardownSink.fail_next = True
+    instance = _FlakyTeardownSink.__new__(_FlakyTeardownSink, "localhost", port)
+    with pytest.raises(ConnectionError):  # the original error, not the cleanup's
+        instance.__init__("localhost", port)
+    assert not instance._is_singleton_initialized
+    assert instance._singleton_init_failed  # a waiting caller gets an error, not this sink
+    assert ("localhost", port) not in base._global_sink_singletons

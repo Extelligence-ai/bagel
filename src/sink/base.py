@@ -108,15 +108,20 @@ class TopicSink(abc.ABC):
                 # ready (a ROS bridge's rosapi call). Tear it down and unregister it so
                 # the next construction builds a fresh one instead of reusing a
                 # half-built sink.
-                if getattr(self, "_is_singleton_initialized", False):
-                    self.close()
+                try:
+                    if getattr(self, "_is_singleton_initialized", False):
+                        self.close()
+                except Exception:
+                    # Keep the initialization error; the cleanup's is secondary.
+                    logging.exception("Cleanup of a sink whose initialization failed also failed")
+                finally:
                     self._is_singleton_initialized = False
-                with _global_sink_singletons_lock:
-                    for key in [k for k, v in _global_sink_singletons.items() if v is self]:
-                        del _global_sink_singletons[key]
-                # A caller already holding this instance (it waited on the lock) must
-                # not re-initialize an unregistered sink.
-                self._singleton_init_failed = True
+                    with _global_sink_singletons_lock:
+                        for key in [k for k, v in _global_sink_singletons.items() if v is self]:
+                            del _global_sink_singletons[key]
+                    # A caller already holding this instance (it waited on the lock) must
+                    # not re-initialize an unregistered sink.
+                    self._singleton_init_failed = True
                 raise
 
         cls.__init__ = _init_once
