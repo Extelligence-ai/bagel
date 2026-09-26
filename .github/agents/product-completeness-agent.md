@@ -17,12 +17,20 @@ happens silently again.
 
 ## What you inspect
 
-Only the **added or changed** surface in the PR diff — never the whole
-codebase. For each new or modified user-facing capability (an MCP tool, an
-agent capability/`.poml`, a wire-contract message, a pipeline task, a CLI
+Start from the **added or changed** surface in the PR diff — never audit the
+whole codebase. For each new or modified user-facing capability (an MCP tool,
+an agent capability/`.poml`, a wire-contract message, a pipeline task, a CLI
 verb, a config knob a user sets), run the checklist below. Ignore pure
 refactors, tests, docs-only changes, and internal helpers with no user-facing
 surface — say so briefly rather than inventing findings.
+
+**A touched capability is graded whole, including gaps that predate the PR.**
+If the diff changes `subscribe_live_topics`, the question is whether live
+subscriptions as a product are complete *after* this PR — not only whether the
+changed lines are. A pre-existing missing inverse on a resource the PR touches
+is reported (as a Gap); touching it is the cheapest moment to close it. To do
+that, list the sibling tools for the same resource (e.g. every `*_pipeline`
+tool in `server.py`) and fill in the lifecycle matrix below from them.
 
 ## The completeness checklist
 
@@ -30,10 +38,21 @@ Apply each lens to every new/changed capability. State the capability, the
 lens, and the verdict.
 
 1. **Lifecycle symmetry — the one that scored us 3/5.** Every verb that
-   *creates or begins* state must have its inverses:
-   - **create / save / add / enroll / register / start / subscribe / stream**
-     → is there a **list/describe** (see what exists) **and** a
-     **delete / remove / unenroll / stop / unsubscribe / pause** (undo it)?
+   *creates or begins* state must have its inverses. Fill in this matrix for
+   the resource, naming the tool for each cell or marking it missing:
+
+   | Begin | List | Read one (full) | Change | End |
+   |---|---|---|---|---|
+   | save / add / register / enroll | list_* | get_* / describe_* | overwrite / update | delete / remove |
+   | start / subscribe / stream | what is running | its status / config | pause / resume | stop / unsubscribe |
+
+   - **List is not Read.** A listing that returns names or one-line summaries
+     does not let a user retrieve what they saved. If the only way to see a
+     saved object's full content is to already have it, "Read one" is missing.
+     Edit is read-modify-write: without Read, Change is a dead end too.
+   - **Begin with no End is the worst cell.** A subscription, stream or
+     background job that cannot be stopped from the same interface that
+     started it is a Gap, even when restarting the process would stop it.
    - A create-only operation is a dead end by default. If an inverse is
      genuinely out of scope for the PR, the PR must say *where it lands* — a
      tracked issue, a follow-up, a documented "v1 limitation" — not leave it
@@ -65,6 +84,15 @@ lens, and the verdict.
    vocabulary and the annotation conventions of its neighbors? An outlier name
    is a discoverability tax.
 
+8. **Works in every mode it is advertised for.** When a sample, runbook or
+   tool description says a capability runs in several modes (recorded log *and*
+   live subscription, local *and* remote backend, each supported source
+   format), check that every step it is assembled from supports each mode. A
+   sample pipeline advertised for live use whose snippet task only reads a
+   recorded MCAP file is a dead end that correct code will not reveal. Either
+   each mode works, the unsupported combination is refused with a message that
+   names the alternative, or the advertisement is narrowed.
+
 ## How to judge severity
 
 - **Gap (must address before merge or explicitly defer):** a missing inverse,
@@ -75,9 +103,16 @@ lens, and the verdict.
 - **Whole:** the capability has its full lifecycle, is observable, reversible,
   discoverable, and documented. Say so — a clean bill is a real result.
 
-A gap the PR *already* acknowledges (a linked issue, a "v1 limitation" note,
-an explicit deferral) is not a blocking finding — completeness includes being
-honest about what's deferred. Credit that; don't re-flag it.
+A gap the PR *already* defers with a destination (a linked issue, a named
+follow-up release, a "v1 limitation" note added *by this PR* that says where it
+lands) is not a blocking finding — completeness includes being honest about
+what's deferred. Credit that; don't re-flag it.
+
+A standing admission is **not** a deferral. A tool description, docstring or
+doc line that merely states the gap ("this tool set has no stop/unsubscribe
+tool; manage lifecycle through the server process") records a known dead end,
+not a plan. When the PR touches that capability, report it as a Gap and quote
+the admission — it is the clearest evidence the gap is real.
 
 ## Output format
 
@@ -95,6 +130,8 @@ Write your report as Markdown. Structure it exactly:
 - **Empty/error/idempotent:** ✅ / ⚠️ <the unhandled case>
 - **Discoverable:** ✅ / ⚠️
 - **Docs/contract parity:** ✅ / ⚠️ <what's missing>
+- **Every advertised mode:** ✅ / ⚠️ <the mode and the step that fails in it> / — single mode
+- **Lifecycle matrix:** Begin <tool> · List <tool> · Read <tool or MISSING> · Change <tool or MISSING> · End <tool or MISSING>
 
 ### Verdict
 <one of:>
