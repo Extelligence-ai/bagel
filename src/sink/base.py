@@ -88,8 +88,19 @@ class TopicSink(abc.ABC):
 
         @functools.wraps(init)
         def _init_once(self: "TopicSink", *args: object, **init_kwargs: object) -> None:
-            if getattr(self, "_is_singleton_initialized", False):
-                return  # the live singleton keeps its client, buffers and settings
+            # Held across the whole subclass initializer: the base marks the singleton
+            # ready part-way through (before a ROS bridge's rosapi call), so a concurrent
+            # construction must wait here rather than return a half-built sink.
+            with self._singleton_init_lock:
+                if getattr(self, "_singleton_init_failed", False):
+                    raise RuntimeError(
+                        "A concurrent construction of this sink failed; construct it again."
+                    )
+                if getattr(self, "_is_singleton_initialized", False):
+                    return  # the live singleton keeps its client, buffers and settings
+                _init_guarded(self, *args, **init_kwargs)
+
+        def _init_guarded(self: "TopicSink", *args: object, **init_kwargs: object) -> None:
             try:
                 init(self, *args, **init_kwargs)
             except Exception:
@@ -103,6 +114,9 @@ class TopicSink(abc.ABC):
                 with _global_sink_singletons_lock:
                     for key in [k for k, v in _global_sink_singletons.items() if v is self]:
                         del _global_sink_singletons[key]
+                # A caller already holding this instance (it waited on the lock) must
+                # not re-initialize an unregistered sink.
+                self._singleton_init_failed = True
                 raise
 
         cls.__init__ = _init_once
@@ -115,7 +129,9 @@ class TopicSink(abc.ABC):
                 return _global_sink_singletons[key]
             instance = super().__new__(cls)
             instance._is_singleton_initialized = False
-            instance._singleton_init_lock = threading.Lock()
+            # Re-entrant: the subclass __init__ wrapper holds it across the whole
+            # subclass initializer, and the base __init__ takes it again inside.
+            instance._singleton_init_lock = threading.RLock()
             _global_sink_singletons[key] = instance
             return instance
 

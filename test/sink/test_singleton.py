@@ -132,3 +132,30 @@ def test_a_failed_subclass_init_leaves_no_half_built_singleton() -> None:
     retry = _FlakySink("localhost", port)
     assert retry.ready
     retry.close()
+
+
+class _SlowSetupSink(_ClientSink):
+    """Finishes its own setup well after the base initializer marked it ready."""
+
+    def __init__(self, host: str, port: int) -> None:
+        super().__init__(host, port)
+        import time
+
+        time.sleep(0.3)  # a ROS bridge's blocking rosapi Service.call()
+        self.ready = True
+
+
+def test_a_concurrent_construction_waits_for_the_whole_initializer() -> None:
+    import threading
+    import time
+
+    port = next(_ports)
+    results: list[object] = []
+    first = threading.Thread(target=lambda: results.append(_SlowSetupSink("localhost", port)))
+    first.start()
+    time.sleep(0.1)  # the first construction is inside the subclass setup
+    second = _SlowSetupSink("localhost", port)
+    assert getattr(second, "ready", False)  # not a half-initialized singleton
+    first.join()
+    assert results[0] is second
+    second.close()
