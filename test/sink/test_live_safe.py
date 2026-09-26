@@ -312,3 +312,26 @@ def test_the_unsubscribe_tool_matches_the_sink_type(
         server.unsubscribe_live_topics("ros2.bridge", host=sink.host, port=sink.port)
     assert sink.subscribed_topics == ["/a"]
     sink.close()
+
+
+def test_a_reopened_sink_waits_for_a_closed_sinks_running_fire(
+    sink: _FakeSink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # close() unregisters the sink; a new one for the same endpoint shares its buffer
+    # directory, so it must not reset files a still-running fire reads.
+    import time
+
+    monkeypatch.setattr(settings, "LIVE_PIPELINE_DRAIN_SECONDS", 0.1)
+    pipeline = _SlowPipeline(0.8)
+    sink.subscribe("/a", pipeline=pipeline, buffer_size_bytes=None)
+    old_writer = sink._buffers["/a"]
+    old_writer.append({"x": 1.0})
+    time.sleep(0.05)  # the fire is now running
+    sink.close()
+    reopened = _FakeSink(sink.host, sink.port)
+    assert reopened is not sink and reopened.directory == sink.directory
+    with pytest.raises(base.PipelineStillRunningError, match="/a"):
+        reopened.subscribe("/a", overwrite=True, buffer_size_bytes=None)
+    old_writer.join(5)
+    reopened.subscribe("/a", overwrite=True, buffer_size_bytes=None)  # fine once it ended
+    reopened.close()

@@ -22,6 +22,12 @@ from src.sink.buffer import TopicBufferWriter
 _global_sink_singletons: dict[tuple[str, int], "TopicSink"] = {}  # (host, port) -> instance
 _global_sink_singletons_lock = threading.Lock()
 
+# Writers of closed sinks whose pipeline fire was still running, keyed by (sink
+# directory, topic). A sink reopened for the same endpoint shares that directory, so
+# subscribe() waits for (or refuses on) these before resetting the topic's files.
+_closing_writers: dict[tuple[str, str], "TopicBufferWriter"] = {}
+_closing_writers_lock = threading.Lock()
+
 
 class TopicNotFoundError(Exception):
     """Raised when topic is not found."""
@@ -292,6 +298,7 @@ class TopicSink(abc.ABC):
                     "2x nominal during overflow rotation."
                 )
 
+        self._wait_for_closed_sinks_fire(topic)
         if (replaced := self._buffers.get(topic)) is not None:
             # Its pipeline worker must not outlive the subscription, nor still be reading
             # the buffer files the replacement is about to reset.
@@ -326,6 +333,23 @@ class TopicSink(abc.ABC):
             failed.stop()
             failed.join(settings.LIVE_PIPELINE_DRAIN_SECONDS)
             raise
+
+    def _wait_for_closed_sinks_fire(self, topic: str) -> None:
+        """Refuse to reuse `topic`'s files while a closed sink's fire still reads them."""
+        key = (str(self.directory), topic)
+        with _closing_writers_lock:
+            closing = _closing_writers.get(key)
+        if closing is None:
+            return
+        if not closing.join(settings.LIVE_PIPELINE_DRAIN_SECONDS):
+            raise PipelineStillRunningError(
+                f"Cannot subscribe to {topic}: a closed sink's pipeline fire on it is still "
+                f"running after LIVE_PIPELINE_DRAIN_SECONDS="
+                f"{settings.LIVE_PIPELINE_DRAIN_SECONDS}; retry once it finishes."
+            )
+        with _closing_writers_lock:
+            if _closing_writers.get(key) is closing:
+                del _closing_writers[key]
 
     def pause(self, topics: list[str] | None = None) -> None:
         """Pause subscriptions for topics.
@@ -380,6 +404,11 @@ class TopicSink(abc.ABC):
             except Exception:
                 logging.debug("Best-effort disconnect of a partially constructed sink failed")
             return
+        # Record every writer before unregistering: a sink reopened for this endpoint
+        # (same directory) must not reset files one of these fires still reads.
+        with _closing_writers_lock:
+            for topic, writer in self._buffers.items():
+                _closing_writers[(str(self.directory), topic)] = writer
         try:
             self.pause()
             self._disconnect()
@@ -389,7 +418,11 @@ class TopicSink(abc.ABC):
 
             while self._buffers:
                 topic, writer = self._buffers.popitem()
-                if not TopicSink._finish(topic, writer):
+                if TopicSink._finish(topic, writer):
+                    with _closing_writers_lock:
+                        if _closing_writers.get((str(self.directory), topic)) is writer:
+                            del _closing_writers[(str(self.directory), topic)]
+                else:
                     logging.warning(
                         "Pipeline '%s' on topic '%s' is still running a fire at close",
                         writer.pipeline.name,

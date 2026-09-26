@@ -307,3 +307,22 @@ def test_get_pipeline_reports_a_file_that_is_not_a_pipeline(pipelines_dir: pathl
     (pipelines_dir / "broken.yaml").write_text("tasks: [unclosed\n", encoding="utf-8")
     with pytest.raises(ValueError, match="broken"):
         server.get_pipeline("broken")
+
+
+def test_get_pipeline_reads_under_the_save_lock(
+    pipelines_dir: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A concurrent save truncates then writes; an unlocked read could see it half-written.
+    _save("csv_smoke")
+    shared_lock = server._pipeline_lock(pipelines_dir)
+    monkeypatch.setattr(server, "_pipeline_lock", lambda directory: shared_lock)
+    seen: dict[str, bool] = {}
+    real_read_text = pathlib.Path.read_text
+
+    def spy_read_text(self: pathlib.Path, *args: object, **kwargs: object) -> str:
+        seen["locked"] = shared_lock.is_locked
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "read_text", spy_read_text)
+    server.get_pipeline("csv_smoke")
+    assert seen["locked"] is True

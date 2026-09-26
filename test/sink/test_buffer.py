@@ -191,6 +191,7 @@ def test_once_at_end_runs_only_once_when_sink_closes(
         _is_singleton_initialized=True,
         host="test",
         port=12345,
+        directory=tmp_path,
         _buffers={TOPIC: writer},
         pause=Mock(),
         _disconnect=Mock(),

@@ -1110,12 +1110,16 @@ def get_pipeline(name: str) -> dict[str, Any]:
     target = root / f"{name}.yaml"
     if target.is_symlink() or not target.resolve().is_relative_to(root.resolve()):
         raise ValueError(f"Refusing to read {name!r}: it resolves outside {root.resolve()}.")
-    if not target.is_file():
+    # Same lock as save_pipeline's write and delete_pipeline's unlink, so the read never
+    # sees a half-written file or loses it between the check and the read.
+    with _pipeline_lock(root):
+        text = target.read_text(encoding="utf-8") if target.is_file() else None
+    if text is None:
         available = sorted(entry["name"] for entry in list_pipelines())
         detail = f"Available: {available}" if available else "No pipelines are saved there."
         raise ValueError(f"No saved pipeline named {name!r}. {detail}")
     try:
-        config = yaml.safe_load(target.read_text(encoding="utf-8"))
+        config = yaml.safe_load(text)
     except yaml.YAMLError as error:
         raise ValueError(f"Saved pipeline {name!r} is not valid YAML: {error}") from error
     if not isinstance(config, dict):
