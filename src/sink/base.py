@@ -90,7 +90,20 @@ class TopicSink(abc.ABC):
         def _init_once(self: "TopicSink", *args: object, **init_kwargs: object) -> None:
             if getattr(self, "_is_singleton_initialized", False):
                 return  # the live singleton keeps its client, buffers and settings
-            init(self, *args, **init_kwargs)
+            try:
+                init(self, *args, **init_kwargs)
+            except Exception:
+                # A subclass can fail after the base initializer marked the singleton
+                # ready (a ROS bridge's rosapi call). Tear it down and unregister it so
+                # the next construction builds a fresh one instead of reusing a
+                # half-built sink.
+                if getattr(self, "_is_singleton_initialized", False):
+                    self.close()
+                    self._is_singleton_initialized = False
+                with _global_sink_singletons_lock:
+                    for key in [k for k, v in _global_sink_singletons.items() if v is self]:
+                        del _global_sink_singletons[key]
+                raise
 
         cls.__init__ = _init_once
 

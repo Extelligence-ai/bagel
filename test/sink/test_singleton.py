@@ -103,3 +103,32 @@ def test_mqtt_list_then_subscribe_receives_messages(
     again.subscribe("plant/pump")
     connected.deliver("plant/pump", json.dumps({"pressure": 3.9}).encode())
     assert again._buffers["plant/pump"].message_count >= 1
+
+
+class _FlakySink(_ClientSink):
+    """Fails after the base initializer ran, as a ROS bridge sink does on a rosapi error."""
+
+    fail_next = True
+    disconnected = 0
+
+    def __init__(self, host: str, port: int) -> None:
+        super().__init__(host, port)
+        if type(self).fail_next:
+            type(self).fail_next = False
+            raise ConnectionError("rosapi did not answer")
+        self.ready = True
+
+    def _disconnect(self) -> None:
+        type(self).disconnected += 1
+
+
+def test_a_failed_subclass_init_leaves_no_half_built_singleton() -> None:
+    port = next(_ports)
+    _FlakySink.fail_next, _FlakySink.disconnected = True, 0
+    with pytest.raises(ConnectionError):
+        _FlakySink("localhost", port)
+    assert ("localhost", port) not in base._global_sink_singletons
+    assert _FlakySink.disconnected == 1  # its connection was not leaked
+    retry = _FlakySink("localhost", port)
+    assert retry.ready
+    retry.close()
