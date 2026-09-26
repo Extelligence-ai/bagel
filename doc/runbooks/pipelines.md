@@ -102,7 +102,9 @@ Tasks chain: this is one standing pipeline on a live stream:
 2. **Run** · `run_pipeline` builds and executes the config, returning artifact paths.
 3. **Save** · `save_pipeline` persists it as YAML (like
    [`pipelines/hard_decel_reduce.yaml`](../../pipelines/hard_decel_reduce.yaml)) for
-   review, version control, and `run.py pipelines/<name>.yaml`.
+   review, version control, and `run.py pipelines/<name>.yaml`. `list_pipelines`
+   shows what is saved, `get_pipeline` returns one's full config to edit, and
+   `delete_pipeline` removes it.
 4. **Scale out** · `run_pipeline_batch` runs one config over globs of sources
    (`logs/*.mcap`), isolating failures per source and returning a combined report.
 5. **Stand it up** · attach a pipeline to a live subscription
@@ -112,6 +114,8 @@ Tasks chain: this is one standing pipeline on a live stream:
    decision model) never stalls ingest; a pipeline that falls too far behind drops
    fires and counts them in its run summary (`LIVE_PIPELINE_*` settings, see
    [Anomaly detection: Run it live](./anomaly_detection.md#run-it-live)).
+   `unsubscribe_live_topics` stops it: queued runs and the end-of-stream run finish
+   first, and the recorded buffer stays on disk.
 
 ## Go deeper
 

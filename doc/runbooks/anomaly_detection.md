@@ -184,8 +184,22 @@ real record (rounded) from a test run with a planted current spike:
 
 Attach the same pipeline to a live subscription (`subscribe_live_topics`, or an entry in
 `STARTUP_PIPELINES_FILE` so the edge container restores it on every boot) and drop its
-`path`: it defaults to the live buffer. Every window is screened as the data arrives,
-and anomalous slices are labelled and uploaded while the robot is still running.
+`path`: it defaults to the live buffer. Swap `snippet.mcap` for `write_topics_to_file`,
+which reads the live buffer; snippet and reduce tasks need a recorded log, and Bagel
+refuses them on a live subscription:
+
+```yaml
+tasks:
+  - module: src.pipeline.tasks.write_topics_to_file
+    lookback: {last: 10, unit: second}
+    args: {topics: null, output_format: parquet}
+  - module: src.pipeline.tasks.write_annotations
+  # ...upload task unchanged
+```
+
+Every window is screened as the data arrives, and anomalous slices are labelled and
+uploaded as Parquet while the robot is still running. Stop it with
+`unsubscribe_live_topics`.
 
 Live pipelines run on a worker thread, one per pipeline, never on the thread that
 receives messages, so waiting on Jev (up to `timeout_seconds` per window) never stalls

@@ -389,37 +389,62 @@ class TopicSink(abc.ABC):
 
             while self._buffers:
                 topic, writer = self._buffers.popitem()
-                # Fire any live OnEvent events still waiting on their forward window, and
-                # let the worker finish what is queued before the end-of-stream run.
-                writer.flush_pending_events()
-                if not writer.drain(settings.LIVE_PIPELINE_DRAIN_SECONDS):
-                    logging.warning(
-                        "Pipeline '%s' on topic '%s' still had queued fires after %.0f s; "
-                        "discarding them",
-                        writer.pipeline.name,
-                        topic,
-                        settings.LIVE_PIPELINE_DRAIN_SECONDS,
-                    )
-                writer.stop()
-                if writer.pipeline is not None and isinstance(
-                    writer.pipeline.cadence.when, OnceAtEnd
-                ):
-                    if writer.last_timestamp_seconds is None:
-                        logging.info(
-                            "No messages received on topic '%s', skipping pipeline '%s'",
-                            topic,
-                            writer.pipeline.name,
-                        )
-                    elif writer.last_run_at == writer.last_timestamp_seconds:
-                        logging.info(
-                            "Pipeline '%s' already executed on topic '%s' at the end, skipping",
-                            topic,
-                            writer.pipeline.name,
-                        )
-                    else:
-                        writer.pipeline.run_at(writer.last_timestamp_seconds)
-                if writer.pipeline is not None:
-                    logging.info("Pipeline '%s' completed.", writer.pipeline.name)
+                TopicSink._finish(topic, writer)
+
+    def unsubscribe(self, topics: list[str] | None = None) -> list[str]:
+        """Stop recording topics and finish their standing pipelines.
+
+        Each topic's pipeline runs its queued fires (up to `LIVE_PIPELINE_DRAIN_SECONDS`)
+        and its end-of-stream run, as on `close()`. The recorded buffer stays on disk. The
+        sink stays connected; `close()` it once nothing is subscribed.
+
+        Args:
+            topics (list[str] | None, optional): Topics to stop. If None, all of them.
+
+        Returns:
+            The topics that were unsubscribed.
+
+        Raises:
+            TopicNotFoundError: If any requested topic is not subscribed; nothing changes.
+
+        """
+        topics = list(self._buffers) if topics is None else list(topics)
+        self.pause(topics)  # validates every topic before anything is torn down
+        for topic in topics:
+            TopicSink._finish(topic, self._buffers.pop(topic))
+        return topics
+
+    @staticmethod
+    def _finish(topic: str, writer: TopicBufferWriter) -> None:
+        """Run a detached writer's remaining pipeline work, then stop its worker."""
+        # Fire any live OnEvent events still waiting on their forward window, and let the
+        # worker finish what is queued before the end-of-stream run.
+        writer.flush_pending_events()
+        if not writer.drain(settings.LIVE_PIPELINE_DRAIN_SECONDS):
+            logging.warning(
+                "Pipeline '%s' on topic '%s' still had queued fires after %.0f s; discarding them",
+                writer.pipeline.name,
+                topic,
+                settings.LIVE_PIPELINE_DRAIN_SECONDS,
+            )
+        writer.stop()
+        if writer.pipeline is not None and isinstance(writer.pipeline.cadence.when, OnceAtEnd):
+            if writer.last_timestamp_seconds is None:
+                logging.info(
+                    "No messages received on topic '%s', skipping pipeline '%s'",
+                    topic,
+                    writer.pipeline.name,
+                )
+            elif writer.last_run_at == writer.last_timestamp_seconds:
+                logging.info(
+                    "Pipeline '%s' already executed on topic '%s' at the end, skipping",
+                    writer.pipeline.name,
+                    topic,
+                )
+            else:
+                writer.pipeline.run_at(writer.last_timestamp_seconds)
+        if writer.pipeline is not None:
+            logging.info("Pipeline '%s' completed.", writer.pipeline.name)
 
     def __enter__(self) -> "TopicSink":  # noqa: D105
         return self

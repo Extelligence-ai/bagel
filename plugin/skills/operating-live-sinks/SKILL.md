@@ -13,6 +13,10 @@ standing pipelines run against them.
   (`JSONL_BUFFER_SIZE_PER_TOPIC_BYTES`, default 1 GB per topic).
 - The subscription's directory path is returned; pass it as the `path` for
   queries and pipelines over the live data.
+- Stop topics with `unsubscribe_live_topics` (omit `topics` to stop all). A
+  standing pipeline finishes its queued runs and its end-of-stream run first;
+  the recorded buffer stays on disk, and the connection closes once nothing is
+  subscribed.
 - Standing pipelines that must survive container restarts belong in the
   `STARTUP_PIPELINES_FILE` manifest: they are re-established on boot.
 - Artifacts (snippets, exports) land under the artifacts directory and are

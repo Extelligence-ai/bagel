@@ -357,9 +357,8 @@ def list_live_topics(
         "Start a background subscription to mqtt, ros1.bridge, or ros2.bridge and persist "
         "messages locally; returns the sink directory for subsequent analysis. Use "
         "list_live_topics first. An optional pipeline runs continuously on incoming messages "
-        "and may write or upload artifacts. overwrite=True clears existing topic buffers. This "
-        "tool set has no stop/unsubscribe tool; manage lifecycle through the server process. "
-        "Not for inspecting an existing file."
+        "and may write or upload artifacts. overwrite=True clears existing topic buffers. Stop "
+        "it with unsubscribe_live_topics. Not for inspecting an existing file."
     ),
     annotations=mcp_compat.tool_annotations(
         read_only=False, idempotent=False, destructive=True, open_world=True
@@ -425,6 +424,73 @@ def subscribe_live_topics(  # noqa: PLR0913
     )
     startup.subscribe_with_pipeline(sink, topics, pipeline, overwrite=overwrite)
     return str(sink.directory)
+
+
+@server.tool(
+    title="Stop live topic subscriptions",
+    description=(
+        "Stop topics started by subscribe_live_topics on a running mqtt, ros1.bridge, or "
+        "ros2.bridge subscription (same type_, host and port). Omit topics to stop all of "
+        "them. A standing pipeline finishes its queued runs and its end-of-stream run first, "
+        "which may write or upload artifacts. Recorded messages stay in the returned sink "
+        "directory for analysis. Once nothing is subscribed the connection is closed. Never "
+        "opens a connection: errors if there is no running subscription there."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, open_world=True),
+)
+def unsubscribe_live_topics(
+    type_: str,
+    topics: list[str] | None = None,
+    host: str | None = None,
+    port: int | None = None,
+) -> dict[str, Any]:
+    """Stop live topic subscriptions started by `subscribe_live_topics`.
+
+    Args:
+        type_ (str): The type of `TopicSink` (ros1.bridge, ros2.bridge, mqtt); used to
+            infer the default host and port, as in `subscribe_live_topics`.
+        topics (list[str] | None, optional): Topics to stop. If None, all subscribed topics.
+        host (str | None, optional): Hostname of the subscription. If None, the default.
+        port (int | None, optional): Port of the subscription. If None, the default.
+
+    Returns:
+        dict[str, Any]: `directory` (the sink directory, still readable), `unsubscribed`
+            and `still_subscribed` (topic lists).
+
+    Raises:
+        ValueError: If there is no running subscription on that host and port, or a
+            requested topic is not subscribed there (nothing is stopped).
+
+    Examples:
+        As an LLM prompt:
+            Stop recording `freezer/1/status` from the MQTT broker.
+
+        As a Python call:
+            >>> unsubscribe_live_topics("mqtt", topics=["freezer/1/status"])
+
+    """
+    from src.sink.base import TopicNotFoundError, live_sinks
+
+    ts_type = TopicSink(type_)
+    host = host or guess_host(ts_type)
+    port = port or guess_port(ts_type)
+    sink = next(
+        (s for s in live_sinks() if s.host == host and str(s.port) == str(port)),
+        None,
+    )
+    if sink is None:
+        raise ValueError(f"No live subscription on {host}:{port}; nothing to stop.")
+    try:
+        stopped = sink.unsubscribe(topics)
+    except TopicNotFoundError as error:
+        raise ValueError(
+            f"Not subscribed on {host}:{port}: {error}. Subscribed: {sink.subscribed_topics}"
+        ) from error
+    remaining = sink.subscribed_topics
+    directory = str(sink.directory)
+    if not remaining:
+        sink.close()
+    return {"directory": directory, "unsubscribed": stopped, "still_subscribed": remaining}
 
 
 @server.tool(
@@ -985,6 +1051,57 @@ def list_pipelines() -> list[dict[str, str]]:
     ]
     entries.sort(key=lambda entry: entry["name"])
     return entries
+
+
+@server.tool(
+    title="Read a saved pipeline",
+    description=(
+        "Return the full configuration of one pipeline saved by `save_pipeline`, by the "
+        "`name` `list_pipelines` reports, so it can be inspected, edited and saved again or "
+        "passed to run_pipeline. Confined to the trusted pipelines directory "
+        "(`settings.PIPELINES_DIRECTORY`); a name resolving outside it is refused."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def get_pipeline(name: str) -> dict[str, Any]:
+    """Read one saved pipeline's full configuration by name.
+
+    Args:
+        name (str): The pipeline's name (file stem), as `list_pipelines` reports it.
+
+    Returns:
+        dict[str, Any]: `name`, `path`, and `config` (the parsed pipeline configuration).
+
+    Raises:
+        ValueError: If `name` is not a plain file name or resolves outside the pipelines
+            directory, if no such pipeline exists (the error lists those that do), or if
+            the file is not a valid pipeline YAML mapping.
+
+    Examples:
+        As an LLM prompt:
+            Show me the saved pipeline "hard_decel_reduce".
+
+        As a Python call:
+            >>> get_pipeline("hard_decel_reduce")
+
+    """
+    root = pathlib.Path(settings.PIPELINES_DIRECTORY)
+    if "/" in name or "\\" in name or name in (".", ".."):
+        raise ValueError(f"Invalid pipeline name {name!r}: must be a plain file name, not a path.")
+    target = root / f"{name}.yaml"
+    if target.is_symlink() or not target.resolve().is_relative_to(root.resolve()):
+        raise ValueError(f"Refusing to read {name!r}: it resolves outside {root.resolve()}.")
+    if not target.is_file():
+        available = sorted(entry["name"] for entry in list_pipelines())
+        detail = f"Available: {available}" if available else "No pipelines are saved there."
+        raise ValueError(f"No saved pipeline named {name!r}. {detail}")
+    try:
+        config = yaml.safe_load(target.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        raise ValueError(f"Saved pipeline {name!r} is not valid YAML: {error}") from error
+    if not isinstance(config, dict):
+        raise ValueError(f"Saved pipeline {name!r} is not a pipeline configuration mapping.")
+    return {"name": name, "path": str(target), "config": config}
 
 
 @server.tool(

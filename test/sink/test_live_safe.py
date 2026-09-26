@@ -173,6 +173,7 @@ def test_a_failed_transport_subscribe_leaves_no_writer_or_worker(
     [
         {"module": "src.pipeline.tasks.snippet.mcap"},
         {"module": "src.pipeline.tasks.snippet.ros1.bag"},
+        {"module": "src.pipeline.tasks.cloudini.compress_pointcloud"},
         {
             "module": "src.pipeline.tasks.reduce.mcap",
             "args": {"event_topic": "/b", "predicate": "x > 1", "pre_seconds": 5},
@@ -208,3 +209,69 @@ def test_a_live_pipeline_can_slice_the_window_to_parquet(sink: _FakeSink) -> Non
     ]
     assert startup.subscribe_with_pipeline(sink, ["/a", "/b"], config) == ["/a", "/b"]
     sink.close()
+
+
+def test_unsubscribe_runs_queued_fires_then_stops_only_that_topic(sink: _FakeSink) -> None:
+    pipeline = _SlowPipeline(0.1)
+    sink.subscribe("/a", pipeline=pipeline, buffer_size_bytes=None)
+    sink.subscribe("/b", buffer_size_bytes=None)
+    writer = sink._buffers["/a"]
+    writer.append({"x": 1.0})
+    sink.unsubscribe(["/a"])
+    assert pipeline.finished == [pytest.approx(pipeline.finished[0])]  # the queued fire ran
+    assert writer.stopped
+    assert sink.subscribed_topics == ["/b"]
+    assert writer._data_directory.exists()  # the recorded buffer stays for analysis
+    sink.close()
+
+
+def test_unsubscribe_an_unknown_topic_changes_nothing(sink: _FakeSink) -> None:
+    sink.subscribe("/a", buffer_size_bytes=None)
+    with pytest.raises(base.TopicNotFoundError):
+        sink.unsubscribe(["/a", "/zzz"])
+    assert sink.subscribed_topics == ["/a"]
+    sink.close()
+
+
+def test_the_unsubscribe_tool_stops_topics_and_closes_an_emptied_sink(sink: _FakeSink) -> None:
+    import server
+
+    sink.subscribe("/a", buffer_size_bytes=None)
+    sink.subscribe("/b", buffer_size_bytes=None)
+    first = server.unsubscribe_live_topics("mqtt", topics=["/a"], host=sink.host, port=sink.port)
+    assert first == {
+        "directory": str(sink.directory),
+        "unsubscribed": ["/a"],
+        "still_subscribed": ["/b"],
+    }
+    assert sink in base.live_sinks()
+    rest = server.unsubscribe_live_topics("mqtt", host=sink.host, port=sink.port)
+    assert rest["unsubscribed"] == ["/b"]
+    assert rest["still_subscribed"] == []
+    assert sink not in base.live_sinks()  # connection released
+
+
+def test_the_unsubscribe_tool_never_opens_a_new_connection(sink: _FakeSink) -> None:
+    import server
+
+    before = base.live_sinks()
+    with pytest.raises(ValueError, match="No live subscription"):
+        server.unsubscribe_live_topics("mqtt", host="nowhere.invalid", port=1)
+    assert base.live_sinks() == before
+    sink.close()
+
+
+@pytest.mark.parametrize(
+    "module", ["src.pipeline.tasks.reduce.ros2.db3", "src.pipeline.tasks.snippet.ros2.db3"]
+)
+def test_ros2_db3_tasks_are_recorded_log_only(module: str) -> None:
+    # Imports need rosbag2_py/rclpy: runs in the ROS 2 images, skipped on the host.
+    pytest.importorskip("rosbag2_py")
+    import importlib
+
+    task_module = importlib.import_module(module)
+    assert (
+        task_module.ReduceRosbag.needs_recorded_log
+        if "reduce" in module
+        else (task_module.SnipRosbag.needs_recorded_log)
+    )

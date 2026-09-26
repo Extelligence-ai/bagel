@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     USER_CAPABILITIES_DIRECTORY: str = str(pathlib.Path.home() / ".bagel" / "capabilities")
 
     # Directory saved pipelines are written to by save_pipeline (its default
-    # target) and the ONLY directory list_pipelines / delete_pipeline read
+    # target) and the ONLY directory list_pipelines / get_pipeline / delete_pipeline read
     # from and delete from. The single source of truth for "the trusted
     # pipelines root": those two tools accept no directory argument, so an
     # MCP caller cannot point deletion at an arbitrary path (review #224).
