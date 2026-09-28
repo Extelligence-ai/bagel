@@ -184,9 +184,15 @@ jobs:
           # offer, because resolving a thread cannot re-run the job (see the `on:`
           # block) -- and it works on supported events: a new review fires
           # pull_request_review, which re-runs this job.
+          # Later supersedes earlier, but a TIE fails closed. GitHub timestamps have
+          # one-second resolution, so two reviewers publishing in the same second sort
+          # by their base64 payloads -- arbitrary order, and a clean verdict could
+          # silently beat a contemporaneous finding. Within one timestamp any finding
+          # wins; only a strictly later timestamp can clear it.
           body_findings() {
             verdict=0
-            while read -r _stamp encoded; do
+            verdict_stamp=""
+            while read -r stamp encoded; do
               [ -n "$encoded" ] || continue
               body="$(printf '%s' "$encoded" | base64 --decode 2>/dev/null || true)"
               [ -n "$body" ] || continue
@@ -196,12 +202,23 @@ jobs:
                 "$sha"*) ;;
                 *) continue ;;
               esac
+              this=""
               if printf '%s\n' "$body" \
                    | grep -qE '^Findings: present[[:space:]]*$|automated review suggestions'; then
-                verdict=1
+                this=1
               elif printf '%s\n' "$body" \
                    | grep -qE "^Findings: none[[:space:]]*\$|Didn't find any major issues"; then
-                verdict=0
+                this=0
+              fi
+              # A body with neither marker carries no verdict and must not clear one.
+              [ -n "$this" ] || continue
+              if [ "$stamp" = "$verdict_stamp" ]; then
+                if [ "$this" = "1" ]; then
+                  verdict=1
+                fi
+              else
+                verdict="$this"
+                verdict_stamp="$stamp"
               fi
             done <<< "$BODIES_B64"
             echo "$verdict"
