@@ -111,11 +111,24 @@ jobs:
               printf '\n'
             done <<< "$BODIES_B64"
           }
-          # The sha a single body says it reviewed, empty if it names none.
-          body_sha() {
-            printf '%s\n' "$1" \
+          # Does this body name the head commit ANYWHERE?
+          #
+          # Every stamp counts, not just the first. reviewed_shas below scans every
+          # match in every body, so taking only `head -1` here made the two
+          # disagree: a body that quotes an earlier review ("Reviewed commit:
+          # deadbeef") before its own current-head stamp was skipped as belonging to
+          # another commit, while its real stamp still satisfied the gate -- a
+          # body-only finding ignored and the PR greened. Quoting prior review text
+          # happens naturally when the thing under review is this gate.
+          body_names_head() {
+            for stamp in $(printf '%s\n' "$1" \
               | grep -oE 'Reviewed commit:[^a-f0-9]*[a-f0-9]{7,40}' \
-              | grep -oE '[a-f0-9]{7,40}$' | head -1 || true
+              | grep -oE '[a-f0-9]{7,40}$' || true); do
+              case "$HEAD_SHA" in
+                "$stamp"*) return 0 ;;
+              esac
+            done
+            return 1
           }
           reviewed_shas() {
             decoded_bodies \
@@ -196,12 +209,7 @@ jobs:
               [ -n "$encoded" ] || continue
               body="$(printf '%s' "$encoded" | base64 --decode 2>/dev/null || true)"
               [ -n "$body" ] || continue
-              sha="$(body_sha "$body")"
-              [ -n "$sha" ] || continue
-              case "$HEAD_SHA" in
-                "$sha"*) ;;
-                *) continue ;;
-              esac
+              body_names_head "$body" || continue
               this=""
               if printf '%s\n' "$body" \
                    | grep -qE '^Findings: present[[:space:]]*$|automated review suggestions'; then
