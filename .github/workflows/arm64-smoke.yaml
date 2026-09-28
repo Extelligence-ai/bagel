@@ -16,8 +16,14 @@ name: arm64-smoke
 #
 # It builds and tests only. It never logs in to ghcr and never pushes a tag,
 # so it cannot affect any published image.
+#
+# Trigger is a push scoped to THIS branch, not workflow_dispatch: dispatch
+# resolves workflows from the default branch only, so a file that exists only
+# on a PR branch cannot be dispatched (HTTP 404). Scoping to the one branch
+# keeps it from firing anywhere else, and the file is deleted before merge.
 on:
-  workflow_dispatch:
+  push:
+    branches: [ci/arm64-multiarch-on-main]
 
 permissions:
   contents: read
