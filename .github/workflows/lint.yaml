@@ -59,14 +59,4 @@ jobs:
       - run: uv sync --locked --group quality
       - run: uv run --no-sync mypy
       - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-      # -ignore: actionlint's event schema lags GitHub's. pull_request_review_thread
-      # (types resolved/unresolved) has been a real webhook event since 2022 and
-      # codex-gate.yaml depends on it -- resolving a thread must re-run that gate,
-      # or the required check stays red after the maintainer does what its error
-      # message asked. Neither v1.7.7 (pinned here) nor v1.7.12 knows the name yet.
-      # Scoped to that one event so every other unknown-event typo still fails.
-      # Same schema-lag family as publish.yaml's `queue: max` note; drop this flag
-      # once actionlint catches up.
-      - run: |
-          "$(go env GOPATH)/bin/actionlint" -color \
-            -ignore 'unknown Webhook event "pull_request_review_thread"'
+      - run: '"$(go env GOPATH)/bin/actionlint" -color'

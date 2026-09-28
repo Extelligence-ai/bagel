@@ -44,11 +44,12 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   pull_request_review:
     types: [submitted]
-  # Resolving a thread is now a way to clear this gate, so it has to be a way to
-  # re-run it: without this the job stays red after the maintainer does exactly
-  # what its error message asked for, and the required check never goes green.
-  pull_request_review_thread:
-    types: [resolved, unresolved]
+  # NOT pull_request_review_thread: it is a real webhook but NOT a supported
+  # Actions trigger (actionlint rejects it, and GitHub's events-that-trigger-
+  # workflows reference omits it), so a workflow keyed on it never runs.
+  # Resolving a thread therefore cannot re-run this gate on its own -- which is
+  # why the clearing path below is a fresh REVIEW, not a resolve: a new review
+  # fires pull_request_review above and re-runs this job.
 
 permissions:
   pull-requests: write
@@ -156,20 +157,18 @@ jobs:
           # did exactly that to its own PR). Keying on the head sha gives a body the
           # same lifecycle a thread already has -- pushing a fix moves the head, the
           # stale body stops counting, and the new head needs its own review anyway.
-          # Only Claude's verdict line is read here, and only the LAST one for this
-          # head wins. Two reasons, both learned the hard way on this PR:
+          # The LAST verdict for this head wins, from either reviewer. Both report
+          # findings in a body -- Claude always (claude-review.yaml posts one body,
+          # no inline threads, with a closed enum its posting step validates), Codex
+          # when a finding has no single line to anchor to -- so ignoring bodies
+          # outright would let a body-only report pass as clean.
           #
-          #   - Codex's "automated review suggestions" body accompanies inline
-          #     THREADS, which the query above already counts and which have a real
-          #     lifecycle. Counting the body too double-counted the same findings and
-          #     left open_bodies stuck at 1 after every thread was resolved -- the
-          #     permanent block again, merely scoped to one head. Codex findings are
-          #     threads; let threads be the signal.
-          #   - Claude's findings are body-only by construction (claude-review.yaml
-          #     posts one review body, no inline threads), so the body is their only
-          #     representation. Its verdict line is a closed enum the posting step
-          #     validates deterministically, and taking the last one lets a re-review
-          #     of the same head supersede an earlier "present" with "none".
+          # Superseding is what makes that safe. A body is immutable, so an earlier
+          # "found things" can only be cleared by a LATER review of the same head
+          # saying otherwise. That is also the ONLY clearing path this gate can
+          # offer, because resolving a thread cannot re-run the job (see the `on:`
+          # block) -- and it works on supported events: a new review fires
+          # pull_request_review, which re-runs this job.
           body_findings() {
             verdict=0
             for encoded in $BODIES_B64; do
@@ -181,9 +180,11 @@ jobs:
                 "$sha"*) ;;
                 *) continue ;;
               esac
-              if printf '%s\n' "$body" | grep -qE '^Findings: present[[:space:]]*$'; then
+              if printf '%s\n' "$body" \
+                   | grep -qE '^Findings: present[[:space:]]*$|automated review suggestions'; then
                 verdict=1
-              elif printf '%s\n' "$body" | grep -qE '^Findings: none[[:space:]]*$'; then
+              elif printf '%s\n' "$body" \
+                   | grep -qE "^Findings: none[[:space:]]*\$|Didn't find any major issues"; then
                 verdict=0
               fi
             done
@@ -198,7 +199,7 @@ jobs:
           open_bodies="$(body_findings)"
           open_findings=$(( open_threads + open_bodies ))
           if [ "$open_findings" -gt 0 ]; then
-            echo "::error::$open_findings unresolved review finding(s) on this PR ($open_threads inline thread(s), $open_bodies body-reported). A green gate means a review happened, not that its findings were addressed -- fix or resolve each before merging."
+            echo "::error::$open_findings unresolved review finding(s) on this PR ($open_threads inline thread(s), $open_bodies body-reported). A green gate means a review happened, not that its findings were addressed. Fix them, then either push (a new head clears every stale finding) or re-request a review of this head -- a later clean review supersedes an earlier one. Resolving a thread alone does NOT re-run this gate: pull_request_review_thread is not an Actions trigger."
             exit 1
           fi
           for sha in $(reviewed_shas); do
