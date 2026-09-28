@@ -1,0 +1,51 @@
+name: arm64-smoke
+
+# THROWAWAY -- delete before merging PR #273.
+#
+# publish.yaml's `publish-arm64` leg has never run: it is gated on
+# `github.ref == 'refs/heads/main'`, so the first execution would be the first
+# publish after merge, and a failure there means ros2-kilted gets no new tags
+# from that run while the other eleven services publish normally.
+#
+# A native arm64 build and the in-image test suite already pass locally on
+# Apple Silicon (103 passed, 4 skipped), which proves the Dockerfile and its
+# dependencies are arm64-clean. What that CANNOT prove is whether a COLD build
+# fits this runner's disk and time budget -- a laptop VM is not
+# ubuntu-24.04-arm and had a warm layer cache. This job answers exactly that
+# one question, on the real runner, with no cache.
+#
+# It builds and tests only. It never logs in to ghcr and never pushes a tag,
+# so it cannot affect any published image.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arm64-cold-build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Show runner arch and free space
+        run: |
+          uname -m
+          df -h / | tail -1
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
+      # DEV_MODE=true keeps ./test in the image so the suite can run below.
+      # publish-arm64 builds without it; the extra layer only adds test files.
+      - name: Build ros2-kilted (cold, native arm64)
+        run: docker compose build ros2-kilted --build-arg DEV_MODE=true
+      - name: Confirm the image really is arm64
+        run: |
+          arch=$(docker image inspect ghcr.io/extelligence-ai/bagel/ros2-kilted:latest \
+            --format '{{.Architecture}}')
+          echo "image architecture: $arch"
+          [ "$arch" = "arm64" ] || { echo "::error::expected arm64, got $arch"; exit 1; }
+      - name: Run the test suite inside the arm64 image
+        run: docker compose run --rm ros2-kilted uv run pytest -p no:warnings -q ./test
+      - name: Report remaining disk
+        if: always()
+        run: df -h / | tail -1
