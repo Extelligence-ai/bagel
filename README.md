@@ -104,10 +104,18 @@ Install [Docker Desktop](https://docs.docker.com/get-started/get-docker/) and
 [Claude Code](https://docs.claude.com/en/docs/claude-code/quickstart) (or another MCP-enabled LLM).
 
 > [!NOTE]
-> **Apple Silicon and other arm64 hosts:** `ros2-kilted` — the default service,
-> and the one `server.json` pins — ships as a multi-arch image, so Docker pulls
-> a native arm64 build. The other services are published for amd64 only and run
-> under emulation on arm64 hosts; they work, but expect them to be slower.
+> **arm64 hosts (Apple Silicon, Raspberry Pi, Jetson, Graviton):** `ros2-kilted`
+> — the default service, and the one `server.json` pins — ships as a multi-arch
+> image, so Docker pulls a native arm64 build. No extra setup.
+>
+> The other services are published for **amd64 only**. Docker Desktop emulates
+> them automatically, so they run on Apple Silicon (slower, but they work). On
+> arm64 **Linux** with plain Docker Engine there is no emulation by default and
+> they fail immediately with `exec format error` — install QEMU/binfmt first:
+>
+> ```bash
+> docker run --privileged --rm tonistiigi/binfmt --install amd64
+> ```
 
 #### 1. Clone and start Bagel
 
