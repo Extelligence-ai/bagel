@@ -91,8 +91,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ROS
-          - service: ros2-kilted
+          # ROS (ros2-kilted excluded: it publishes via the dedicated
+          # kilted-amd64 / publish-arm64 / merge-manifests jobs below, which
+          # produce its multi-arch manifest -- see those jobs' comments).
           - service: ros2-jazzy
           - service: ros2-jazzy-jev
           - service: ros2-iron
@@ -150,3 +151,134 @@ jobs:
             docker tag "$IMAGE:latest" "$IMAGE:$VERSION"
             push_with_retry "$IMAGE:$VERSION"
           fi
+
+  # ros2-kilted is the image server.json pins and the one most users pull, so
+  # it is built for both architectures. Originally PR #215, which merged into
+  # beta/fleet-streaming rather than main and so never shipped -- every
+  # published image through 2.4.0 is amd64-only, and Apple Silicon runs Bagel
+  # under emulation.
+  #
+  # amd64 leg. Isolated from the `docker` matrix entirely (Codex review on
+  # #215) so that (a) no single-arch latest/$VERSION/sha tag is ever visible to
+  # users -- only merge-manifests below writes those -- and (b) the merge does
+  # not depend on the other services' matrix legs succeeding. This job pushes
+  # ONLY a run-scoped staging tag, so concurrent main pushes each get their own
+  # staging references and cannot clobber each other.
+  kilted-amd64:
+    needs: [validate-tests, validate-lint, validate-dependencies]
+    if: always() && !failure() && !cancelled() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
+      - name: Build ros2-kilted
+        run: docker compose build ros2-kilted
+      - name: Push ros2-kilted staging tag (amd64)
+        run: |
+          IMAGE=ghcr.io/extelligence-ai/bagel/ros2-kilted
+          # Same ghcr blob-drop retry as the `docker` job's push step.
+          push_with_retry() {
+            for attempt in 1 2 3; do
+              docker push "$1" && return 0
+              echo "push $1 failed (attempt $attempt); retrying in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+            docker push "$1"
+          }
+          docker tag "$IMAGE:latest" "$IMAGE:staging-${{ github.run_id }}-amd64"
+          push_with_retry "$IMAGE:staging-${{ github.run_id }}-amd64"
+
+  # arm64 leg. GitHub-hosted native arm64 runner (free for public repos), so
+  # `docker compose build` targets arm64 without cross compilation -- compose
+  # has no `platforms:` override, so it builds for the runner's own arch by
+  # default. Same staging-only rule as kilted-amd64: no final tag is ever
+  # pushed from this job.
+  publish-arm64:
+    needs: [validate-tests, validate-lint, validate-dependencies]
+    if: always() && !failure() && !cancelled() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/jvm
+      - name: Build ros2-kilted
+        run: docker compose build ros2-kilted
+      - name: Push ros2-kilted staging tag (arm64)
+        run: |
+          IMAGE=ghcr.io/extelligence-ai/bagel/ros2-kilted
+          # Same ghcr blob-drop retry as the `docker` job's push step.
+          push_with_retry() {
+            for attempt in 1 2 3; do
+              docker push "$1" && return 0
+              echo "push $1 failed (attempt $attempt); retrying in $((attempt * 20))s"
+              sleep $((attempt * 20))
+            done
+            docker push "$1"
+          }
+          docker tag "$IMAGE:latest" "$IMAGE:staging-${{ github.run_id }}-arm64"
+          push_with_retry "$IMAGE:staging-${{ github.run_id }}-arm64"
+
+  # The ONLY place ros2-kilted's final, user-facing tags are created. Needs
+  # just the two staging producers -- not the `docker` matrix -- so an
+  # unrelated service's build failure can never block or skip it (Codex review
+  # on #215). Replicates the `docker` job's tagging rules exactly: latest and
+  # sha-<sha> unconditionally, plus $VERSION gated by the same immutability
+  # check -- evaluated here, at the only point the final $VERSION tag is
+  # actually created, so a version bump can never observe a semver tag that a
+  # single-arch push already claimed.
+  merge-manifests:
+    needs: [kilted-amd64, publish-arm64]
+    if: always() && !failure() && !cancelled() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish ros2-kilted manifest (amd64 + arm64)
+        run: |
+          IMAGE=ghcr.io/extelligence-ai/bagel/ros2-kilted
+          STAGING_AMD64="$IMAGE:staging-${{ github.run_id }}-amd64"
+          STAGING_ARM64="$IMAGE:staging-${{ github.run_id }}-arm64"
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
+          docker buildx imagetools create -t "$IMAGE:latest" "$STAGING_AMD64" "$STAGING_ARM64"
+          docker buildx imagetools create \
+            -t "$IMAGE:sha-${{ github.sha }}" "$STAGING_AMD64" "$STAGING_ARM64"
+          if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+            echo "$IMAGE:$VERSION already published; leaving it untouched"
+          else
+            docker buildx imagetools create -t "$IMAGE:$VERSION" "$STAGING_AMD64" "$STAGING_ARM64"
+          fi
+      # Best-effort cleanup is deliberately omitted: staging-<run_id>-{amd64,
+      # arm64} are never used again after the merge, but deleting them needs
+      # the ghcr package-version API (look up the version id for a tag, then
+      # DELETE it) rather than a docker one-liner. They accumulate harmlessly
+      # -- one pair per run, pulled by nothing, cheap to prune in bulk later.
