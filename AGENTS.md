@@ -47,3 +47,15 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
 - Lint: `uv run ruff check` and `uv run ruff format` before committing.
 - Versioning: image tags and `server.json` follow `pyproject.toml`; published
   semver image tags are immutable (bump the version instead of retagging).
+  This makes a bump MANDATORY whenever a change alters what an image *is* —
+  its contents or its platforms — not just when the Python code changes:
+  `publish.yaml` skips any semver tag that already exists, so without a bump
+  the rebuilt image never reaches the tag `server.json` pins and the MCP
+  registry keeps serving the old one. (This is exactly what nearly sank the
+  arm64 rollout: 2.4.0 was already published amd64-only, so the multi-arch
+  manifest would have been skipped until 2.4.1.)
+- `ros2-kilted` publishes as a multi-arch (amd64 + arm64) manifest via the
+  dedicated `kilted-amd64` / `publish-arm64` / `merge-manifests` jobs; the
+  other services are amd64-only from the `docker` matrix. Those three jobs are
+  the only place `ros2-kilted`'s user-facing tags are created — the per-arch
+  legs push run-scoped staging tags and nothing else.
