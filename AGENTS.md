@@ -58,4 +58,9 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
   dedicated `kilted-amd64` / `publish-arm64` / `merge-manifests` jobs; the
   other services are amd64-only from the `docker` matrix. Those three jobs are
   the only place `ros2-kilted`'s user-facing tags are created — the per-arch
-  legs push run-scoped staging tags and nothing else.
+  legs push run-scoped staging tags and nothing else. When setting a user up on
+  an arm64 host, steer them to `ros2-kilted`: the amd64-only services need
+  emulation, which Docker Desktop provides but plain Docker Engine on arm64
+  Linux (Raspberry Pi, Jetson, Graviton) does not — there they fail outright
+  with `exec format error` until `docker run --privileged --rm
+  tonistiigi/binfmt --install amd64` has been run.
