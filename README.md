@@ -103,6 +103,12 @@ for the full MCP setup below.
 Install [Docker Desktop](https://docs.docker.com/get-started/get-docker/) and
 [Claude Code](https://docs.claude.com/en/docs/claude-code/quickstart) (or another MCP-enabled LLM).
 
+> [!NOTE]
+> **Apple Silicon and other arm64 hosts:** `ros2-kilted` — the default service,
+> and the one `server.json` pins — ships as a multi-arch image, so Docker pulls
+> a native arm64 build. The other services are published for amd64 only and run
+> under emulation on arm64 hosts; they work, but expect them to be slower.
+
 #### 1. Clone and start Bagel
 
 ```bash
