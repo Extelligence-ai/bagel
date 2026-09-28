@@ -44,6 +44,11 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   pull_request_review:
     types: [submitted]
+  # Resolving a thread is now a way to clear this gate, so it has to be a way to
+  # re-run it: without this the job stays red after the maintainer does exactly
+  # what its error message asked for, and the required check never goes green.
+  pull_request_review_thread:
+    types: [resolved, unresolved]
 
 permissions:
   pull-requests: write
@@ -151,8 +156,22 @@ jobs:
           # did exactly that to its own PR). Keying on the head sha gives a body the
           # same lifecycle a thread already has -- pushing a fix moves the head, the
           # stale body stops counting, and the new head needs its own review anyway.
+          # Only Claude's verdict line is read here, and only the LAST one for this
+          # head wins. Two reasons, both learned the hard way on this PR:
+          #
+          #   - Codex's "automated review suggestions" body accompanies inline
+          #     THREADS, which the query above already counts and which have a real
+          #     lifecycle. Counting the body too double-counted the same findings and
+          #     left open_bodies stuck at 1 after every thread was resolved -- the
+          #     permanent block again, merely scoped to one head. Codex findings are
+          #     threads; let threads be the signal.
+          #   - Claude's findings are body-only by construction (claude-review.yaml
+          #     posts one review body, no inline threads), so the body is their only
+          #     representation. Its verdict line is a closed enum the posting step
+          #     validates deterministically, and taking the last one lets a re-review
+          #     of the same head supersede an earlier "present" with "none".
           body_findings() {
-            count=0
+            verdict=0
             for encoded in $BODIES_B64; do
               body="$(printf '%s' "$encoded" | base64 --decode 2>/dev/null || true)"
               [ -n "$body" ] || continue
@@ -162,12 +181,13 @@ jobs:
                 "$sha"*) ;;
                 *) continue ;;
               esac
-              if printf '%s\n' "$body" \
-                   | grep -qE '^Findings: present[[:space:]]*$|automated review suggestions'; then
-                count=$((count + 1))
+              if printf '%s\n' "$body" | grep -qE '^Findings: present[[:space:]]*$'; then
+                verdict=1
+              elif printf '%s\n' "$body" | grep -qE '^Findings: none[[:space:]]*$'; then
+                verdict=0
               fi
             done
-            echo "$count"
+            echo "$verdict"
           }
           # Fail closed: an API outage, rate limit, or schema change must never read as
           # "nothing unresolved" and let an existing attestation carry the PR green.
