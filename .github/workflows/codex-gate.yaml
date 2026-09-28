@@ -44,6 +44,15 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
   pull_request_review:
     types: [submitted]
+  # Codex posts a CLEAN verdict ("Didn't find any major issues") as an issue
+  # comment, not a review -- so pull_request_review never fires for it and the
+  # gate sat red until someone re-ran it by hand. That cost days across #181,
+  # #256, #257 and #264, and it is why three PRs merged minutes before their
+  # review landed: a stale red looks the same as a real one, so people stop
+  # reading it. Scoped in the job guard to comments from the reviewer bot only,
+  # so ordinary PR chatter does not spawn runs.
+  issue_comment:
+    types: [created]
   # NOT pull_request_review_thread: it is a real webhook but NOT a supported
   # Actions trigger (actionlint rejects it, and GitHub's events-that-trigger-
   # workflows reference omits it), so a workflow keyed on it never runs.
@@ -57,15 +66,49 @@ permissions:
 
 jobs:
   codex-review-gate:
-    if: ${{ !github.event.pull_request.draft }}
+    # On issue_comment there is no github.event.pull_request at all: only the
+    # reviewer bot's own comments on a PR re-run the gate. The trigger comment
+    # this job posts is authored by github-actions[bot], so it cannot re-trigger
+    # itself.
+    if: >-
+      (github.event_name != 'issue_comment' && !github.event.pull_request.draft) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
     runs-on: ubuntu-latest
     steps:
-      - name: Require a Codex review of the head commit
+      # issue_comment carries an issue, not a pull request, so the number and
+      # head sha have to be resolved before the gate can look at anything. A
+      # draft PR is skipped here rather than in the job `if:`, which cannot see
+      # draft state on that event.
+      - name: Resolve the pull request and its head
+        id: pr
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT: ${{ github.event_name }}
+          PR_FROM_PR: ${{ github.event.pull_request.number }}
+          PR_FROM_COMMENT: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "issue_comment" ]; then
+            number="$PR_FROM_COMMENT"
+          else
+            number="$PR_FROM_PR"
+          fi
+          pr="$(gh api "repos/$REPO/pulls/$number")"
+          {
+            echo "number=$number"
+            echo "head_sha=$(echo "$pr" | jq -er .head.sha)"
+            echo "draft=$(echo "$pr" | jq -er .draft)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Require a Codex review of the head commit
+        if: steps.pr.outputs.draft == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           ACTION: ${{ github.event.action }}
         run: |
