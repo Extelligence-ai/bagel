@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     # regardless of configuration: nothing connects, nothing leaves the box.
     FLEET_ENABLED: bool = True
 
+    # Browser pairing is opt-in. Publish the MCP port on loopback only.
+    FLEET_PAIRING_UI_ENABLED: bool = False
+
     # Disk budget for the fleet spool's channels lane (store-and-forward
     # outbox under CACHE_DIRECTORY/publish/). Oldest segments are dropped
     # first when over budget; events and heartbeats are never dropped and

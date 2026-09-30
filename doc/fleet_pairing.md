@@ -35,3 +35,24 @@ restart the Bagel server. Pairing does not invent stream rules or physical seria
 An existing enrolled identity is never overwritten. Use fleet access withdrawal
 and replacement before connecting the controller to a different asset. A new host
 must receive its own identity, not a copy of this directory.
+
+## Browser setup
+
+An installer can enable the local browser flow with
+`FLEET_PAIRING_UI_ENABLED=true` and the trusted `FLEET_ENROLL_URL`. Publish the
+server port on loopback only, for example `127.0.0.1:8000:8000` in Docker. Do not
+expose this unauthenticated local setup service on a network interface.
+
+The fleet portal opens `/fleet/connect#url=ENCODED_URL&code=ENCODED_CODE` on
+that local server. The user clicks **Connect this Bagel**, compares the fingerprint
+on the portal, and approves there. Bagel creates the key, polls for approval,
+installs the certificate, and reloads the existing stream configuration. No shell
+command or container name is required. The page immediately removes the fragment
+from history, keeps no secret in browser storage, and requires an explicit click
+before starting. Only the installer-configured enrollment service is accepted.
+
+A worker keeps going when the tab closes. Pending attempts resume on server
+restart; the browser can also retry with the same durable key. An already enrolled
+controller cannot be overwritten. Setup is opt-in and only accepts loopback Host
+headers with same-origin/CSRF-checked mutations. This initial browser flow serves
+locally accessible controllers; remote claiming is not implemented.

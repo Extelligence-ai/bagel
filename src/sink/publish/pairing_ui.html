@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="bagel-csrf" content="__CSRF__"><title>Connect Bagel</title>
+<style>body{font:17px/1.6 system-ui,sans-serif;background:#f6f8f5;color:#243326;margin:0}main{max-width:580px;margin:9vh auto;padding:32px;background:white;border:1px solid #dce5d9;border-radius:18px}h1{line-height:1.2}button{font:inherit;background:#315d3d;color:white;border:0;border-radius:9px;padding:12px 22px;cursor:pointer}button:disabled{opacity:.5;cursor:wait}code{display:block;overflow-wrap:anywhere;padding:15px;background:#f0f4ee;border-radius:9px}small{color:#52634f}#error{color:#943629}[hidden]{display:none}</style></head>
+<body><main><small>BAGEL · CONTROLLER SETUP</small><h1>Connect your controller</h1>
+<p id="intro">Start from your robot’s fleet page and choose Open Bagel setup.</p>
+<p id="destination"></p><button id="connect" hidden>Connect this Bagel</button>
+<p id="status" role="status" aria-live="polite"></p><p id="error" role="alert"></p>
+<section id="identity" hidden><h2>Confirm in your fleet page</h2><p>Compare this fingerprint with the one on your robot’s fleet page, then confirm there.</p><code id="fingerprint"></code><p id="controller"></p></section>
+<button id="resume" hidden>Retry connection</button>
+<p><small>Your private key stays on this controller. You can close this tab after connecting; Bagel will keep working.</small></p>
+<script src="/fleet/connect/app.js" defer></script></main></body></html>

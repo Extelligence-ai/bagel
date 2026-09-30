@@ -30,6 +30,7 @@ from src.pipeline.tasks.waffle import snap as waffle_snap
 from src.sink import startup
 from src.sink.publish import control as fleet_control
 from src.sink.publish import identity as fleet_identity
+from src.sink.publish import pairing_ui
 from src.sink.publish.delivery import service as fleet_delivery
 
 server = mcp_compat.create_server(
@@ -1500,6 +1501,9 @@ def unenroll_fleet_identity() -> dict[str, Any]:
 
     """
     return fleet_control.unenroll_identity()
+
+
+pairing_ui.register(server)
 
 
 if __name__ == "__main__":
