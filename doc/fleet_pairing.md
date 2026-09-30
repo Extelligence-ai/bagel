@@ -43,13 +43,14 @@ An installer can enable the local browser flow with
 server port on loopback only, for example `127.0.0.1:8000:8000` in Docker. Do not
 expose this unauthenticated local setup service on a network interface.
 
-The fleet portal opens `/fleet/connect#url=ENCODED_URL&code=ENCODED_CODE` on
+The fleet portal opens `/fleet/connect#code=ENCODED_CODE` on
 that local server. The user clicks **Connect this Bagel**, compares the fingerprint
 on the portal, and approves there. Bagel creates the key, polls for approval,
 installs the certificate, and reloads the existing stream configuration. No shell
 command or container name is required. The page immediately removes the fragment
 from history, keeps no secret in browser storage, and requires an explicit click
-before starting. Only the installer-configured enrollment service is accepted.
+before starting. The start endpoint accepts no service URL from the browser; it always uses the
+installer-configured enrollment service.
 
 A worker keeps going when the tab closes. Pending attempts resume on server
 restart; the browser can also retry with the same durable key. An already enrolled

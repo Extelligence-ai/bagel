@@ -38,7 +38,7 @@ def headers() -> dict:
 
 def test_browser_cannot_enroll_cross_origin_or_use_arbitrary_service(ui: tuple) -> None:
     client, manager = ui
-    body = {"url": "https://fleet.example", "code": CODE}
+    body = {"code": CODE}
     page = client.get("/fleet/connect")
     assert page.status_code == 200
     assert pairing_ui.CSRF in page.text
@@ -96,7 +96,7 @@ def test_browser_uses_real_key_then_installs_and_reloads_without_terminal(
     monkeypatch.setattr(pairing, "activate", activate)
     result = client.post(
         "/fleet/connect/start",
-        json={"url": "https://fleet.example", "code": CODE},
+        json={"code": CODE},
         headers=headers(),
     )
     assert result.status_code == 200
@@ -110,7 +110,7 @@ def test_browser_uses_real_key_then_installs_and_reloads_without_terminal(
     assert (
         client.post(
             "/fleet/connect/start",
-            json={"url": "https://fleet.example", "code": CODE},
+            json={"code": CODE},
             headers=headers(),
         ).status_code
         == 409

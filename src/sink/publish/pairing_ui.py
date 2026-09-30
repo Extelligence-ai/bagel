@@ -46,8 +46,8 @@ class BrowserPairing:
         """Expose only public state, never the pairing secret or private key."""
         with self.mutex:
             if identity.is_enrolled(self.directory) and self.state["status"] != "connected":
-                return {"status": "enrolled"}
-            return dict(self.state)
+                return {"status": "enrolled", "fleet_service": urlsplit(self.enroll_url).hostname}
+            return {**self.state, "fleet_service": urlsplit(self.enroll_url).hostname}
 
     def start(self, url: str | None = None, code: str | None = None) -> dict:
         """Start or resume the same durable attempt without replacing active work."""
@@ -183,12 +183,12 @@ def register(server: object) -> BrowserPairing | None:  # noqa: C901 -- small, s
                 return Response(status_code=413, headers=HEADERS)
         try:
             data = json.loads(body)
-            if not isinstance(data, dict) or set(data) not in ({"url", "code"}, {"resume"}):
+            if not isinstance(data, dict) or set(data) not in ({"code"}, {"resume"}):
                 raise ValueError("Invalid connection request.")
             if "resume" in data:
                 result = await asyncio.to_thread(manager.start)
-            elif isinstance(data["url"], str) and isinstance(data["code"], str):
-                result = await asyncio.to_thread(manager.start, data["url"], data["code"])
+            elif isinstance(data["code"], str):
+                result = await asyncio.to_thread(manager.start, manager.enroll_url, data["code"])
             else:
                 raise ValueError("Invalid connection request.")
             return JSONResponse(result, headers=HEADERS)

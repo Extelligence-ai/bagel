@@ -3,14 +3,12 @@ const el = id => document.getElementById(id);
 let handoff = null;
 try {
   const hash = new URLSearchParams(location.hash.slice(1));
-  const url = hash.get("url"), code = hash.get("code");
+  const code = hash.get("code");
   history.replaceState(null, "", location.pathname);
-  if (url && code) {
-    const endpoint = new URL(url);
-    if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password) throw new Error();
-    handoff = {url, code};
+  if (code) {
+    if (!/^pair_[a-f0-9]{32}\.[a-f0-9]{64}$/.test(code)) throw new Error();
+    handoff = {code};
     el("intro").textContent = "Connect this controller to your selected robot. Then return to the fleet page to approve it.";
-    el("destination").textContent = "Fleet service: " + endpoint.hostname;
     el("connect").hidden = false;
   }
 } catch { el("error").textContent = "This setup link is invalid. Create a new connection from your robot’s fleet page."; }
@@ -24,6 +22,7 @@ const messages = {
   error: "Connection could not finish. Check the fleet page for an expired or cancelled request, or retry after restoring connectivity."
 };
 function show(s) {
+  if (s.fleet_service) el("destination").textContent = "Fleet service: " + s.fleet_service;
   el("status").textContent = messages[s.status] || "Checking connection…";
   el("identity").hidden = !s.public_key_sha256 || ["connected", "enrolled"].includes(s.status);
   el("fingerprint").textContent = s.public_key_sha256 || "";
