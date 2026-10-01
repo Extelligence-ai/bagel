@@ -290,7 +290,9 @@ def test_inventory_contains_only_allowlisted_source_metadata(tmp_path: Path) -> 
     }
 
 
-def test_control_channel_explicitly_advertises_stop_capable_protocol(monkeypatch) -> None:
+def test_control_channel_explicitly_advertises_stop_capable_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from src.sink.publish.delivery.main import Channel as HttpChannel
 
     seen = []
