@@ -61,6 +61,9 @@ class Channel:
                 job=deepcopy(self.job),
                 server_time=datetime.now(timezone.utc).isoformat(),
             )
+        if route == "inventory":
+            self.inventory = deepcopy(body)
+            return {"accepted": True}
         if body["status"] == self.fail_status:
             raise httpx.HTTPStatusError(
                 "lost response",
@@ -80,6 +83,14 @@ class Runtime:
         self.calls = []
         self.fail = False
         self.prepared_stopped = False
+
+    def inventory(self) -> dict:
+        return {
+            "protocol": 2,
+            "runtime": contract.RUNTIME,
+            "sources": {"sensors": ["temperature"]},
+            "current_digest": self.digest,
+        }
 
     def prepare(self, job: dict) -> Runtime:
         self.calls.append("prepare")
@@ -217,3 +228,63 @@ def test_gateway_denial_is_durable_across_restart(tmp_path: Path) -> None:
     restarted.restore()
     assert recovered.calls == []
     assert restarted.state["credential_denied"]
+
+
+def test_stop_admission_and_restart_never_resurrect_capture(tmp_path: Path) -> None:
+    channel, runtime = Channel(), Runtime()
+    agent = Agent(tmp_path, channel, runtime)
+    agent.tick()
+    channel.job.update(target_id="stop1", revision=2, operation="stop")
+    channel.fail_status, channel.code = "applying", 409
+    with pytest.raises(SupersededError):
+        agent.tick()
+    assert not runtime.prepared_stopped
+    channel.fail_status = None
+    agent.tick()
+    assert runtime.prepared_stopped
+    assert channel.reports[-1]["status"] == "stopped"
+    restarted = Runtime()
+    Agent(tmp_path, channel, restarted).restore()
+    assert restarted.calls == []
+
+
+def test_same_digest_new_revision_needs_admission(tmp_path: Path) -> None:
+    channel, runtime = Channel(), Runtime()
+    agent = Agent(tmp_path, channel, runtime)
+    agent.tick()
+    channel.job.update(target_id="new", revision=2)
+    channel.fail_status, channel.code = "applying", 409
+    with pytest.raises(SupersededError):
+        agent.tick()
+    assert agent.state["active"]["target_id"] == "target1"
+
+
+def test_inventory_contains_only_allowlisted_source_metadata(tmp_path: Path) -> None:
+    import json
+
+    from src.sink.publish.delivery.runtime import BagelRuntime
+
+    sources = tmp_path / "sources.json"
+    sources.write_text(
+        json.dumps(
+            {
+                "sources": {
+                    "sensors": {
+                        "sink": "mqtt",
+                        "host": "secret",
+                        "port": 1883,
+                        "topics": ["temperature"],
+                        "args": {"password": "secret"},
+                    },
+                    "unsupported": {"sink": "other"},
+                }
+            }
+        )
+    )
+    result = BagelRuntime(tmp_path, sources).inventory()
+    assert result == {
+        "protocol": 2,
+        "runtime": contract.RUNTIME,
+        "sources": {"sensors": ["temperature"]},
+        "current_digest": None,
+    }

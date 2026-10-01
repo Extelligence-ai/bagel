@@ -161,6 +161,7 @@ class Agent:
         job = self.state.get("active")
         if (
             job
+            and job.get("operation", "activate") == "activate"
             and not self.state.get("credential_denied")
             and self._matches(job)
             and contract.digest(contract.validate(job["spec"])) == job["digest"]
@@ -173,7 +174,7 @@ class Agent:
         self.state["credential_denied"] = True
         self.save()
 
-    def tick(self) -> None:  # noqa: C901, PLR0912, PLR0915 -- ordered journal/effect state machine
+    def tick(self) -> None:  # noqa: C901, PLR0911, PLR0912, PLR0915 -- ordered journal/effect state machine
         """Reconcile one authoritative desired revision before activation."""
         response = self.channel.request("GET", "next")
         ident, job = response["identity"], response["job"]
@@ -187,6 +188,7 @@ class Agent:
         self.state["installation_id"] = ident["installation_id"]
         self.state.pop("credential_denied", None)
         self.save()
+        self.channel.request("POST", "inventory", self.runtime.inventory())
         if not job:
             self.flush()
             return
@@ -202,7 +204,8 @@ class Agent:
         self.flush()
         try:
             valid = (
-                job["runtime"] == contract.RUNTIME
+                job.get("operation", "activate") in ("activate", "stop")
+                and job["runtime"] == contract.RUNTIME
                 and contract.digest(contract.validate(job["spec"])) == job["digest"]
             )
         except ValueError:
@@ -210,7 +213,19 @@ class Agent:
         if not valid:
             self.observe(job, "rejected", "Unsupported runtime or artifact digest mismatch.")
             return
+        if job.get("operation") == "stop":
+            # Admission is acknowledged before effects. Persist the stopped
+            # desired state first so a crash cannot resurrect the old capture.
+            self.observe(job, "applying")
+            self.state.update(active=job, desired=job, seen_revision=job["revision"])
+            self.state.pop("failed_target", None)
+            self.save()
+            self.runtime.stop()
+            self.observe(job, "stopped")
+            return
         if self.runtime.digest == job["digest"]:
+            if self.state.get("active", {}).get("target_id") != job["target_id"]:
+                self.observe(job, "applying")
             self.state.update(active=job, desired=job, seen_revision=job["revision"])
             self.save()
             self.observe(job, "active")
