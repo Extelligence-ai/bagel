@@ -27,6 +27,10 @@ DOCKER = shutil.which("docker") or "/usr/local/bin/docker"
 RUNTIME = "docker-application-v1"
 
 
+class ApplicationUnhealthyError(RuntimeError):
+    """The daemon confirmed failed application health, rather than a transport error."""
+
+
 class DockerRuntime:
     """Manage only application containers owned by this enrolled installation."""
 
@@ -242,14 +246,14 @@ class DockerRuntime:
         while time.monotonic() < deadline:
             current = self.inspect(name)
             if not current or not current["State"]["Running"]:
-                raise RuntimeError("Application exited during activation.")
+                raise ApplicationUnhealthyError("Application exited during activation.")
             status = current["State"].get("Health", {}).get("Status")
             if status == "healthy":
                 return
             if status == "unhealthy":
-                raise RuntimeError("Application health check failed.")
+                raise ApplicationUnhealthyError("Application health check failed.")
             time.sleep(1)
-        raise RuntimeError("Application health check timed out.")
+        raise ApplicationUnhealthyError("Application health check timed out.")
 
     def activate(self, prepared: dict, *, recovery: bool = False) -> None:
         """Activate a staged pair and recover the prior container on failure."""
@@ -297,8 +301,12 @@ class DockerRuntime:
                 ]
             args += [prepared["pair"]["software"]["image"]]
             self.run(args)
+            if not self.ready():
+                raise ValueError("Robot is no longer ready for activation.")
             if displaced and self.inspect(displaced["container"]):
                 self.run(["stop", "--time", "20", displaced["container"]])
+            if not self.ready():
+                raise ValueError("Robot is no longer ready for activation.")
             self.run(["start", prepared["container"]])
             self.wait_healthy(prepared["container"])
             committed = {**self.state, "active": prepared, "previous": previous}
@@ -322,17 +330,29 @@ class DockerRuntime:
             self.run(["rm", new])
         previous = transition["previous"]
         displaced = transition.get("displaced", self.state.get("active"))
-        if not previous and displaced and self.inspect(displaced["container"]):
-            # An unhealthy container is not a working rollback destination, but
-            # it is still an owned process. Reconcile it before clearing intent,
-            # including a crash before activation reached the original stop.
-            self.run(["stop", "--time", "20", displaced["container"]])
-        if previous:
-            # Recovery can finish while offline, under the same local readiness
-            # policy. Keep the journal if readiness is unavailable and retry.
-            self.run(["start", previous["container"]])
-            self.wait_healthy(previous["container"])
+        previous = self._restore_previous(previous)
+        if not previous and displaced:
+            if not self.ready():
+                raise ValueError("Recovery is waiting for local readiness.")
+            inspected = self.inspect(displaced["container"])
+            if inspected and inspected["State"]["Running"]:
+                self.run(["stop", "--time", "20", displaced["container"]])
         recovered = {**self.state, "active": previous, "recovered": True}
         recovered.pop("transition")
         atomic(self.path, recovered)
         self.state = recovered
+
+    def _restore_previous(self, previous: dict | None) -> dict | None:
+        """Restore a confirmed fallback, distinguishing failed health from daemon failure."""
+        if not previous or not self.inspect(previous["container"]):
+            return None
+        if not self.ready():
+            raise ValueError("Recovery is waiting for local readiness.")
+        self.run(["start", previous["container"]])
+        try:
+            self.wait_healthy(previous["container"])
+        except ApplicationUnhealthyError:
+            # Reconcile the failed process before clearing intent. Docker
+            # transport errors propagate instead, preserving the journal.
+            return None
+        return previous

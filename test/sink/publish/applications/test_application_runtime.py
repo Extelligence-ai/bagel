@@ -261,3 +261,50 @@ def test_failed_unhealthy_recovery_cannot_orphan_the_displaced_process(
     assert not any(c["State"]["Running"] for c in engine.containers.values())
     recovered.activate(recovered.prepare(PAIR, "fresh-install"))
     assert sum(c["State"]["Running"] for c in engine.containers.values()) == 1
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_permanently_failed_fallback_clears_recovery_after_reconciling_processes(
+    tmp_path: Path, missing: bool
+) -> None:
+    engine = Engine()
+    app = runtime(tmp_path, engine)
+    app.activate(app.prepare(PAIR, "first"))
+    previous = app.state["active"]["container"]
+    candidate = app.prepare(PAIR, "candidate")
+    engine.interrupt = True
+    with pytest.raises(KeyboardInterrupt):
+        app.activate(candidate)
+    if missing:
+        engine.containers.pop(previous)
+    else:
+        engine.unhealthy = True
+    recovered = runtime(tmp_path, engine)
+    assert "transition" not in recovered.state
+    assert recovered.current() == (None, False)
+    assert not any(c["State"]["Running"] for c in engine.containers.values())
+    recovered.activate(recovered.prepare(PAIR, "replacement"))
+    assert recovered.current() == (PAIR, True)
+
+
+def test_withdrawn_readiness_after_create_prevents_stopping_the_old_application(
+    tmp_path: Path,
+) -> None:
+    engine = Engine()
+    app = runtime(tmp_path, engine)
+    app.activate(app.prepare(PAIR, "first"))
+    candidate = app.prepare(PAIR, "candidate")
+
+    def withdraw(args: list[str], timeout: int = 300) -> bytes:
+        result = engine.run(args, timeout)
+        if args[0] == "create":
+            (tmp_path / "ready").write_text("busy")
+        return result
+
+    app.run = withdraw
+    before = len(engine.commands)
+    with pytest.raises(ValueError, match="readiness"):
+        app.activate(candidate)
+    assert not any(c[0] in ("stop", "start") for c in engine.commands[before:])
+    assert app.current() == (PAIR, True)
+    assert "transition" in app.state

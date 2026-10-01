@@ -218,6 +218,9 @@ class Agent:
                     if healthy and current == job["previous"] and attempt.get("admitted")
                     else "failed"
                 )
+                self.channel.request(
+                    "POST", "inventory", {"application": app, "inventory": runtime.inventory()}
+                )
                 self.observe(job, status, current, str(exc))
                 continue
             current, healthy = runtime.current()
