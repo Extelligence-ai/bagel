@@ -61,6 +61,9 @@ class Channel:
                 job=deepcopy(self.job),
                 server_time=datetime.now(timezone.utc).isoformat(),
             )
+        if route == "inventory":
+            self.inventory = deepcopy(body)
+            return {"accepted": True}
         if body["status"] == self.fail_status:
             raise httpx.HTTPStatusError(
                 "lost response",
@@ -80,6 +83,14 @@ class Runtime:
         self.calls = []
         self.fail = False
         self.prepared_stopped = False
+
+    def inventory(self) -> dict:
+        return {
+            "protocol": 2,
+            "runtime": contract.RUNTIME,
+            "sources": {"sensors": ["temperature"]},
+            "current_digest": self.digest,
+        }
 
     def prepare(self, job: dict) -> Runtime:
         self.calls.append("prepare")
@@ -217,3 +228,140 @@ def test_gateway_denial_is_durable_across_restart(tmp_path: Path) -> None:
     restarted.restore()
     assert recovered.calls == []
     assert restarted.state["credential_denied"]
+
+
+def test_stop_admission_and_restart_never_resurrect_capture(tmp_path: Path) -> None:
+    channel, runtime = Channel(), Runtime()
+    agent = Agent(tmp_path, channel, runtime)
+    agent.tick()
+    channel.job.update(target_id="stop1", revision=2, operation="stop")
+    channel.fail_status, channel.code = "applying", 409
+    with pytest.raises(SupersededError):
+        agent.tick()
+    assert not runtime.prepared_stopped
+    channel.fail_status = None
+    agent.tick()
+    assert runtime.prepared_stopped
+    assert channel.reports[-1]["status"] == "stopped"
+    restarted = Runtime()
+    Agent(tmp_path, channel, restarted).restore()
+    assert restarted.calls == []
+
+
+def test_same_digest_new_revision_needs_admission(tmp_path: Path) -> None:
+    channel, runtime = Channel(), Runtime()
+    agent = Agent(tmp_path, channel, runtime)
+    agent.tick()
+    channel.job.update(target_id="new", revision=2)
+    channel.fail_status, channel.code = "applying", 409
+    with pytest.raises(SupersededError):
+        agent.tick()
+    assert agent.state["active"]["target_id"] == "target1"
+
+
+def test_inventory_contains_only_allowlisted_source_metadata(tmp_path: Path) -> None:
+    import json
+
+    from src.sink.publish.delivery.runtime import BagelRuntime
+
+    sources = tmp_path / "sources.json"
+    sources.write_text(
+        json.dumps(
+            {
+                "sources": {
+                    "sensors": {
+                        "sink": "mqtt",
+                        "host": "secret",
+                        "port": 1883,
+                        "topics": ["temperature"],
+                        "args": {"password": "secret"},
+                    },
+                    "unsupported": {"sink": "other"},
+                }
+            }
+        )
+    )
+    result = BagelRuntime(tmp_path, sources).inventory()
+    assert result == {
+        "protocol": 2,
+        "runtime": contract.RUNTIME,
+        "sources": {"sensors": ["temperature"]},
+        "current_digest": None,
+    }
+
+
+def test_control_channel_explicitly_advertises_stop_capable_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.sink.publish.delivery.main import Channel as HttpChannel
+
+    seen = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("X-Capture-Protocol"))
+        return httpx.Response(200, json={"job": None})
+
+    original = httpx.Client
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: original(transport=httpx.MockTransport(handle))
+    )
+    channel = HttpChannel("unused")
+    monkeypatch.setattr(channel, "config", lambda: ({}, "https://control", None))
+    channel.request("GET", "next")
+    assert seen == ["2"]
+
+
+@pytest.mark.parametrize("status", [403, 503])
+def test_inventory_outage_does_not_block_stop_but_denial_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    channel, runtime = Channel(), Runtime()
+    agent = Agent(tmp_path, channel, runtime)
+    agent.tick()
+    channel.job.update(target_id="stop", revision=2, operation="stop")
+    original = channel.request
+
+    def request(method: str, route: str, body: dict | None = None) -> dict:
+        if route == "inventory":
+            raise httpx.HTTPStatusError(
+                "inventory unavailable",
+                request=httpx.Request("POST", "https://control/inventory"),
+                response=httpx.Response(status),
+            )
+        return original(method, route, body)
+
+    monkeypatch.setattr(channel, "request", request)
+    if status == 403:
+        with pytest.raises(httpx.HTTPStatusError):
+            agent.tick()
+        assert not runtime.prepared_stopped
+    else:
+        agent.tick()
+        assert runtime.prepared_stopped
+        assert channel.reports[-1]["status"] == "stopped"
+
+
+def test_broken_source_config_reports_no_capabilities_without_blocking_stop(tmp_path: Path) -> None:
+    from src.sink.publish.delivery.runtime import BagelRuntime
+
+    sources = tmp_path / "sources.json"
+    sources.write_text("{invalid")
+    runtime = BagelRuntime(tmp_path, sources)
+    assert runtime.inventory()["sources"] == {}
+    sources.unlink()
+    assert runtime.inventory()["sources"] == {}
+
+
+def test_confirmed_stop_heartbeats_do_not_return_to_applying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    channel, runtime = Channel(), Runtime()
+    agent = Agent(tmp_path, channel, runtime)
+    agent.tick()
+    channel.job.update(target_id="stop", revision=2, operation="stop")
+    monkeypatch.setattr(runtime, "stop", lambda: setattr(runtime, "digest", None))
+    agent.tick()
+    count = len(channel.reports)
+    agent.tick()
+    Agent(tmp_path, channel, Runtime()).tick()
+    assert [r["status"] for r in channel.reports[count:]] == ["stopped", "stopped"]

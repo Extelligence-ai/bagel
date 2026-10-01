@@ -121,6 +121,28 @@ class BagelRuntime:
         """Return the latest execution evidence from the current worker."""
         return self.worker.last_execution if self.worker else {}
 
+    def inventory(self) -> dict:
+        """Report local capture capabilities without connection details or credentials."""
+        from src.sink.publish.delivery import contract
+
+        try:
+            config = json.loads(Path(self.sources).read_text())
+            sources = {
+                name: sorted(set(source.get("topics", [])))
+                for name, source in config.get("sources", {}).items()
+                if source.get("sink") in ("mqtt", "ros2.bridge")
+            }
+        except (OSError, ValueError, TypeError, AttributeError):
+            # An unreadable configuration permits no new capture, but must not
+            # prevent stopping the already running managed capture.
+            sources = {}
+        return {
+            "protocol": 2,
+            "runtime": contract.RUNTIME,
+            "sources": sources,
+            "current_digest": self.digest,
+        }
+
     def prepare(self, job: dict) -> Worker:
         """Build an isolated worker without activating subscriptions."""
         worker = Worker(job, self.root, self.sources)

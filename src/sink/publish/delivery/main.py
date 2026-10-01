@@ -88,7 +88,12 @@ class Channel:
         """Exchange one bounded control request using the current client certificate."""
         _, url, context = self.config()  # reload renewed certificates on each call
         with httpx.Client(verify=context, trust_env=False, timeout=10) as client:
-            response = client.request(method, url + "/v1/control/" + route, json=body)
+            response = client.request(
+                method,
+                url + "/v1/control/" + route,
+                json=body,
+                headers={"X-Capture-Protocol": "2"},
+            )
             response.raise_for_status()
             return response.json()
 
@@ -161,6 +166,7 @@ class Agent:
         job = self.state.get("active")
         if (
             job
+            and job.get("operation", "activate") == "activate"
             and not self.state.get("credential_denied")
             and self._matches(job)
             and contract.digest(contract.validate(job["spec"])) == job["digest"]
@@ -173,7 +179,18 @@ class Agent:
         self.state["credential_denied"] = True
         self.save()
 
-    def tick(self) -> None:  # noqa: C901, PLR0912, PLR0915 -- ordered journal/effect state machine
+    def report_inventory(self) -> None:
+        """Keep inventory outages from blocking stop commands or report retries."""
+        try:
+            self.channel.request("POST", "inventory", self.runtime.inventory())
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == HTTPStatus.FORBIDDEN:
+                raise
+            log.warning("Capture inventory refused: HTTP %s", exc.response.status_code)
+        except httpx.RequestError as exc:
+            log.warning("Capture inventory unavailable: %s", type(exc).__name__)
+
+    def tick(self) -> None:  # noqa: C901, PLR0911, PLR0912, PLR0915 -- ordered journal/effect state machine
         """Reconcile one authoritative desired revision before activation."""
         response = self.channel.request("GET", "next")
         ident, job = response["identity"], response["job"]
@@ -187,6 +204,7 @@ class Agent:
         self.state["installation_id"] = ident["installation_id"]
         self.state.pop("credential_denied", None)
         self.save()
+        self.report_inventory()
         if not job:
             self.flush()
             return
@@ -202,7 +220,8 @@ class Agent:
         self.flush()
         try:
             valid = (
-                job["runtime"] == contract.RUNTIME
+                job.get("operation", "activate") in ("activate", "stop")
+                and job["runtime"] == contract.RUNTIME
                 and contract.digest(contract.validate(job["spec"])) == job["digest"]
             )
         except ValueError:
@@ -210,7 +229,23 @@ class Agent:
         if not valid:
             self.observe(job, "rejected", "Unsupported runtime or artifact digest mismatch.")
             return
+        if job.get("operation") == "stop":
+            # Admission is acknowledged before effects. Persist the stopped
+            # desired state first so a crash cannot resurrect the old capture.
+            if (
+                self.state.get("active", {}).get("target_id") != job["target_id"]
+                or self.runtime.digest is not None
+            ):
+                self.observe(job, "applying")
+                self.state.update(active=job, desired=job, seen_revision=job["revision"])
+                self.state.pop("failed_target", None)
+                self.save()
+                self.runtime.stop()
+            self.observe(job, "stopped")
+            return
         if self.runtime.digest == job["digest"]:
+            if self.state.get("active", {}).get("target_id") != job["target_id"]:
+                self.observe(job, "applying")
             self.state.update(active=job, desired=job, seen_revision=job["revision"])
             self.save()
             self.observe(job, "active")
