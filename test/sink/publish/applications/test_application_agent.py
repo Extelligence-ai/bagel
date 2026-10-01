@@ -159,6 +159,9 @@ def test_restart_recovers_previous_pair_before_network_authorization(tmp_path: P
         {
             **channel.jobs[0],
             "target_id": "target2",
+            "status": "queued",
+            "admitted_at": None,
+            "sequence": 0,
             "desired": desired,
             "desired_digest": contract.digest(desired),
             "previous": previous,
