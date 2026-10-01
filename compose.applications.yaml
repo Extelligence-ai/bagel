@@ -1,0 +1,20 @@
+# Add this opt-in worker to an existing Bagel installation. Identity is shared;
+# telemetry and data processing do not receive Docker-engine access.
+services:
+  application-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.applications
+      args:
+        BAGEL_BASE: ${BAGEL_APPLICATION_BASE:?Set the supported Bagel base image}
+    restart: unless-stopped
+    environment:
+      FLEET_ENABLED: 'true'
+    volumes:
+      - ${BAGEL_IDENTITY_DIRECTORY:?Set existing enrolled identity directory}:/identity:ro
+      - ${BAGEL_APPLICATION_CONFIG:?Set local application configuration}:/config/applications.json:ro
+      - ${BAGEL_APPLICATION_READY_DIRECTORY:?Set local readiness directory}:/readiness:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - application-state:/state
+volumes:
+  application-state:

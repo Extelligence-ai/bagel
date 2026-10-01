@@ -1,0 +1,13 @@
+# Opt-in companion worker. Docker access is confined to this component.
+ARG BAGEL_BASE=bagel-browser-pairing:review
+FROM docker:27.5.1-cli AS docker_cli
+FROM ${BAGEL_BASE}
+USER root
+WORKDIR /home/ubuntu/runtime
+COPY --from=docker_cli /usr/local/bin/docker /usr/local/bin/docker
+COPY pyproject.toml uv.lock /tmp/application-dependencies/
+RUN cmp pyproject.toml /tmp/application-dependencies/pyproject.toml && \
+    cmp uv.lock /tmp/application-dependencies/uv.lock
+COPY src ./src
+COPY settings.py ./settings.py
+CMD ["/home/ubuntu/runtime/.venv/bin/python", "-m", "src.sink.publish.applications.main", "--identity", "/identity/identity.yaml", "--config", "/config/applications.json", "--state", "/state"]

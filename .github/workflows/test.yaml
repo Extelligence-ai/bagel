@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - "beta/**"
+      - "feat/fleet-pipeline-delivery"
     types:
       - opened
       - synchronize
@@ -142,6 +143,22 @@ jobs:
           uv run pytest -q -p no:cacheprovider \
             test/sink/publish/test_mqtt_integration.py \
             test/sink/publish/test_stream_e2e.py
+
+  application-installer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.0"
+      - run: uv sync --group fleet --group dev
+      - name: Start disposable artifact registry
+        run: docker run -d --name application-registry -p 127.0.0.1:5017:5000 registry:2
+      - name: Verify real software and model activation and recovery
+        env:
+          BAGEL_TEST_REGISTRY: localhost:5017
+        run: uv run pytest test/sink/publish/applications/test_docker_integration.py -q
 
   coverage-gate:
     needs: [docker, host-tests]
