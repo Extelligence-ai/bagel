@@ -116,6 +116,7 @@ class DockerRuntime:
         inspected = self.inspect(active["container"])
         if (
             not inspected
+            or not inspected["State"]["Running"]
             or inspected["Config"]["Labels"].get("bagel.release") != contract.digest(active["pair"])
             or inspected["Config"]["Image"] != active["pair"]["software"]["image"]
         ):
@@ -296,7 +297,7 @@ class DockerRuntime:
                 ]
             args += [prepared["pair"]["software"]["image"]]
             self.run(args)
-            if displaced:
+            if displaced and self.inspect(displaced["container"]):
                 self.run(["stop", "--time", "20", displaced["container"]])
             self.run(["start", prepared["container"]])
             self.wait_healthy(prepared["container"])

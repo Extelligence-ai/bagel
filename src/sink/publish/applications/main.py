@@ -66,6 +66,8 @@ class Agent:
         self, job: dict, status: str, current: dict | None, detail: str = "", health: str = ""
     ) -> None:
         """Persist and submit a sequenced runtime observation."""
+        if status == "rolled_back" and not health:
+            health = "Previous container HEALTHCHECK passed."
         attempt = self.state["attempts"].setdefault(job["target_id"], {"sequence": job["sequence"]})
         attempt["sequence"] = max(attempt["sequence"], job["sequence"]) + 1
         attempt["pending"] = {
@@ -90,6 +92,8 @@ class Agent:
                 attempt.pop("pending", None)
                 self.save()
             raise
+        if attempt["pending"]["status"] == "applying":
+            attempt["admitted"] = True
         attempt.pop("pending", None)
         self.save()
 
@@ -129,7 +133,27 @@ class Agent:
             )
             self.flush(attempt)
             current, healthy = runtime.current()
+            if job.get("admitted_at") and not attempt.get("admitted"):
+                # The server admitted this target but its local admission journal
+                # is absent. Observe/recover it; never start a second activation.
+                attempt.update(admitted=True, started=True)
+                self.save()
+            if job["status"] in ("failed", "rejected", "rolled_back"):
+                self.observe(
+                    job,
+                    "failed"
+                    if job["status"] == "rolled_back"
+                    and (not healthy or current != job["previous"])
+                    else job["status"],
+                    current,
+                    "Attempt finished unsuccessfully; start a new rollout to retry.",
+                )
+                continue
             if current == job["desired"]:
+                if not job.get("admitted_at") and not attempt.get("admitted"):
+                    # An already-running identical pair is a no-op, but still
+                    # needs current server admission before satisfying a pilot.
+                    self.observe(job, "applying", current)
                 self.observe(
                     job,
                     "healthy" if healthy else "active",
@@ -140,7 +164,11 @@ class Agent:
             if attempt.get("started"):
                 # A previous tick may have died inside activation. Runtime recovery
                 # ran before inventory; never blindly reapply an interrupted job.
-                status = "rolled_back" if healthy and current == job["previous"] else "failed"
+                status = (
+                    "rolled_back"
+                    if healthy and current == job["previous"] and attempt.get("admitted")
+                    else "failed"
+                )
                 self.observe(
                     job,
                     status,
@@ -165,7 +193,8 @@ class Agent:
                     or runtime.platform not in job["spec"]["platforms"]
                 ):
                     raise ValueError("Runtime or platform is incompatible.")
-                self.observe(job, "verifying", current)
+                if not attempt.get("admitted"):
+                    self.observe(job, "verifying", current)
                 prepared = runtime.prepare(job["desired"], job["target_id"])
                 # Recheck current state and server authorization after downloads,
                 # immediately before any application stop/start effects.
@@ -182,7 +211,11 @@ class Agent:
                 attempt["started"] = True
                 self.save()
                 current, healthy = runtime.current()
-                status = "rolled_back" if healthy and current == job["previous"] else "failed"
+                status = (
+                    "rolled_back"
+                    if healthy and current == job["previous"] and attempt.get("admitted")
+                    else "failed"
+                )
                 self.observe(job, status, current, str(exc))
                 continue
             current, healthy = runtime.current()

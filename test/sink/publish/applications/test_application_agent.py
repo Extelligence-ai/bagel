@@ -21,6 +21,7 @@ class Channel:
         self.deny = False
         self.reject_apply = False
         self.lose_report = False
+        self.lose_status = None
         self.time = datetime.now(timezone.utc)
 
     def current_identity(self) -> tuple[str, str]:
@@ -43,6 +44,14 @@ class Channel:
             self.inventory = body["inventory"]
         if route == "report":
             self.reports.append(deepcopy(body))
+            for job in self.jobs:
+                if job["target_id"] == body["target_id"]:
+                    job.update(status=body["status"], sequence=body["sequence"])
+                    if body["status"] == "applying":
+                        job["admitted_at"] = self.time.isoformat()
+            if body["status"] == self.lose_status:
+                self.lose_status = None
+                raise httpx.ConnectError("lost admission acknowledgment")
             if self.lose_report:
                 self.lose_report = False
                 raise httpx.ConnectError("lost response")
@@ -70,6 +79,7 @@ def provision(tmp_path: Path) -> tuple[Agent, Channel, Engine]:
     channel.jobs = [
         {
             "target_id": "target1",
+            "status": "queued",
             "sequence": 0,
             "application": "inspection",
             "desired": PAIR,
@@ -166,3 +176,54 @@ def test_restart_recovers_previous_pair_before_network_authorization(tmp_path: P
     with pytest.raises(httpx.HTTPStatusError):
         restarted.tick()
     assert sum(c["State"]["Running"] for c in engine.containers.values()) == 1
+
+
+def test_lost_admission_ack_retries_without_restarting_staging(tmp_path: Path) -> None:
+    agent, channel, engine = provision(tmp_path)
+    channel.lose_status = "applying"
+    with pytest.raises(httpx.ConnectError):
+        agent.tick()
+    assert not any(c[0] == "create" for c in engine.commands)
+    agent.tick()
+    assert [r["status"] for r in channel.reports].count("verifying") == 1
+    assert channel.reports[-1]["status"] == "healthy"
+    assert len([c for c in engine.commands if c[0] == "create"]) == 1
+
+
+def test_identical_running_release_still_requires_admission_without_restart(tmp_path: Path) -> None:
+    agent, channel, engine = provision(tmp_path)
+    agent.tick()
+    channel.jobs = [
+        {
+            **channel.jobs[0],
+            "target_id": "no-op",
+            "status": "queued",
+            "admitted_at": None,
+            "sequence": 0,
+            "previous": PAIR,
+            "expected_inventory": contract.digest(agent.runtimes["inspection"].inventory()),
+        }
+    ]
+    before = len(engine.commands)
+    agent.tick()
+    assert [r["status"] for r in channel.reports[-2:]] == ["applying", "healthy"]
+    assert not any(c[0] in ("create", "start", "stop") for c in engine.commands[before:])
+
+
+def test_missing_local_admission_journal_never_reapplies_server_admitted_target(
+    tmp_path: Path,
+) -> None:
+    agent, channel, engine = provision(tmp_path)
+    channel.jobs[0].update(status="applying", admitted_at=channel.time.isoformat())
+    agent.tick()
+    assert channel.reports[-1]["status"] == "failed"
+    assert not any(c[0] == "create" for c in engine.commands)
+
+
+def test_stopped_container_is_a_failed_attempt_not_active(tmp_path: Path) -> None:
+    agent, channel, engine = provision(tmp_path)
+    agent.tick()
+    engine.run(["stop", agent.runtimes["inspection"].state["active"]["container"]])
+    agent.tick()
+    assert channel.reports[-1]["status"] == "failed"
+    assert channel.inventory["current"] is None

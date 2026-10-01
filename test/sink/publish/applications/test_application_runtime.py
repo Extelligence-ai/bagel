@@ -215,3 +215,20 @@ def test_daemon_failure_retains_first_install_recovery_journal(tmp_path: Path) -
     app.recover()
     assert app.current() == (None, False)
     assert candidate["container"] not in engine.containers
+
+
+def test_stopped_application_is_not_reported_as_running(tmp_path: Path) -> None:
+    engine = Engine()
+    app = runtime(tmp_path, engine)
+    app.activate(app.prepare(PAIR, "first"))
+    engine.run(["stop", app.state["active"]["container"]])
+    assert app.current() == (None, False)
+
+
+def test_explicit_rollback_restores_a_missing_container(tmp_path: Path) -> None:
+    engine = Engine()
+    app = runtime(tmp_path, engine)
+    app.activate(app.prepare(PAIR, "first"))
+    engine.containers.pop(app.state["active"]["container"])
+    app.activate(app.prepare(PAIR, "restore"), recovery=True)
+    assert app.current() == (PAIR, True)
