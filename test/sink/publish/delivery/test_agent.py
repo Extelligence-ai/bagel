@@ -288,3 +288,22 @@ def test_inventory_contains_only_allowlisted_source_metadata(tmp_path: Path) -> 
         "sources": {"sensors": ["temperature"]},
         "current_digest": None,
     }
+
+
+def test_control_channel_explicitly_advertises_stop_capable_protocol(monkeypatch) -> None:
+    from src.sink.publish.delivery.main import Channel as HttpChannel
+
+    seen = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("X-Capture-Protocol"))
+        return httpx.Response(200, json={"job": None})
+
+    original = httpx.Client
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: original(transport=httpx.MockTransport(handle))
+    )
+    channel = HttpChannel("unused")
+    monkeypatch.setattr(channel, "config", lambda: ({}, "https://control", None))
+    channel.request("GET", "next")
+    assert seen == ["2"]

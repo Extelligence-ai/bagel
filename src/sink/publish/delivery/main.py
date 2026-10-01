@@ -88,7 +88,12 @@ class Channel:
         """Exchange one bounded control request using the current client certificate."""
         _, url, context = self.config()  # reload renewed certificates on each call
         with httpx.Client(verify=context, trust_env=False, timeout=10) as client:
-            response = client.request(method, url + "/v1/control/" + route, json=body)
+            response = client.request(
+                method,
+                url + "/v1/control/" + route,
+                json=body,
+                headers={"X-Capture-Protocol": "2"},
+            )
             response.raise_for_status()
             return response.json()
 
