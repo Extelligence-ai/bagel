@@ -125,12 +125,17 @@ class BagelRuntime:
         """Report local capture capabilities without connection details or credentials."""
         from src.sink.publish.delivery import contract
 
-        config = json.loads(Path(self.sources).read_text())
-        sources = {
-            name: sorted(set(source.get("topics", [])))
-            for name, source in config.get("sources", {}).items()
-            if source.get("sink") in ("mqtt", "ros2.bridge")
-        }
+        try:
+            config = json.loads(Path(self.sources).read_text())
+            sources = {
+                name: sorted(set(source.get("topics", [])))
+                for name, source in config.get("sources", {}).items()
+                if source.get("sink") in ("mqtt", "ros2.bridge")
+            }
+        except (OSError, ValueError, TypeError, AttributeError):
+            # An unreadable configuration permits no new capture, but must not
+            # prevent stopping the already running managed capture.
+            sources = {}
         return {
             "protocol": 2,
             "runtime": contract.RUNTIME,

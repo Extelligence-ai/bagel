@@ -179,6 +179,17 @@ class Agent:
         self.state["credential_denied"] = True
         self.save()
 
+    def report_inventory(self) -> None:
+        """Keep inventory outages from blocking stop commands or report retries."""
+        try:
+            self.channel.request("POST", "inventory", self.runtime.inventory())
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == HTTPStatus.FORBIDDEN:
+                raise
+            log.warning("Capture inventory refused: HTTP %s", exc.response.status_code)
+        except httpx.RequestError as exc:
+            log.warning("Capture inventory unavailable: %s", type(exc).__name__)
+
     def tick(self) -> None:  # noqa: C901, PLR0911, PLR0912, PLR0915 -- ordered journal/effect state machine
         """Reconcile one authoritative desired revision before activation."""
         response = self.channel.request("GET", "next")
@@ -193,7 +204,7 @@ class Agent:
         self.state["installation_id"] = ident["installation_id"]
         self.state.pop("credential_denied", None)
         self.save()
-        self.channel.request("POST", "inventory", self.runtime.inventory())
+        self.report_inventory()
         if not job:
             self.flush()
             return

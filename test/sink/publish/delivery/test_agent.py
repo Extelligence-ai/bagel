@@ -309,3 +309,44 @@ def test_control_channel_explicitly_advertises_stop_capable_protocol(
     monkeypatch.setattr(channel, "config", lambda: ({}, "https://control", None))
     channel.request("GET", "next")
     assert seen == ["2"]
+
+
+@pytest.mark.parametrize("status", [403, 503])
+def test_inventory_outage_does_not_block_stop_but_denial_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    channel, runtime = Channel(), Runtime()
+    agent = Agent(tmp_path, channel, runtime)
+    agent.tick()
+    channel.job.update(target_id="stop", revision=2, operation="stop")
+    original = channel.request
+
+    def request(method: str, route: str, body: dict | None = None) -> dict:
+        if route == "inventory":
+            raise httpx.HTTPStatusError(
+                "inventory unavailable",
+                request=httpx.Request("POST", "https://control/inventory"),
+                response=httpx.Response(status),
+            )
+        return original(method, route, body)
+
+    monkeypatch.setattr(channel, "request", request)
+    if status == 403:
+        with pytest.raises(httpx.HTTPStatusError):
+            agent.tick()
+        assert not runtime.prepared_stopped
+    else:
+        agent.tick()
+        assert runtime.prepared_stopped
+        assert channel.reports[-1]["status"] == "stopped"
+
+
+def test_broken_source_config_reports_no_capabilities_without_blocking_stop(tmp_path: Path) -> None:
+    from src.sink.publish.delivery.runtime import BagelRuntime
+
+    sources = tmp_path / "sources.json"
+    sources.write_text("{invalid")
+    runtime = BagelRuntime(tmp_path, sources)
+    assert runtime.inventory()["sources"] == {}
+    sources.unlink()
+    assert runtime.inventory()["sources"] == {}
