@@ -20,7 +20,7 @@ class Engine:
         self.unhealthy = False
         self.interrupt = False
 
-    def run(self, args: list[str], timeout: int = 300) -> bytes:  # noqa: C901 -- fake Docker command dispatcher
+    def run(self, args: list[str], timeout: int = 300) -> bytes:  # noqa: C901, PLR0911 -- fake Docker command dispatcher
         import json
 
         self.commands.append(args)
@@ -32,6 +32,8 @@ class Engine:
             return json.dumps(
                 [{"RepoDigests": [args[2]], "Config": {"Healthcheck": {"Test": ["CMD", "true"]}}}]
             ).encode()
+        if args[:2] == ["container", "ls"]:
+            return "\n".join(self.containers).encode()
         if args[:2] == ["container", "inspect"]:
             if args[2] not in self.containers:
                 raise RuntimeError("missing container")
@@ -167,3 +169,49 @@ def test_model_only_preserves_software_and_bundled_rejects_model_update() -> Non
     resolved = contract.resolve(spec, {**inv, "current": old})
     assert resolved["software"] == old["software"]
     assert resolved["model"]["version"] == "2"
+
+
+@pytest.mark.parametrize("previous", [False, True])
+def test_recovery_waits_for_readiness_before_any_container_changes(
+    tmp_path: Path, previous: bool
+) -> None:
+    engine = Engine()
+    app = runtime(tmp_path, engine)
+    if previous:
+        app.activate(app.prepare(PAIR, "first"))
+    candidate = app.prepare(PAIR, "candidate")
+    engine.interrupt = True
+    with pytest.raises(KeyboardInterrupt):
+        app.activate(candidate)
+    (tmp_path / "ready").write_text("busy")
+    before = len(engine.commands)
+    with pytest.raises(ValueError, match="readiness"):
+        app.recover()
+    assert len(engine.commands) == before
+    assert "transition" in app.state
+    assert engine.containers[candidate["container"]]["State"]["Running"]
+    (tmp_path / "ready").write_text("ready")
+    app.recover()
+    assert app.current() == ((PAIR, True) if previous else (None, False))
+
+
+def test_daemon_failure_retains_first_install_recovery_journal(tmp_path: Path) -> None:
+    engine = Engine()
+    app = runtime(tmp_path, engine)
+    engine.interrupt = True
+    candidate = app.prepare(PAIR, "candidate")
+    with pytest.raises(KeyboardInterrupt):
+        app.activate(candidate)
+
+    def unavailable(args: list[str], timeout: int = 300) -> bytes:
+        raise RuntimeError("Docker daemon unavailable")
+
+    app.run = unavailable
+    with pytest.raises(RuntimeError, match="unavailable"):
+        app.recover()
+    assert "transition" in app.state
+    assert engine.containers[candidate["container"]]["State"]["Running"]
+    app.run = engine.run
+    app.recover()
+    assert app.current() == (None, False)
+    assert candidate["container"] not in engine.containers

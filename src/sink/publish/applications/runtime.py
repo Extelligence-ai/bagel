@@ -94,10 +94,14 @@ class DockerRuntime:
 
     def inspect(self, name: str) -> dict | None:
         """Inspect a managed container without changing it."""
-        try:
-            return json.loads(self.run(["container", "inspect", name]))[0]
-        except RuntimeError:
+        names = (
+            self.run(["container", "ls", "--all", "--format", "{{.Names}}"]).decode().splitlines()
+        )
+        if name not in names:
             return None
+        # Only a successful daemon listing can establish absence. A timeout or
+        # inspection failure must retain the journal for the next recovery.
+        return json.loads(self.run(["container", "inspect", name]))[0]
 
     def ready(self) -> bool:
         """Read the operator-owned activation readiness signal."""
@@ -309,6 +313,8 @@ class DockerRuntime:
         transition = self.state.get("transition")
         if not transition:
             return
+        if not self.ready():
+            raise ValueError("Recovery is waiting for local readiness.")
         new = transition["next"]["container"]
         if self.inspect(new):
             self.run(["stop", "--time", "20", new])
@@ -317,8 +323,6 @@ class DockerRuntime:
         if previous:
             # Recovery can finish while offline, under the same local readiness
             # policy. Keep the journal if readiness is unavailable and retry.
-            if not self.ready():
-                raise ValueError("Recovery is waiting for local readiness.")
             self.run(["start", previous["container"]])
             self.wait_healthy(previous["container"])
         recovered = {**self.state, "active": previous, "recovered": True}

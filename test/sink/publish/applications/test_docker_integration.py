@@ -25,7 +25,8 @@ def build(root: Path, tag: str, dockerfile: str, model: bytes) -> str:
     (root / "model.bin").write_bytes(model)
     DockerRuntime._run(["build", "-t", tag, str(root)])
     DockerRuntime._run(["push", tag])
-    return json.loads(DockerRuntime._run(["image", "inspect", tag]))[0]["RepoDigests"][0]
+    refs = json.loads(DockerRuntime._run(["image", "inspect", tag]))[0]["RepoDigests"]
+    return next(ref for ref in refs if ref.startswith(tag.rsplit(":", 1)[0] + "@"))
 
 
 def test_real_images_model_mount_health_rollback_and_offline_recovery(tmp_path: Path) -> None:  # noqa: PLR0915 -- one ordered acceptance scenario
