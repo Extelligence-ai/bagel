@@ -230,3 +230,32 @@ def test_stopped_container_is_a_failed_attempt_not_active(tmp_path: Path) -> Non
     agent.tick()
     assert channel.reports[-1]["status"] == "failed"
     assert channel.inventory["current"] is None
+
+
+def test_explicit_recovery_replaces_an_unhealthy_matching_pair_once(tmp_path: Path) -> None:
+    agent, channel, engine = provision(tmp_path)
+    agent.tick()
+    runtime = agent.runtimes["inspection"]
+    engine.containers[runtime.state["active"]["container"]]["State"]["Health"]["Status"] = (
+        "unhealthy"
+    )
+    channel.jobs = [
+        {
+            **channel.jobs[0],
+            "target_id": "restore",
+            "rollback_of": "original",
+            "status": "queued",
+            "sequence": 0,
+            "admitted_at": None,
+            "expected_inventory": contract.digest(runtime.inventory()),
+        }
+    ]
+    agent.tick()
+    assert channel.reports[-1]["status"] == "healthy"
+    assert len([c for c in engine.commands if c[0] == "create"]) == 2
+    engine.containers[runtime.state["active"]["container"]]["State"]["Health"]["Status"] = (
+        "unhealthy"
+    )
+    agent.tick()
+    assert channel.reports[-1]["status"] == "active"
+    assert len([c for c in engine.commands if c[0] == "create"]) == 2

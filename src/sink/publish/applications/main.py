@@ -149,7 +149,9 @@ class Agent:
                     "Attempt finished unsuccessfully; start a new rollout to retry.",
                 )
                 continue
-            if current == job["desired"]:
+            if current == job["desired"] and (
+                healthy or not job.get("rollback_of") or attempt.get("started")
+            ):
                 if not job.get("admitted_at") and not attempt.get("admitted"):
                     # An already-running identical pair is a no-op, but still
                     # needs current server admission before satisfying a pilot.
