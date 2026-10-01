@@ -232,11 +232,15 @@ class Agent:
         if job.get("operation") == "stop":
             # Admission is acknowledged before effects. Persist the stopped
             # desired state first so a crash cannot resurrect the old capture.
-            self.observe(job, "applying")
-            self.state.update(active=job, desired=job, seen_revision=job["revision"])
-            self.state.pop("failed_target", None)
-            self.save()
-            self.runtime.stop()
+            if (
+                self.state.get("active", {}).get("target_id") != job["target_id"]
+                or self.runtime.digest is not None
+            ):
+                self.observe(job, "applying")
+                self.state.update(active=job, desired=job, seen_revision=job["revision"])
+                self.state.pop("failed_target", None)
+                self.save()
+                self.runtime.stop()
             self.observe(job, "stopped")
             return
         if self.runtime.digest == job["digest"]:

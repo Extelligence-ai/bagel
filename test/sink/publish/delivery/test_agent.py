@@ -350,3 +350,18 @@ def test_broken_source_config_reports_no_capabilities_without_blocking_stop(tmp_
     assert runtime.inventory()["sources"] == {}
     sources.unlink()
     assert runtime.inventory()["sources"] == {}
+
+
+def test_confirmed_stop_heartbeats_do_not_return_to_applying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    channel, runtime = Channel(), Runtime()
+    agent = Agent(tmp_path, channel, runtime)
+    agent.tick()
+    channel.job.update(target_id="stop", revision=2, operation="stop")
+    monkeypatch.setattr(runtime, "stop", lambda: setattr(runtime, "digest", None))
+    agent.tick()
+    count = len(channel.reports)
+    agent.tick()
+    Agent(tmp_path, channel, Runtime()).tick()
+    assert [r["status"] for r in channel.reports[count:]] == ["stopped", "stopped"]
