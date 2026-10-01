@@ -79,6 +79,9 @@ local inventory/readiness and server authorization after downloading. A durable
 journal precedes stop/start effects. The candidate must pass HEALTHCHECK before
 it is committed; otherwise the previous healthy container is restored.
 Recovery on worker restart occurs before cloud contact and can finish offline.
+When replacing an unhealthy application, there is no healthy fallback; failed
+recovery stops the displaced process before reporting that no application is
+running, so a later install cannot create a duplicate controller.
 An interrupted first install has no previous version and is reported as failed.
 Failed/interrupted attempts require a new rollout to retry. Cancellation can
 stop pending admission but cannot retract an activation already admitted.

@@ -232,3 +232,32 @@ def test_explicit_rollback_restores_a_missing_container(tmp_path: Path) -> None:
     engine.containers.pop(app.state["active"]["container"])
     app.activate(app.prepare(PAIR, "restore"), recovery=True)
     assert app.current() == (PAIR, True)
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_failed_unhealthy_recovery_cannot_orphan_the_displaced_process(
+    tmp_path: Path, crash: bool
+) -> None:
+    engine = Engine()
+    app = runtime(tmp_path, engine)
+    app.activate(app.prepare(PAIR, "first"))
+    original = app.state["active"]["container"]
+    engine.containers[original]["State"]["Health"]["Status"] = "unhealthy"
+    candidate = app.prepare(PAIR, "recover")
+
+    def interrupted(args: list[str], timeout: int = 300) -> bytes:
+        if args[0] == "create":
+            if crash:
+                engine.run(args, timeout)
+                raise KeyboardInterrupt("crash before stopping displaced process")
+            raise RuntimeError("candidate creation failed")
+        return engine.run(args, timeout)
+
+    app.run = interrupted
+    with pytest.raises((RuntimeError, KeyboardInterrupt)):
+        app.activate(candidate, recovery=True)
+    recovered = runtime(tmp_path, engine)
+    assert recovered.current() == (None, False)
+    assert not any(c["State"]["Running"] for c in engine.containers.values())
+    recovered.activate(recovered.prepare(PAIR, "fresh-install"))
+    assert sum(c["State"]["Running"] for c in engine.containers.values()) == 1

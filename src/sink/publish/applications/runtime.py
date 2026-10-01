@@ -261,7 +261,7 @@ class DockerRuntime:
             if not recovery:
                 raise ValueError("Current application is unhealthy; reconcile it before an update.")
             previous = None
-        self.state["transition"] = {"previous": previous, "next": prepared}
+        self.state["transition"] = {"previous": previous, "displaced": displaced, "next": prepared}
         self.save()  # Durable intent precedes stopping or creating containers.
         try:
             if self.inspect(prepared["container"]):
@@ -321,6 +321,12 @@ class DockerRuntime:
             self.run(["stop", "--time", "20", new])
             self.run(["rm", new])
         previous = transition["previous"]
+        displaced = transition.get("displaced", self.state.get("active"))
+        if not previous and displaced and self.inspect(displaced["container"]):
+            # An unhealthy container is not a working rollback destination, but
+            # it is still an owned process. Reconcile it before clearing intent,
+            # including a crash before activation reached the original stop.
+            self.run(["stop", "--time", "20", displaced["container"]])
         if previous:
             # Recovery can finish while offline, under the same local readiness
             # policy. Keep the journal if readiness is unavailable and retry.
