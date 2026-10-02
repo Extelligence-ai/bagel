@@ -179,3 +179,30 @@ def test_disabled_fleet_cannot_send_upload_proofs(
     monkeypatch.setattr(settings, "FLEET_ENABLED", False)
     with pytest.raises(FleetDisabledError):
         uploads.UploadClient(tmp_path).request("presigned", {})
+
+
+def test_signed_storage_url_is_redacted_from_real_httpx_request_logs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    path = tmp_path / "clip.mcap"
+    path.write_bytes(b"clip")
+    client = uploads.UploadClient(tmp_path)
+    grant = {
+        "upload_id": "receipt",
+        "confirmed": False,
+        "url": "https://storage/file?X-Amz-Credential=private-id&X-Amz-Signature=private-signature",
+        "headers": {},
+    }
+    monkeypatch.setattr(client, "request", lambda *args: grant)
+    original = httpx.Client
+    transport = httpx.MockTransport(lambda request: httpx.Response(200))
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: original(transport=transport, **kwargs))
+    with caplog.at_level(logging.INFO, logger="httpx"):
+        client.upload(path, {"size_bytes": 4})
+    assert "HTTP Request: PUT https://storage/file?redacted" in caplog.text
+    assert "private-id" not in caplog.text
+    assert "private-signature" not in caplog.text
