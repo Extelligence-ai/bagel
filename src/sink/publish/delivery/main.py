@@ -9,6 +9,7 @@ import logging
 import os
 import signal
 import ssl
+import threading
 import time
 from datetime import datetime
 from http import HTTPStatus
@@ -308,7 +309,7 @@ class Agent:
             raise
 
 
-def main() -> None:  # noqa: C901 -- bounded process lifecycle and recovery
+def main() -> None:  # noqa: C901, PLR0915 -- bounded process lifecycle and recovery
     """Run the opt-in fleet capture process."""
     parser = argparse.ArgumentParser(
         description="Deliver approved fleet captures to a local Bagel runtime."
@@ -330,6 +331,21 @@ def main() -> None:  # noqa: C901 -- bounded process lifecycle and recovery
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runtime = BagelRuntime(root / "releases", Path(args.sources).resolve())
     agent = Agent(root, Channel(args.identity, args.control_url), runtime)
+    # Transfers run independently so a slow network never delays stop/revoke
+    # reconciliation. Receipts belong to the supervisor, not a capture worker.
+    from src.sink.publish.uploads import flush_pending
+
+    upload_stop = threading.Event()
+
+    def upload_loop() -> None:
+        while not upload_stop.is_set():
+            try:
+                flush_pending(root / "releases", Path(args.identity).parent)
+            except Exception as exc:
+                log.warning("Fleet upload retry unavailable: %s", type(exc).__name__)
+            upload_stop.wait(30)
+
+    threading.Thread(target=upload_loop, daemon=True).start()
     stopping = False
 
     def stop(*_: object) -> None:
@@ -364,6 +380,7 @@ def main() -> None:  # noqa: C901 -- bounded process lifecycle and recovery
                     break
                 time.sleep(0.2)
     finally:
+        upload_stop.set()
         runtime.stop()
         lock.close()
 
