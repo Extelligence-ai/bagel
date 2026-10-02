@@ -26,17 +26,33 @@ def canonical(value: object) -> str:
 class UploadClient:
     """Sign narrowly scoped requests with the existing enrolled device key."""
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path, owner: dict | None = None) -> None:
         """Use the current identity pointers, including renewed certificates."""
         self.directory = Path(directory)
+        self.owner = owner
 
     def request(self, operation: str, payload: dict) -> dict:
         """Authorize or confirm one immutable file through the enrollment origin."""
         import httpx
+        from cryptography import x509
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
 
+        from src.sink.publish import require_fleet
+
+        require_fleet()
         identity = load_identity(self.directory)
+        expected = self.owner or {"tenant_id": identity.tenant, "robot_id": identity.robot_id}
+        certificate = identity.cert_path.read_text()
+        cert = x509.load_pem_x509_certificate(certificate.encode())
+        cn = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+        if cn != expected["tenant_id"] + "/" + expected["robot_id"]:
+            raise ValueError("Upload belongs to another enrollment; retained locally.")
+        # Check the actual certificate bytes used below, not just identity.yaml:
+        # re-pairing can replace both files between reads. Renewal of the same
+        # owner is allowed; a different owner never receives an old capture.
+        self.owner = expected
         url = urlsplit(identity.enroll_url)
         if url.scheme != "https" or not url.hostname or url.username or url.password:
             raise ValueError("Fleet uploads require a verified HTTPS enrollment origin.")
@@ -49,7 +65,7 @@ class UploadClient:
         ).encode()
         key = serialization.load_pem_private_key(identity.key_path.read_bytes(), password=None)
         body = {
-            "certificate": identity.cert_path.read_text(),
+            "certificate": certificate,
             "timestamp": timestamp,
             "payload": payload,
             "signature": base64.b64encode(key.sign(message, ec.ECDSA(hashes.SHA256()))).decode(),
@@ -120,7 +136,6 @@ def enqueue(root: Path, path: Path, provenance: dict, owner: dict) -> None:
 def flush_pending(root: Path, directory: Path, limit: int = 8) -> None:
     """Retry durable capture receipts across worker stops and agent restarts."""
     identity = load_identity(directory)
-    client = UploadClient(directory)
     for receipt in sorted(root.glob("*/uploads/*.json"), key=lambda p: p.stat().st_mtime)[:limit]:
         try:
             record = json.loads(receipt.read_text())
@@ -130,7 +145,7 @@ def flush_pending(root: Path, directory: Path, limit: int = 8) -> None:
             path = (release / record["path"]).resolve()
             if not path.is_relative_to(release):
                 raise ValueError("Upload artifact escaped its managed release.")
-            client.upload(path, record["manifest"])
+            UploadClient(directory, record["owner"]).upload(path, record["manifest"])
             # Retain the receipt for local audit, but never resend confirmed work.
             receipt.rename(receipt.with_suffix(".confirmed"))
         except Exception as exc:

@@ -98,3 +98,84 @@ def test_manifest_changes_with_content_and_retains_exact_provenance(tmp_path: Pa
     second = uploads.manifest_for(path, path.name, provenance)
     assert first["sha256"] != second["sha256"]
     assert all(second[k] == v for k, v in provenance.items())
+
+
+def test_certificate_owner_is_checked_again_on_every_signed_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    import src.sink.publish
+
+    monkeypatch.setattr(src.sink.publish, "require_fleet", lambda: None)
+    key = ec.generate_private_key(ec.SECP256R1())
+    key_path = tmp_path / "robot.key"
+    cert_path = tmp_path / "robot.crt"
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    identity = SimpleNamespace(
+        tenant="org",
+        robot_id="robot",
+        enroll_url="https://fleet.example/enroll",
+        cert_path=cert_path,
+        key_path=key_path,
+    )
+    monkeypatch.setattr(uploads, "load_identity", lambda _: identity)
+    post = Mock(return_value=httpx.Response(200, json={"upload_id": "one"}))
+    monkeypatch.setattr(httpx.Client, "post", post)
+    client = uploads.UploadClient(tmp_path, {"tenant_id": "org", "robot_id": "robot"})
+    for cn in ("org/robot", "other-org/other-robot"):
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.now(timezone.utc))
+            .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+            .sign(key, hashes.SHA256())
+        )
+        cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        if cn == "org/robot":
+            client.request("presigned", {"filename": "clip.mcap"})
+            envelope = post.call_args.kwargs["json"]
+            import base64
+
+            message = (
+                "fleet-upload-v1\nPOST\n/fleet/uploads/presigned\n"
+                + str(envelope["timestamp"])
+                + "\n"
+                + uploads.canonical(envelope["payload"])
+            ).encode()
+            cert.public_key().verify(
+                base64.b64decode(envelope["signature"]), message, ec.ECDSA(hashes.SHA256())
+            )
+        else:
+            # Even if identity.yaml is stale, use the same certificate snapshot
+            # for ownership validation and the outgoing signed request.
+            with pytest.raises(ValueError, match="another enrollment"):
+                client.request("presigned", {"filename": "clip.mcap"})
+    assert post.call_count == 1
+
+
+def test_disabled_fleet_cannot_send_upload_proofs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from settings import settings
+    from src.sink.publish import FleetDisabledError
+
+    monkeypatch.setattr(settings, "FLEET_ENABLED", False)
+    with pytest.raises(FleetDisabledError):
+        uploads.UploadClient(tmp_path).request("presigned", {})

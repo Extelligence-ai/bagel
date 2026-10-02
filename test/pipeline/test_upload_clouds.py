@@ -141,5 +141,6 @@ def test_registry_discovers_all_upload_tasks() -> None:
         "src.pipeline.tasks.upload.s3",
         "src.pipeline.tasks.upload.gcs",
         "src.pipeline.tasks.upload.azure",
+        "src.pipeline.tasks.upload.fleet",
     }
     assert all(entry["kind"] == "task" for entry in modules.values())
