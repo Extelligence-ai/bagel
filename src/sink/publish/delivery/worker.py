@@ -83,6 +83,24 @@ def main() -> None:  # noqa: C901, PLR0915 -- one worker preparation/activation 
                         raise RuntimeError("Local capture storage quota reached.")
                     original(asof)
                     artifacts = []
+                    event_id = uuid.uuid4().hex
+                    from src.sink.publish.provenance import build_provenance
+                    from src.sink.publish.uploads import enqueue
+
+                    provenance = {
+                        "run_id": job["target_id"],
+                        "origin": source.get("origin", "real"),
+                        "pipeline_id": spec["name"],
+                        "pipeline_revision": job["digest"],
+                        "bagel_event_id": event_id,
+                        "t_start": max(0, asof - spec["lookback_seconds"]),
+                        "t_end": asof,
+                        "trigger": spec["trigger"],
+                        "trigger_t": asof,
+                        "lookback_s": spec["lookback_seconds"],
+                        "lookahead_s": 0,
+                        **(build_provenance() or {}),
+                    }
                     for produced in pipeline._produced[before:]:
                         path = Path(produced).resolve()
                         if not path.is_relative_to(directory):
@@ -92,6 +110,15 @@ def main() -> None:  # noqa: C901, PLR0915 -- one worker preparation/activation 
                             for block in iter(lambda: f.read(1024 * 1024), b""):
                                 sha.update(block)
                         sha = sha.hexdigest()
+                        enqueue(
+                            directory,
+                            path,
+                            provenance,
+                            {
+                                "tenant_id": job["tenant_id"],
+                                "robot_id": job["robot_id"],
+                            },
+                        )
                         artifacts.append(
                             {
                                 "path": str(path.relative_to(directory)),
@@ -102,7 +129,7 @@ def main() -> None:  # noqa: C901, PLR0915 -- one worker preparation/activation 
                     emit(
                         {
                             "type": "execution",
-                            "event_id": uuid.uuid4().hex,
+                            "event_id": event_id,
                             "digest": job["digest"],
                             "asof": asof,
                             "status": "completed",
