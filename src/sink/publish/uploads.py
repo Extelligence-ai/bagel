@@ -16,6 +16,26 @@ from src.sink.publish.identity import _atomic_write, load_identity
 log = logging.getLogger(__name__)
 
 
+class _RedactStorageAuthorization(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if (
+            record.name == "httpx"
+            and str(record.msg).startswith("HTTP Request:")
+            and isinstance(record.args, tuple)
+            and len(record.args) > 1
+        ):
+            url = urlsplit(str(record.args[1]))
+            if url.query and any(
+                name in url.query.lower() for name in ("signature=", "credential=")
+            ):
+                safe = url._replace(query="redacted", fragment="").geturl()
+                record.args = (record.args[0], safe, *record.args[2:])
+        return True
+
+
+_storage_log_filter = _RedactStorageAuthorization()
+
+
 def canonical(value: object) -> str:
     """Use the fleet upload v1 canonical JSON encoding."""
     return json.dumps(
@@ -30,6 +50,9 @@ class UploadClient:
         """Use the current identity pointers, including renewed certificates."""
         self.directory = Path(directory)
         self.owner = owner
+        # HTTPX logs full request URLs at INFO. The PUT query grants temporary
+        # storage access and must never appear in ordinary robot logs.
+        logging.getLogger("httpx").addFilter(_storage_log_filter)
 
     def request(self, operation: str, payload: dict) -> dict:
         """Authorize or confirm one immutable file through the enrollment origin."""
