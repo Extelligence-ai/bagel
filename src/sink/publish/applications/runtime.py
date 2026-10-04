@@ -169,6 +169,7 @@ class DockerRuntime:
     def prepare(self, pair: dict, target_id: str) -> dict:
         """Stage verified artifacts without interrupting the current application."""
         contract.validate_state(pair)
+        self.discard_staged()
         inspected = self.pull(pair["software"]["image"])
         check = inspected.get("Config", {}).get("Healthcheck", {}).get("Test", [])
         if not check or check[0] == "NONE":
@@ -338,6 +339,7 @@ class DockerRuntime:
             self.wait_healthy(prepared["container"])
             committed = {**self.state, "active": prepared, "previous": previous}
             committed.pop("transition")
+            committed.pop("staged", None)
             atomic(self.path, committed)
             self.state = committed
         except Exception:
@@ -348,6 +350,7 @@ class DockerRuntime:
         """Restore the prior container after interrupted activation without guessing success."""
         transition = self.state.get("transition")
         if not transition:
+            self.discard_staged()
             return
         if not self.ready():
             raise ValueError("Recovery is waiting for local readiness.")
@@ -368,6 +371,24 @@ class DockerRuntime:
         recovered.pop("transition")
         atomic(self.path, recovered)
         self.state = recovered
+        self.discard_staged()
+
+    def discard_staged(self) -> None:
+        """Reclaim an abandoned candidate, preserving active and rollback storage."""
+        staged = self.state.get("staged")
+        if not staged or self.state.get("transition"):
+            return
+        preserved = [self.state.get(key) for key in ("active", "previous")]
+        if not any(item and item.get("volume") == staged["volume"] for item in preserved):
+            if self.inspect(staged["seed"]):
+                self.run(["rm", staged["seed"]])
+            names = self.run(["volume", "ls", "--format", "{{.Name}}"]).decode().splitlines()
+            if staged["volume"] in names:
+                self.run(["volume", "rm", staged["volume"]])
+        cleaned = {**self.state}
+        cleaned.pop("staged")
+        atomic(self.path, cleaned)
+        self.state = cleaned
 
     def _restore_previous(self, previous: dict | None) -> dict | None:
         """Restore a confirmed fallback, distinguishing failed health from daemon failure."""

@@ -117,6 +117,8 @@ def checked_entries(
         raise ValueError("Too many model archive entries.")
     names, files, size, path_bytes = set(), set(), 0, 0
     for entry in infos:
+        if entry.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            raise ValueError("Use ZIP with stored or DEFLATE compression for fleet models.")
         name = entry.filename.rstrip("/") if entry.is_dir() else entry.filename
         mode = stat.S_IFMT(entry.external_attr >> 16)
         if (
@@ -156,6 +158,8 @@ def stage(runtime: DockerRuntime, model: dict, target_id: str, image: str) -> st
     with tempfile.TemporaryFile() as source, tempfile.TemporaryFile() as archive:
         download(grant, model, source, maximum)
         make_tar(source, archive, model, maximum)
+        runtime.state["staged"] = {"volume": volume, "seed": seed}
+        runtime.save()  # Persist cleanup ownership before any Docker storage effect.
         # A prior interrupted staging operation owns only this target's seed.
         if runtime.inspect(seed):
             runtime.run(["rm", seed])
@@ -173,11 +177,6 @@ def stage(runtime: DockerRuntime, model: dict, target_id: str, image: str) -> st
                 "/never-executed",
             ]
         )
-        try:
-            runtime.copy_model(archive, seed)
-        except Exception:
-            runtime.run(["rm", seed])
-            runtime.run(["volume", "rm", volume])
-            raise
+        runtime.copy_model(archive, seed)
         runtime.run(["rm", seed])
     return volume

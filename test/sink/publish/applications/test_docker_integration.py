@@ -139,7 +139,7 @@ CMD ["sh", "-c", "cat ${FLEET_MODEL_PATH:-/bundled-model} > /tmp/loaded; exec sl
             DockerRuntime._run(["image", "rm", tag])
 
 
-def test_fleet_models_install_files_and_supporting_data_and_roll_back(
+def test_fleet_models_install_files_and_supporting_data_and_roll_back(  # noqa: PLR0915 -- real lifecycle
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Both imported bytes and platform ZIPs actually load in the application."""
@@ -228,8 +228,17 @@ CMD ["sh", "-c", "cat $FLEET_MODEL_PATH > /tmp/loaded; exec sleep 3600"]
         assert app.current() == (trained, True)
         payload["bytes"] = b"bad"
         broken = pair("file", "weights.onnx", "3")
+        failed = app.prepare(broken, "unhealthy")
         with pytest.raises(RuntimeError, match="health check"):
-            app.activate(app.prepare(broken, "unhealthy"))
+            app.activate(failed)
+        assert app.current() == (trained, True)
+        volumes = app.run(["volume", "ls", "-q"]).decode().splitlines()
+        assert failed["volume"] not in volumes
+        assert app.state["active"]["volume"] in volumes
+        payload["bytes"] = b"abandoned"
+        abandoned = app.prepare(pair("file", "weights.onnx", "4"), "abandoned")
+        app.recover()
+        assert abandoned["volume"] not in app.run(["volume", "ls", "-q"]).decode().splitlines()
         assert app.current() == (trained, True)
         assert all(
             not member["RW"]

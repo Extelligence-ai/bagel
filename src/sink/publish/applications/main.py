@@ -219,6 +219,8 @@ class Agent:
                 self.save()
                 runtime.activate(prepared, recovery=bool(job.get("rollback_of")))
             except (ValueError, RuntimeError) as exc:
+                if hasattr(runtime, "discard_staged"):
+                    runtime.discard_staged()
                 attempt["started"] = True
                 self.save()
                 current, healthy = runtime.current()

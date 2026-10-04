@@ -5,6 +5,7 @@ import io
 import stat
 import tarfile
 import zipfile
+from pathlib import Path
 
 import httpx
 import pytest
@@ -149,3 +150,39 @@ def test_corrupt_deflate_is_reported_without_crashing_worker() -> None:
         artifacts.make_tar(
             io.BytesIO(content), io.BytesIO(), model(bytes(content), "zip", "weights.pt"), 10000
         )
+
+
+def test_lzma_zip_is_rejected_before_decompression() -> None:
+    source = io.BytesIO()
+    with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_LZMA) as archive:
+        archive.writestr("weights.pt", b"weights")
+    source.seek(0)
+    with pytest.raises(ValueError, match="DEFLATE"):
+        artifacts.make_tar(
+            source, io.BytesIO(), model(source.getvalue(), "zip", "weights.pt"), 10000
+        )
+
+
+def test_staging_recovery_removes_abandoned_volume_but_preserves_running_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test.sink.publish.applications.test_application_runtime import Engine, runtime
+
+    app = runtime(tmp_path, Engine())
+    commands = []
+
+    def run(args: list[str], **kwargs: object) -> bytes:
+        commands.append(args)
+        return b"orphan\n" if args[:2] == ["volume", "ls"] else b""
+
+    monkeypatch.setattr(app, "run", run)
+    app.state["staged"] = {"volume": "orphan", "seed": "seed"}
+    app.save()
+    app.recover()
+    assert ["volume", "rm", "orphan"] in commands
+    assert "staged" not in app.state
+    commands.clear()
+    app.state.update(staged={"volume": "orphan", "seed": "seed"}, active={"volume": "orphan"})
+    app.discard_staged()
+    assert ["volume", "rm", "orphan"] not in commands
+    assert app.state["active"]["volume"] == "orphan"
