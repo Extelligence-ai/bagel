@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from threading import Timer
+from typing import BinaryIO
 
 from src.sink.publish.applications import contract
 from src.sink.publish.delivery.main import atomic
@@ -67,6 +68,7 @@ class DockerRuntime:
             raise ValueError(
                 "Installation identity changed; reconcile local applications before continuing."
             )
+        self.model_download = None
         self.run = run or self._run
         self.prefix = "bagel-app-" + contract.digest(binding)[:12] + "-" + application
         self.platform = (
@@ -140,6 +142,7 @@ class DockerRuntime:
             "ready": self.ready(),
             "healthy": healthy,
             "current": pair,
+            "capabilities": ["fleet-model-v1"],
         }
 
     def allowed(self, image: str) -> None:
@@ -166,13 +169,18 @@ class DockerRuntime:
     def prepare(self, pair: dict, target_id: str) -> dict:
         """Stage verified artifacts without interrupting the current application."""
         contract.validate_state(pair)
+        self.discard_staged()
         inspected = self.pull(pair["software"]["image"])
         check = inspected.get("Config", {}).get("Healthcheck", {}).get("Test", [])
         if not check or check[0] == "NONE":
             raise ValueError("Application image requires a HEALTHCHECK before fleet deployment.")
         model = pair["model"]
         volume = None
-        if model:
+        if model and model["uri"].startswith("fleet://models/"):
+            from src.sink.publish.applications.artifacts import stage
+
+            volume = stage(self, model, target_id, pair["software"]["image"])
+        elif model:
             if not model["uri"].startswith("oci://"):
                 raise ValueError(
                     "This installer accepts models as OCI images containing /model/model.bin."
@@ -201,6 +209,23 @@ class DockerRuntime:
                 raise ValueError("Model artifact checksum mismatch.")
         name = self.prefix + "-" + contract.digest(target_id)[:16]
         return {"container": name, "pair": pair, "volume": volume}
+
+    @staticmethod
+    def copy_model(archive: BinaryIO, seed: str) -> None:
+        """Copy a sanitized archive into an unstarted container's model volume."""
+        try:
+            result = subprocess.run(  # noqa: S603 -- fixed Docker CLI and generated container name
+                [DOCKER, "cp", "-", seed + ":/model"],
+                stdin=archive,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=300,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Model staging timed out.") from None
+        if result.returncode:
+            raise RuntimeError("Could not stage the model artifact.")
 
     def model_digest(self, seed: str) -> str:
         """Hash one bounded model file without extracting archive paths."""
@@ -297,7 +322,10 @@ class DockerRuntime:
                     "--mount",
                     f"type=volume,src={prepared['volume']},dst=/opt/fleet-model,readonly",
                     "--env",
-                    "FLEET_MODEL_PATH=/opt/fleet-model/model.bin",
+                    "FLEET_MODEL_PATH=/opt/fleet-model/"
+                    + prepared["pair"]["model"].get("entrypoint", "model.bin"),
+                    "--env",
+                    "FLEET_MODEL_DIR=/opt/fleet-model",
                 ]
             args += [prepared["pair"]["software"]["image"]]
             self.run(args)
@@ -311,6 +339,7 @@ class DockerRuntime:
             self.wait_healthy(prepared["container"])
             committed = {**self.state, "active": prepared, "previous": previous}
             committed.pop("transition")
+            committed.pop("staged", None)
             atomic(self.path, committed)
             self.state = committed
         except Exception:
@@ -321,6 +350,7 @@ class DockerRuntime:
         """Restore the prior container after interrupted activation without guessing success."""
         transition = self.state.get("transition")
         if not transition:
+            self.discard_staged()
             return
         if not self.ready():
             raise ValueError("Recovery is waiting for local readiness.")
@@ -341,6 +371,24 @@ class DockerRuntime:
         recovered.pop("transition")
         atomic(self.path, recovered)
         self.state = recovered
+        self.discard_staged()
+
+    def discard_staged(self) -> None:
+        """Reclaim an abandoned candidate, preserving active and rollback storage."""
+        staged = self.state.get("staged")
+        if not staged or self.state.get("transition"):
+            return
+        preserved = [self.state.get(key) for key in ("active", "previous")]
+        if not any(item and item.get("volume") == staged["volume"] for item in preserved):
+            if self.inspect(staged["seed"]):
+                self.run(["rm", staged["seed"]])
+            names = self.run(["volume", "ls", "--format", "{{.Name}}"]).decode().splitlines()
+            if staged["volume"] in names:
+                self.run(["volume", "rm", staged["volume"]])
+        cleaned = {**self.state}
+        cleaned.pop("staged")
+        atomic(self.path, cleaned)
+        self.state = cleaned
 
     def _restore_previous(self, previous: dict | None) -> dict | None:
         """Restore a confirmed fallback, distinguishing failed health from daemon failure."""

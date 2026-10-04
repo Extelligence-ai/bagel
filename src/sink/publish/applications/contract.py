@@ -82,7 +82,7 @@ def software(value: dict) -> dict:
 
 def model(value: dict) -> dict:
     """Validate an immutable external model reference."""
-    keys(value, ("version", "uri", "sha256", "contract"))
+    keys(value, ("version", "uri", "sha256", "contract"), ("format", "entrypoint"))
     label(value["version"], "Model version")
     identifier(value["contract"], "Model interface")
     if not isinstance(value["sha256"], str) or not SHA.fullmatch(value["sha256"]):
@@ -91,7 +91,7 @@ def model(value: dict) -> dict:
         raise ValueError("Model artifact URI is invalid.")
     uri = urlsplit(value["uri"])
     if (
-        uri.scheme not in ("https", "s3", "oci")
+        uri.scheme not in ("https", "s3", "oci", "fleet")
         or not uri.hostname
         or uri.username
         or uri.password
@@ -100,6 +100,17 @@ def model(value: dict) -> dict:
         or any(c.isspace() for c in value["uri"])
     ):
         raise ValueError("Use an HTTPS, S3, or OCI URI without credentials or query parameters.")
+    if uri.scheme == "fleet":
+        from src.sink.publish.applications.artifacts import safe_path
+
+        if (
+            not re.fullmatch(r"fleet://models/[a-f0-9]{64}", value["uri"])
+            or value.get("format") not in ("file", "zip")
+            or not safe_path(value.get("entrypoint", ""))
+        ):
+            raise ValueError("Invalid Fleet model artifact, format or entry file.")
+    elif "format" in value or "entrypoint" in value:
+        raise ValueError("Artifact format and entry file apply only to Fleet models.")
     return value
 
 
@@ -138,6 +149,7 @@ def validate(spec: dict) -> dict:
     if (
         spec["runtime"] == "docker-application-v1"
         and has_model
+        and not spec["model"]["uri"].startswith("fleet://models/")
         and (
             not spec["model"]["uri"].startswith("oci://")
             or not IMAGE.fullmatch(spec["model"]["uri"][6:])
@@ -194,4 +206,10 @@ def resolve(spec: dict, inventory: dict) -> dict:
             raise ValueError(
                 "This application bundles its model or does not accept external models."
             )
+    if (
+        artifact
+        and artifact["uri"].startswith("fleet://")
+        and "fleet-model-v1" not in inventory.get("capabilities", [])
+    ):
+        raise ValueError("Update the Bagel application worker to support Fleet depot models.")
     return validate_state({"software": app, "model": artifact})

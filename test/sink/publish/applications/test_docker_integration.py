@@ -137,3 +137,125 @@ CMD ["sh", "-c", "cat ${FLEET_MODEL_PATH:-/bundled-model} > /tmp/loaded; exec sl
             DockerRuntime._run(["volume", "rm", *volumes])
         for tag in image_tags:
             DockerRuntime._run(["image", "rm", tag])
+
+
+def test_fleet_models_install_files_and_supporting_data_and_roll_back(  # noqa: PLR0915 -- real lifecycle
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both imported bytes and platform ZIPs actually load in the application."""
+    import io
+    import zipfile
+
+    import httpx
+
+    prefix = str(REGISTRY) + "/bagel-depot-" + uuid.uuid4().hex[:10]
+    tag = prefix + "/app:one"
+    ready = tmp_path / "ready"
+    ready.write_text("ready")
+    app = DockerRuntime(
+        tmp_path / "state",
+        "probe",
+        {
+            "registry_prefixes": [prefix + "/"],
+            "ready_file": str(ready),
+            "health_timeout_seconds": 20,
+        },
+        {"test": prefix},
+    )
+    payload = {"bytes": b"external-v1"}
+    original_client = httpx.Client
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kw: original_client(
+            **kw,
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, content=payload["bytes"])
+            ),
+        ),
+    )
+    try:
+        software = build(
+            tmp_path / "app",
+            tag,
+            """FROM alpine:latest
+HEALTHCHECK --interval=1s --timeout=1s --retries=2 CMD \\
+    cmp /tmp/loaded "$FLEET_MODEL_PATH" && test "$(cat /tmp/loaded)" != bad
+CMD ["sh", "-c", "cat $FLEET_MODEL_PATH > /tmp/loaded; exec sleep 3600"]
+""",
+            b"",
+        )
+
+        def pair(kind: str, entry: str, version: str) -> dict:
+            sha = hashlib.sha256(payload["bytes"]).hexdigest()
+            app.model_download = lambda target: {
+                "url": "https://storage.example/model",
+                "size_bytes": len(payload["bytes"]),
+                "sha256": sha,
+            }
+            return {
+                "software": {
+                    "version": "1",
+                    "image": software,
+                    "model_mode": "external",
+                    "model_contract": "test-v1",
+                },
+                "model": {
+                    "version": version,
+                    "uri": "fleet://models/" + sha,
+                    "sha256": sha,
+                    "contract": "test-v1",
+                    "format": kind,
+                    "entrypoint": entry,
+                },
+            }
+
+        first = pair("file", "model.onnx", "1")
+        app.activate(app.prepare(first, "external"))
+        assert app.current() == (first, True)
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zipped:
+            zipped.writestr("weights/model.pt", b"trained-v2")
+            zipped.writestr("config.json", b'{"classes":2}')
+        payload["bytes"] = archive.getvalue()
+        trained = pair("zip", "weights/model.pt", "2")
+        app.activate(app.prepare(trained, "training"))
+        container = app.state["active"]["container"]
+        assert (
+            app.run(["exec", container, "cat", "/opt/fleet-model/config.json"]) == b'{"classes":2}'
+        )
+        assert app.run(["exec", container, "cat", "/tmp/loaded"]) == b"trained-v2"  # noqa: S108 -- container tmpfs
+        assert app.current() == (trained, True)
+        payload["bytes"] = b"bad"
+        broken = pair("file", "weights.onnx", "3")
+        failed = app.prepare(broken, "unhealthy")
+        with pytest.raises(RuntimeError, match="health check"):
+            app.activate(failed)
+        assert app.current() == (trained, True)
+        volumes = app.run(["volume", "ls", "-q"]).decode().splitlines()
+        assert failed["volume"] not in volumes
+        assert app.state["active"]["volume"] in volumes
+        payload["bytes"] = b"abandoned"
+        abandoned = app.prepare(pair("file", "weights.onnx", "4"), "abandoned")
+        app.recover()
+        assert abandoned["volume"] not in app.run(["volume", "ls", "-q"]).decode().splitlines()
+        assert app.current() == (trained, True)
+        assert all(
+            not member["RW"]
+            for member in app.inspect(container)["Mounts"]
+            if member["Destination"] == "/opt/fleet-model"
+        )
+    finally:
+        containers = (
+            DockerRuntime._run(["ps", "-aq", "--filter", "name=" + app.prefix]).decode().split()
+        )
+        if containers:
+            DockerRuntime._run(["rm", "-f", *containers])
+        volumes = (
+            DockerRuntime._run(["volume", "ls", "-q", "--filter", "name=" + app.prefix])
+            .decode()
+            .split()
+        )
+        if volumes:
+            DockerRuntime._run(["volume", "rm", *volumes])
+        DockerRuntime._run(["image", "rm", tag])

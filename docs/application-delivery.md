@@ -98,3 +98,22 @@ The real-engine acceptance test additionally requires a disposable local OCI
 registry and `BAGEL_TEST_REGISTRY=localhost:5017`. CI's `application-installer`
 job supplies one and tests actual model loading, read-only mounts, health
 failure rollback, checksum rejection and interrupted activation recovery.
+
+### Models from the fleet model depot
+
+Updated workers advertise `fleet-model-v1` while retaining the existing Docker
+application runtime. A model can reference `fleet://models/<immutable-id>` with
+`format: file|zip` and a safe `entrypoint` relative path. The service delivers a
+short-lived HTTPS read grant only for the enrolled installation's assigned
+target. Downloads use the existing enrollment certificate; no API key, registry
+password or cloud credential is required. Older workers remain compatible with
+OCI models and are excluded from depot model deployments by capability preview.
+
+Single files and ZIPs preserve their names, including supporting configs and
+tokenizers. The installer verifies the archive's pinned byte checksum and size,
+rejects traversal, links, duplicate/conflicting paths and oversized expansions,
+and copies regular files into a per-target Docker volume without executing the
+model. The application receives a read-only `/opt/fleet-model` mount,
+`FLEET_MODEL_PATH` pointing at the chosen entry file, and `FLEET_MODEL_DIR` pointing
+at the full directory. The application must support the model's serialization
+format and interface. Existing activation health checks and rollback still apply.
