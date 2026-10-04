@@ -48,7 +48,8 @@ Every number comes from a bagel query, never from your own estimate.
 Findings first (what happened and when), then any evidence artifact paths,
 then the SQL queries you ran so the user can rerun or refine them.
 
-If the bagel tools are missing or the connection fails, the server is
-probably not running. The user must start the Docker container for their data
-format first (see references/formats.md for the format → image → extra-args
-table, including the CAN `dbc` requirement).
+If the bagel tools are missing, Bagel is not connected yet. The user must
+start the Docker container for their data format (see references/formats.md
+for the format → image → extra-args table) and, in Codex, connect it once
+with `codex mcp add bagel --url http://localhost:8000/mcp`. Claude Code
+installs connect automatically.

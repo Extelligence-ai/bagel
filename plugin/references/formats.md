@@ -1,7 +1,8 @@
 # Format → Docker image → arguments
 
 Start the container matching the data format, then connect (default
-`http://localhost:8000/mcp`).
+`http://localhost:8000/mcp`). Codex: `codex mcp add bagel --url
+http://localhost:8000/mcp` once. Claude Code installs connect automatically.
 
 | Data | Typical files | Compose service | Extra args needed |
 |---|---|---|---|

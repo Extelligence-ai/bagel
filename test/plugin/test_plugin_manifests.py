@@ -2,6 +2,9 @@
 
 import json
 import pathlib
+import zipfile
+
+from scripts import package_codex_directory
 
 
 def test_plugin_manifest_is_valid_json_with_required_fields() -> None:
@@ -99,3 +102,17 @@ def test_cursor_directory_metadata_and_paths_match_shared_plugin() -> None:
         nested_path = pathlib.Path("plugin") / nested[key]
         assert root_path.exists()
         assert root_path.resolve() == nested_path.resolve()
+
+
+def test_directory_package_ships_skills_without_local_mcp(tmp_path: pathlib.Path) -> None:
+    # The OpenAI Plugins Directory rejects localhost MCP servers.
+    out = tmp_path / "bagel.zip"
+    package_codex_directory.build(out)
+    with zipfile.ZipFile(out) as archive:
+        names = set(archive.namelist())
+        manifest = json.loads(archive.read(".codex-plugin/plugin.json"))
+    assert ".mcp.json" not in names
+    assert not any(name.startswith(".claude-plugin/") for name in names)
+    assert "mcpServers" not in manifest
+    skills = {f"skills/{skill.name}/SKILL.md" for skill in pathlib.Path("plugin/skills").iterdir()}
+    assert skills <= names
