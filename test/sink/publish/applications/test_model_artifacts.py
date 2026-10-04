@@ -92,3 +92,42 @@ def test_download_pins_size_checksum_and_rejects_redirect(monkeypatch: pytest.Mo
         artifacts.download(grant, assigned, io.BytesIO(), 1000)
     with pytest.raises(ValueError, match="HTTPS"):
         artifacts.download({**grant, "url": "http://host/file"}, assigned, io.BytesIO(), 1000)
+
+
+@pytest.mark.parametrize("mode", ["none", "bundled", "external"])
+def test_depot_models_do_not_bypass_software_interface_validation(mode: str) -> None:
+    from src.sink.publish.applications import contract
+
+    software = {"version": "1", "image": "registry/app@sha256:" + "a" * 64, "model_mode": mode}
+    if mode == "external":
+        software["model_contract"] = "wrong-interface"
+    spec = {
+        "schema": contract.SCHEMA,
+        "name": "test",
+        "version": "1",
+        "kind": "software_model",
+        "application": "app",
+        "runtime": "docker-application-v1",
+        "platforms": ["linux/amd64"],
+        "software": software,
+        "model": {
+            **model(b"weights"),
+            "version": "1",
+            "uri": "fleet://models/" + "b" * 64,
+            "contract": "required-interface",
+        },
+    }
+    with pytest.raises(ValueError, match="interfaces must match"):
+        contract.validate(spec)
+
+
+def test_model_copy_timeout_is_a_reportable_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+    from src.sink.publish.applications.runtime import DockerRuntime
+
+    def timeout(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(["docker", "cp"], 300)
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    with pytest.raises(RuntimeError, match="staging timed out"):
+        DockerRuntime.copy_model(io.BytesIO(), "seed")

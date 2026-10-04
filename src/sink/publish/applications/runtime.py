@@ -212,14 +212,17 @@ class DockerRuntime:
     @staticmethod
     def copy_model(archive: BinaryIO, seed: str) -> None:
         """Copy a sanitized archive into an unstarted container's model volume."""
-        result = subprocess.run(  # noqa: S603 -- fixed Docker CLI and generated container name
-            [DOCKER, "cp", "-", seed + ":/model"],
-            stdin=archive,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=300,
-            check=False,
-        )
+        try:
+            result = subprocess.run(  # noqa: S603 -- fixed Docker CLI and generated container name
+                [DOCKER, "cp", "-", seed + ":/model"],
+                stdin=archive,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=300,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Model staging timed out.") from None
         if result.returncode:
             raise RuntimeError("Could not stage the model artifact.")
 

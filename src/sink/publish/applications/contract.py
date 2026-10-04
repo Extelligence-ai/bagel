@@ -161,7 +161,6 @@ def validate(spec: dict) -> dict:
     if (
         has_software
         and has_model
-        and not spec["model"]["uri"].startswith("fleet://models/")
         and (
             spec["software"]["model_mode"] != "external"
             or spec["software"]["model_contract"] != spec["model"]["contract"]
