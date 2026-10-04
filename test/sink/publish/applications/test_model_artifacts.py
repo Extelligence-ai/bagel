@@ -123,6 +123,7 @@ def test_depot_models_do_not_bypass_software_interface_validation(mode: str) -> 
 
 def test_model_copy_timeout_is_a_reportable_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
+
     from src.sink.publish.applications.runtime import DockerRuntime
 
     def timeout(*args: object, **kwargs: object) -> None:
@@ -131,3 +132,20 @@ def test_model_copy_timeout_is_a_reportable_failure(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(subprocess, "run", timeout)
     with pytest.raises(RuntimeError, match="staging timed out"):
         DockerRuntime.copy_model(io.BytesIO(), "seed")
+
+
+def test_corrupt_deflate_is_reported_without_crashing_worker() -> None:
+    import struct
+
+    source = io.BytesIO()
+    with zipfile.ZipFile(source, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("weights.pt", b"weights" * 100)
+    content = bytearray(source.getvalue())
+    # Keep the valid ZIP directory/header, but replace its compressed payload.
+    name_length, extra_length = struct.unpack_from("<HH", content, 26)
+    data_offset = 30 + name_length + extra_length
+    content[data_offset] = 0xFF  # Invalid DEFLATE block type.
+    with pytest.raises(ValueError, match="corrupt"):
+        artifacts.make_tar(
+            io.BytesIO(content), io.BytesIO(), model(bytes(content), "zip", "weights.pt"), 10000
+        )

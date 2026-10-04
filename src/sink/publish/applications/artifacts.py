@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import io
+import lzma
 import stat
 import tarfile
 import tempfile
 import zipfile
+import zlib
 from http import HTTPStatus
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, BinaryIO
@@ -73,7 +75,7 @@ def make_tar(source: BinaryIO, destination: BinaryIO, model: dict, maximum: int)
     """Report invalid ZIPs without leaking transport or temporary-file details."""
     try:
         _make_tar(source, destination, model, maximum)
-    except (zipfile.BadZipFile, NotImplementedError):
+    except (zipfile.BadZipFile, NotImplementedError, zlib.error, lzma.LZMAError, EOFError, OSError):
         raise ValueError("Model archive is corrupt or uses unsupported ZIP compression.") from None
 
 
