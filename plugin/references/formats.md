@@ -1,7 +1,7 @@
 # Format → Docker image → arguments
 
 Start the container matching the data format, then connect (default
-`http://localhost:8000/sse`).
+`http://localhost:8000/mcp`).
 
 | Data | Typical files | Compose service | Extra args needed |
 |---|---|---|---|
