@@ -79,9 +79,13 @@ class UploadClient:
         url = urlsplit(identity.enroll_url)
         if url.scheme != "https" or not url.hostname or url.username or url.password:
             raise ValueError("Fleet uploads require a verified HTTPS enrollment origin.")
-        if operation not in ("presigned", "confirm"):
+        if operation not in ("presigned", "confirm", "model-download"):
             raise ValueError("Unsupported fleet upload operation.")
-        route = "/fleet/uploads/" + operation
+        route = (
+            "/fleet/model-artifacts/download"
+            if operation == "model-download"
+            else "/fleet/uploads/" + operation
+        )
         timestamp = int(time.time())
         message = (
             "fleet-upload-v1\nPOST\n" + route + "\n" + str(timestamp) + "\n" + canonical(payload)

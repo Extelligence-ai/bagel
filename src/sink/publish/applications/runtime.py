@@ -17,6 +17,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from threading import Timer
+from typing import BinaryIO
 
 from src.sink.publish.applications import contract
 from src.sink.publish.delivery.main import atomic
@@ -67,6 +68,7 @@ class DockerRuntime:
             raise ValueError(
                 "Installation identity changed; reconcile local applications before continuing."
             )
+        self.model_download = None
         self.run = run or self._run
         self.prefix = "bagel-app-" + contract.digest(binding)[:12] + "-" + application
         self.platform = (
@@ -140,6 +142,7 @@ class DockerRuntime:
             "ready": self.ready(),
             "healthy": healthy,
             "current": pair,
+            "capabilities": ["fleet-model-v1"],
         }
 
     def allowed(self, image: str) -> None:
@@ -172,7 +175,11 @@ class DockerRuntime:
             raise ValueError("Application image requires a HEALTHCHECK before fleet deployment.")
         model = pair["model"]
         volume = None
-        if model:
+        if model and model["uri"].startswith("fleet://models/"):
+            from src.sink.publish.applications.artifacts import stage
+
+            volume = stage(self, model, target_id, pair["software"]["image"])
+        elif model:
             if not model["uri"].startswith("oci://"):
                 raise ValueError(
                     "This installer accepts models as OCI images containing /model/model.bin."
@@ -201,6 +208,20 @@ class DockerRuntime:
                 raise ValueError("Model artifact checksum mismatch.")
         name = self.prefix + "-" + contract.digest(target_id)[:16]
         return {"container": name, "pair": pair, "volume": volume}
+
+    @staticmethod
+    def copy_model(archive: BinaryIO, seed: str) -> None:
+        """Copy a sanitized archive into an unstarted container's model volume."""
+        result = subprocess.run(  # noqa: S603 -- fixed Docker CLI and generated container name
+            [DOCKER, "cp", "-", seed + ":/model"],
+            stdin=archive,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=300,
+            check=False,
+        )
+        if result.returncode:
+            raise RuntimeError("Could not stage the model artifact.")
 
     def model_digest(self, seed: str) -> str:
         """Hash one bounded model file without extracting archive paths."""
@@ -297,7 +318,10 @@ class DockerRuntime:
                     "--mount",
                     f"type=volume,src={prepared['volume']},dst=/opt/fleet-model,readonly",
                     "--env",
-                    "FLEET_MODEL_PATH=/opt/fleet-model/model.bin",
+                    "FLEET_MODEL_PATH=/opt/fleet-model/"
+                    + prepared["pair"]["model"].get("entrypoint", "model.bin"),
+                    "--env",
+                    "FLEET_MODEL_DIR=/opt/fleet-model",
                 ]
             args += [prepared["pair"]["software"]["image"]]
             self.run(args)

@@ -25,6 +25,14 @@ log = logging.getLogger("fleet-applications")
 class Channel(CaptureChannel):
     """Reuse certificate loading/rotation, with a separate application API."""
 
+    def model_download(self, target_id: str) -> dict:
+        """Use the existing device certificate to fetch an assigned model only."""
+        from src.sink.publish.uploads import UploadClient
+
+        return UploadClient(self.identity.parent).request(
+            "model-download", {"target_id": target_id}
+        )
+
     def request(self, method: str, route: str, body: dict | None = None) -> dict:
         """Send an application request using the current enrolled certificate."""
         _, url, context = self.config()
@@ -116,6 +124,7 @@ class Agent:
         for app, config in self.config["applications"].items():
             if app not in self.runtimes:
                 self.runtimes[app] = self.runtime_factory(self.root / app, app, config, binding)
+            self.runtimes[app].model_download = getattr(self.channel, "model_download", None)
             self.runtimes[app].recover()
             self.channel.request(
                 "POST",
