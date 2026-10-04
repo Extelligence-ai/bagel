@@ -6,6 +6,7 @@ import hashlib
 import io
 import lzma
 import stat
+import struct
 import tarfile
 import tempfile
 import zipfile
@@ -21,9 +22,40 @@ from urllib.parse import urlsplit
 import httpx
 
 MAX_FILES = 1000
+ZIP_END_SIZE = 22
+ZIP64_LOCATOR_SIZE = 20
 MAX_PATH = 240
 ASCII_CONTROL = 32
 MAX_PATH_BYTES = 65536
+
+
+def check_zip_directory(source: BinaryIO) -> None:
+    """Bound directory allocation before ZipFile constructs any ZipInfo objects."""
+    source.seek(0, 2)
+    size = source.tell()
+    source.seek(max(0, size - 65557))  # EOCD header plus maximum ZIP comment.
+    tail = source.read(65557)
+    offset = tail.rfind(b"PK\x05\x06")
+    if offset < 0 or len(tail) - offset < ZIP_END_SIZE:
+        raise ValueError("Model ZIP directory is invalid")
+    _, disk, start_disk, disk_count, count, directory_size, start, comment = struct.unpack_from(
+        "<4s4H2LH", tail, offset
+    )
+    absolute = size - len(tail) + offset
+    if (
+        len(tail) - offset != 22 + comment
+        or disk != 0
+        or start_disk != 0
+        or disk_count != count
+        or not 0 < count <= MAX_FILES
+        or directory_size > 1024 * 1024
+        or start + directory_size != absolute
+        or (offset >= ZIP64_LOCATOR_SIZE and tail[offset - 20 : offset - 16] == b"PK\x06\x07")
+    ):
+        raise ValueError(
+            "Model ZIP directory exceeds limits; use a standard ZIP with at most 1000 entries"
+        )
+    source.seek(0)
 
 
 def safe_path(name: str) -> bool:
@@ -94,6 +126,7 @@ def _make_tar(source: BinaryIO, destination: BinaryIO, model: dict, maximum: int
             member.size, member.mode = size, 0o444
             target.addfile(member, source)
         elif model["format"] == "zip":
+            check_zip_directory(source)
             with zipfile.ZipFile(source) as archive:
                 infos = checked_entries(archive, model["entrypoint"], maximum)
                 for entry in infos:

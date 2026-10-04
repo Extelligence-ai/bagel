@@ -186,3 +186,19 @@ def test_staging_recovery_removes_abandoned_volume_but_preserves_running_models(
     app.discard_staged()
     assert ["volume", "rm", "orphan"] not in commands
     assert app.state["active"]["volume"] == "orphan"
+
+
+@pytest.mark.parametrize("field,value", [(10, 65535), (12, 2 * 1024 * 1024)])
+def test_zip_directory_limits_precede_entry_allocation(field: int, value: int) -> None:
+    import struct
+
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as zipped:
+        zipped.writestr("weights.pt", b"weights")
+        zipped.comment = b"safe archive comment"
+    artifacts.check_zip_directory(stream)
+    content = bytearray(stream.getvalue())
+    end = content.rfind(b"PK\x05\x06")
+    struct.pack_into("<H" if field == 10 else "<L", content, end + field, value)
+    with pytest.raises(ValueError, match="directory exceeds limits"):
+        artifacts.check_zip_directory(io.BytesIO(content))
