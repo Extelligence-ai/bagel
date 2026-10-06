@@ -28,7 +28,9 @@ publishing. The port must be an integer in 1–65535; the host is always loopbac
 
 The existing 0.1.1 release was tested against local Bagel on October 6, 2026;
 initialization and all 26 tool schemas were verified. This directory preserves
-that release's source and tools catalog. Do not republish it unnecessarily.
+that release's source and tools catalog. The publishing configuration schema
+also enforces the bridge's integer port range before startup. Do not republish
+the existing release unnecessarily.
 
 For a future release, update the bundle version, refresh `tools.json` from
 the tested server's `tools/list` response, and regenerate `manifest.json`'s
