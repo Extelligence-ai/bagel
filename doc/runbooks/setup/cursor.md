@@ -2,6 +2,19 @@
 
 This runbook explains how to connect your Bagel MCP server to Cursor.
 
+## Bagel plugin
+
+The repository includes a Cursor marketplace manifest at
+`.cursor-plugin/marketplace.json`, pointing to the shared `plugin/` directory.
+Its Cursor manifest loads all four skills (log triage, pipeline authoring, live
+sinks, and visualization export) and the existing `.mcp.json` connection to
+`http://localhost:8000/mcp`.
+
+The plugin connects to a local server; it does not install or start Docker.
+Start the container for your data format using the Quickstart below before
+using the plugin. Bagel runs locally and requires no Matcha account. The manual
+MCP setup below remains available if you only need the server connection.
+
 ## ✅ Verify Bagel Is Running
 
 But first, make sure the Bagel MCP server is already running in a separate terminal.
