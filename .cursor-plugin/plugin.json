@@ -1,0 +1,21 @@
+{
+  "name": "bagel",
+  "description": "Skills and MCP connection for Bagel: query rosbags, MCAP, CAN, MDF4, PX4/ArduPilot/Betaflight logs and live robot data in plain language; author event-windowed data-reduction pipelines; export to Rerun, Lichtblick, PlotJuggler, and LeRobot.",
+  "version": "0.2.1",
+  "author": {
+    "name": "Extelligence"
+  },
+  "homepage": "https://www.trybagel.com",
+  "repository": "https://github.com/Extelligence-ai/bagel",
+  "license": "Apache-2.0",
+  "keywords": [
+    "robotics",
+    "rosbag",
+    "mcap",
+    "drone",
+    "iot",
+    "data-analysis"
+  ],
+  "skills": "./plugin/skills",
+  "mcpServers": "./plugin/.mcp.json"
+}

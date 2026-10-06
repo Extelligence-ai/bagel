@@ -1,0 +1,15 @@
+{
+  "name": "bagel",
+  "owner": {
+    "name": "Extelligence"
+  },
+  "metadata": {
+    "description": "Bagel skills and local MCP connection for robot-data analysis."
+  },
+  "plugins": [
+    {
+      "name": "bagel",
+      "source": "plugin"
+    }
+  ]
+}
