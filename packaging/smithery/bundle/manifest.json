@@ -1,0 +1,168 @@
+{
+  "manifest_version": "0.3",
+  "name": "bagel",
+  "display_name": "Bagel",
+  "version": "0.1.1",
+  "description": "Connect to local Bagel for robotics, drone, and IoT data analysis and reduction.",
+  "long_description": "Bagel provides auditable DuckDB SQL analysis over robot logs, event-windowed data reduction, live data workflows, and visualization exports. This bundle connects an MCP client to a Bagel server already running on the same machine. Start Bagel in Docker and mount your data using the repository quickstart before connecting. The bundle does not install Docker, start Bagel, or provide cloud hosting. Bagel software is free and Apache-2.0 licensed; your chosen AI client or external integrations may have separate charges.",
+  "author": {
+    "name": "Extelligence",
+    "url": "https://github.com/Extelligence-ai"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Extelligence-ai/bagel"
+  },
+  "homepage": "https://www.trybagel.com",
+  "documentation": "https://github.com/Extelligence-ai/bagel#readme",
+  "support": "https://github.com/Extelligence-ai/bagel/issues",
+  "license": "Apache-2.0",
+  "keywords": [
+    "robotics",
+    "rosbag",
+    "mcap",
+    "px4",
+    "iot",
+    "duckdb",
+    "local"
+  ],
+  "tools_generated": true,
+  "server": {
+    "type": "node",
+    "entry_point": "server.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server.mjs",
+        "${user_config.port}"
+      ]
+    }
+  },
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ],
+    "runtimes": {
+      "node": ">=22.12.0"
+    }
+  },
+  "user_config": {
+    "port": {
+      "type": "number",
+      "title": "Local Bagel port",
+      "description": "Port of the Bagel Docker server on this machine. Start Bagel before connecting.",
+      "default": 8000,
+      "min": 1,
+      "max": 65535,
+      "required": false
+    }
+  },
+  "tools": [
+    {
+      "name": "describe_data_source",
+      "description": "Summarize a data source without returning its messages. Includes: a brief summary, basic metadata (start time, message count, config parameters), and a list of available topics. Excludes: detailed topic definitions or actual messages."
+    },
+    {
+      "name": "describe_topic",
+      "description": "Generate a structured summary of a topic without returning its messages. Includes: short summary, DuckDB schema, original IDL definition, and guidelines for SQL queries. Excludes: actual topic data."
+    },
+    {
+      "name": "query_messages",
+      "description": "Run a DuckDB SQL query on messages from a single topic in a data source. Returns the query results as structured dictionaries. Use this tool to answer user questions about message data, including filtering, aggregation, and downsampling."
+    },
+    {
+      "name": "read_loggings",
+      "description": "Extract INFO, WARN, and ERROR messages from a data source. Supports optional time filtering. Use for debugging or diagnostics."
+    },
+    {
+      "name": "list_live_topics",
+      "description": "Use this tool to inspect a live data stream and list the topics that can be subscribed to. Helpful before starting a subscription."
+    },
+    {
+      "name": "subscribe_live_topics",
+      "description": "Use this tool to connect to a live data stream and subscribe to one or more topics. Messages are written to a local sink directory, which can be used later as input for other tools (via the `path` argument in SourceFactory). Optionally attach a pipeline config to create a STANDING pipeline that runs on incoming messages -- e.g. an on_event cadence that captures and uploads a window around every anomaly."
+    },
+    {
+      "name": "run_poml_capability",
+      "description": "Use this tool to run a predefined capability described in a `.poml` file. Discover available capabilities and their paths with `list_agent_capabilities`. The file specifies task instructions and output formats. Optional context values can be injected to customize its behavior. Capabilities may be POML (parameterizable via context) or markdown (static)."
+    },
+    {
+      "name": "list_agent_capabilities",
+      "description": "List every capability available to run: the predefined `.poml` capabilities shipped with Bagel, plus any user-saved capabilities (`.poml` or `.md`, named with a `user/` prefix) discovered under the user-capabilities directory. Each entry has a `name`, a `path` to pass to `run_poml_capability`, and a one-line `summary`. Use this to discover available capabilities instead of guessing file paths."
+    },
+    {
+      "name": "save_agent_capability",
+      "description": "Save a reusable workflow as a named capability so it can be discovered with `list_agent_capabilities` and run with `run_poml_capability` in any future session. Content may be POML (validated before saving; supports context parameterization) or plain markdown instructions. Writes only to the user-capabilities directory; builtin capabilities cannot be modified."
+    },
+    {
+      "name": "list_pipeline_capabilities",
+      "description": "List the tasks and gates available to compose a data pipeline, including each one's module path, kind (task or gate), constructor parameters, and a short summary. Use this before authoring a pipeline so the correct `module` and `args` are chosen instead of guessed."
+    },
+    {
+      "name": "preview_pipeline",
+      "description": "Dry-run an event-windowed reduction WITHOUT writing any files. Detects the rising-edge events where a SQL predicate becomes true on a topic, builds pre/post windows around them, merges overlaps, and reports how much data would be kept. Use this to audit a reduce/snippet pipeline before running it."
+    },
+    {
+      "name": "save_pipeline",
+      "description": "Persist a pipeline configuration to a YAML file so it can be reused, edited, or run later with `run.py`. Returns the path to the written file."
+    },
+    {
+      "name": "run_pipeline",
+      "description": "Build and run a pipeline from a configuration and return the artifact paths it produced. Prefer running `preview_pipeline` first for event-driven reductions so the effect is audited before anything is written."
+    },
+    {
+      "name": "run_pipeline_batch",
+      "description": "Run one pipeline configuration against many data sources -- explicit paths or glob patterns like 'logs/*'. Each source is processed independently; a failure on one source is reported but does not stop the batch. Returns per-source results and a summary. For an event reduction, preview a representative source first."
+    },
+    {
+      "name": "export_for_plotjuggler",
+      "description": "Export a time window of topic data as a PlotJuggler session: a flattened CSV (one scalar column per signal) plus a layout file with the curves pre-added and the window pre-framed. Opening the returned command shows the event already plotted and zoomed. Use after preview_pipeline to hand an event to a human for visual inspection."
+    },
+    {
+      "name": "export_for_rerun",
+      "description": "Export a time window of topic data as a Rerun recording (.rrd): every scalar signal becomes a Rerun time series, so `rerun <file>` opens the event in the Rerun viewer. Use after preview_pipeline to hand an event to a human for visual inspection. Needs the optional rerun-sdk dependency (uv sync --group viz)."
+    },
+    {
+      "name": "export_for_lichtblick",
+      "description": "Export a time window of topic data as a Lichtblick session: an MCAP file with JSON-encoded channels plus a layout with the plot series and time/value ranges pre-set. Works in Lichtblick (open source) and Foxglove, which share the layout format. Use after preview_pipeline to hand an event to a human."
+    },
+    {
+      "name": "export_for_lerobot",
+      "description": "Export time windows as a LeRobotDataset v3.0 for robot-learning training: each window becomes an episode, resampled to a uniform fps, with the given signals composing feature vectors like observation.state and action. Use after preview_pipeline to turn detected events into a curated dataset. Beta: load-tests clean with the lerobot package; awaiting validation by real training runs."
+    },
+    {
+      "name": "snap_hardware",
+      "description": "Auto-detect the robot's current hardware, firmware, and software using waffle-iron and return the resulting hardware state. Requires the waffle CLI on PATH (cargo install waffle-iron). The WaffleForm it writes is immediately queryable as a data source."
+    },
+    {
+      "name": "enroll_fleet_identity",
+      "description": "Use this tool to enroll this robot with a fleet broker using a one-time enrollment token issued out of band. The token is single-use and is never stored on disk or logged: it is sent once, in the enrollment request body, and forgotten. If the server responds 200 but this process crashes before finishing, the token has already been consumed server-side -- the operator must re-issue a fresh token and retry (mirrors the enrollment runbook)."
+    },
+    {
+      "name": "stream_live_topics",
+      "description": "Use this tool to add or replace channel and event rules that stream data to a fleet broker in real time, then (re)start streaming with the merged rule set. A channel rule projects fields (or a `lat`/`lon` geo pair) off a topic at a capped rate; an event rule fires a named predicate with optional pre/post capture windows. A matching `topic`/`name` REPLACES the existing rule; anything new is appended."
+    },
+    {
+      "name": "stop_live_streams",
+      "description": "Use this tool to remove channel and event rules by name from the live streaming service, then restart with what remains (or leave a running service alone when nothing matched)."
+    },
+    {
+      "name": "pause_fleet_streaming",
+      "description": "Use this tool to take the live streaming connection to a fleet broker offline while keeping this robot's identity and streaming rules intact, so `resume_fleet_streaming` can bring it back exactly as it was."
+    },
+    {
+      "name": "resume_fleet_streaming",
+      "description": "Use this tool to bring a paused streaming connection to a fleet broker back online, mirroring `pause_fleet_streaming`."
+    },
+    {
+      "name": "describe_stream_status",
+      "description": "Use this tool to check this robot's fleet-streaming state: whether the fleet dependencies are installed, enabled, whether this robot is enrolled, and what the live streaming service is currently doing. This is the local source of truth -- it works and answers sanely in every state, including when a fleet broker itself is unreachable."
+    },
+    {
+      "name": "unenroll_fleet_identity",
+      "description": "Use this tool to permanently remove this robot's fleet identity and streaming rules, stopping any live streaming service first. The robot returns to local-only operation; re-enrolling later requires a fresh enrollment token."
+    }
+  ]
+}

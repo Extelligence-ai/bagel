@@ -111,6 +111,10 @@ the changes are drafts.
 
 ## Maintenance
 
+The [Smithery local connector](../../packaging/smithery/README.md) contains the
+source, locked dependencies, and manual publishing instructions for Bagel's
+Smithery MCPB listing.
+
 Use [listing maintenance](listings.md) for registry and Glama reconciliation and
 [community reports](community.md) for honest external evidence. The task guides
 live in the website repository; the existing
