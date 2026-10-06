@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "required": [],
+  "properties": {
+    "port": {
+      "type": "number",
+      "title": "Local Bagel port",
+      "default": 8000,
+      "x-order": 0,
+      "description": "Port of the Bagel Docker server on this machine. Start Bagel before connecting."
+    }
+  }
+}

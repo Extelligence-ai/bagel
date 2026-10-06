@@ -1,0 +1,1406 @@
+[
+  {
+    "name": "describe_data_source",
+    "title": "Describe a data source",
+    "description": "Summarize a data source without returning its messages. Includes: a brief summary, basic metadata (start time, message count, config parameters), and a list of available topics. Excludes: detailed topic definitions or actual messages.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "describe_data_sourceArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Result",
+          "type": "array"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "describe_data_sourceOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "describe_topic",
+    "title": "Describe a topic in a data source",
+    "description": "Generate a structured summary of a topic without returning its messages. Includes: short summary, DuckDB schema, original IDL definition, and guidelines for SQL queries. Excludes: actual topic data.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "topic": {
+          "title": "Topic",
+          "type": "string"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        }
+      },
+      "required": [
+        "path",
+        "topic"
+      ],
+      "title": "describe_topicArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Result",
+          "type": "array"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "describe_topicOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "query_messages",
+    "title": "Query topic messages with SQL",
+    "description": "Run a DuckDB SQL query on messages from a single topic in a data source. Returns the query results as structured dictionaries. Use this tool to answer user questions about message data, including filtering, aggregation, and downsampling.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sql_statement": {
+          "title": "Sql Statement",
+          "type": "string"
+        },
+        "topic": {
+          "title": "Topic",
+          "type": "string"
+        },
+        "start_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Seconds"
+        },
+        "end_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Seconds"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        }
+      },
+      "required": [
+        "path",
+        "sql_statement",
+        "topic"
+      ],
+      "title": "query_messagesArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Result",
+          "type": "array"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "query_messagesOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "read_loggings",
+    "title": "Read logging messages from a data source",
+    "description": "Extract INFO, WARN, and ERROR messages from a data source. Supports optional time filtering. Use for debugging or diagnostics.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "start_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Seconds"
+        },
+        "end_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Seconds"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "read_loggingsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Result",
+          "type": "array"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "read_loggingsOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_live_topics",
+    "title": "List available live topics",
+    "description": "Use this tool to inspect a live data stream and list the topics that can be subscribed to. Helpful before starting a subscription.",
+    "inputSchema": {
+      "properties": {
+        "type_": {
+          "title": "Type",
+          "type": "string"
+        },
+        "host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Host"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Port"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        }
+      },
+      "required": [
+        "type_"
+      ],
+      "title": "list_live_topicsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Result",
+          "type": "array"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "list_live_topicsOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "subscribe_live_topics",
+    "title": "Subscribe to live topic messages",
+    "description": "Use this tool to connect to a live data stream and subscribe to one or more topics. Messages are written to a local sink directory, which can be used later as input for other tools (via the `path` argument in SourceFactory). Optionally attach a pipeline config to create a STANDING pipeline that runs on incoming messages -- e.g. an on_event cadence that captures and uploads a window around every anomaly.",
+    "inputSchema": {
+      "properties": {
+        "type_": {
+          "title": "Type",
+          "type": "string"
+        },
+        "topics": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Topics"
+        },
+        "host": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Host"
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Port"
+        },
+        "overwrite": {
+          "default": false,
+          "title": "Overwrite",
+          "type": "boolean"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        },
+        "pipeline": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pipeline"
+        }
+      },
+      "required": [
+        "type_"
+      ],
+      "title": "subscribe_live_topicsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "subscribe_live_topicsOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "run_poml_capability",
+    "title": "Run a capability defined in a POML file",
+    "description": "Use this tool to run a predefined capability described in a `.poml` file. Discover available capabilities and their paths with `list_agent_capabilities`. The file specifies task instructions and output formats. Optional context values can be injected to customize its behavior. Capabilities may be POML (parameterizable via context) or markdown (static).",
+    "inputSchema": {
+      "properties": {
+        "poml_path": {
+          "title": "Poml Path",
+          "type": "string"
+        },
+        "poml_context": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Poml Context"
+        }
+      },
+      "required": [
+        "poml_path"
+      ],
+      "title": "run_poml_capabilityArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Result",
+          "type": "array"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "run_poml_capabilityOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_agent_capabilities",
+    "title": "List agent capabilities",
+    "description": "List every capability available to run: the predefined `.poml` capabilities shipped with Bagel, plus any user-saved capabilities (`.poml` or `.md`, named with a `user/` prefix) discovered under the user-capabilities directory. Each entry has a `name`, a `path` to pass to `run_poml_capability`, and a one-line `summary`. Use this to discover available capabilities instead of guessing file paths.",
+    "inputSchema": {
+      "properties": {},
+      "title": "list_agent_capabilitiesArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "items": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "title": "Result",
+          "type": "array"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "list_agent_capabilitiesOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "save_agent_capability",
+    "title": "Save a user capability",
+    "description": "Save a reusable workflow as a named capability so it can be discovered with `list_agent_capabilities` and run with `run_poml_capability` in any future session. Content may be POML (validated before saving; supports context parameterization) or plain markdown instructions. Writes only to the user-capabilities directory; builtin capabilities cannot be modified.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "overwrite": {
+          "default": false,
+          "title": "Overwrite",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "content"
+      ],
+      "title": "save_agent_capabilityArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "save_agent_capabilityDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_pipeline_capabilities",
+    "title": "List pipeline capabilities",
+    "description": "List the tasks and gates available to compose a data pipeline, including each one's module path, kind (task or gate), constructor parameters, and a short summary. Use this before authoring a pipeline so the correct `module` and `args` are chosen instead of guessed.",
+    "inputSchema": {
+      "properties": {
+        "include_unavailable": {
+          "default": false,
+          "title": "Include Unavailable",
+          "type": "boolean"
+        }
+      },
+      "title": "list_pipeline_capabilitiesArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Result",
+          "type": "array"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "list_pipeline_capabilitiesOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "preview_pipeline",
+    "title": "Preview an event-driven data reduction",
+    "description": "Dry-run an event-windowed reduction WITHOUT writing any files. Detects the rising-edge events where a SQL predicate becomes true on a topic, builds pre/post windows around them, merges overlaps, and reports how much data would be kept. Use this to audit a reduce/snippet pipeline before running it.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "event_topic": {
+          "title": "Event Topic",
+          "type": "string"
+        },
+        "predicate": {
+          "title": "Predicate",
+          "type": "string"
+        },
+        "pre_seconds": {
+          "title": "Pre Seconds",
+          "type": "number"
+        },
+        "post_seconds": {
+          "default": 0,
+          "title": "Post Seconds",
+          "type": "number"
+        },
+        "debounce_seconds": {
+          "default": 0,
+          "title": "Debounce Seconds",
+          "type": "number"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        }
+      },
+      "required": [
+        "path",
+        "event_topic",
+        "predicate",
+        "pre_seconds"
+      ],
+      "title": "preview_pipelineArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "preview_pipelineDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "save_pipeline",
+    "title": "Save a pipeline to a YAML file",
+    "description": "Persist a pipeline configuration to a YAML file so it can be reused, edited, or run later with `run.py`. Returns the path to the written file.",
+    "inputSchema": {
+      "properties": {
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "directory": {
+          "default": "pipelines",
+          "title": "Directory",
+          "type": "string"
+        }
+      },
+      "required": [
+        "config",
+        "name"
+      ],
+      "title": "save_pipelineArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "properties": {
+        "result": {
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "title": "save_pipelineOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "run_pipeline",
+    "title": "Run a pipeline",
+    "description": "Build and run a pipeline from a configuration and return the artifact paths it produced. Prefer running `preview_pipeline` first for event-driven reductions so the effect is audited before anything is written.",
+    "inputSchema": {
+      "properties": {
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        }
+      },
+      "required": [
+        "config"
+      ],
+      "title": "run_pipelineArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "run_pipelineDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "run_pipeline_batch",
+    "title": "Run a pipeline across many data sources (batch)",
+    "description": "Run one pipeline configuration against many data sources -- explicit paths or glob patterns like 'logs/*'. Each source is processed independently; a failure on one source is reported but does not stop the batch. Returns per-source results and a summary. For an event reduction, preview a representative source first.",
+    "inputSchema": {
+      "properties": {
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "config",
+        "paths"
+      ],
+      "title": "run_pipeline_batchArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "run_pipeline_batchDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "export_for_plotjuggler",
+    "title": "Export an event window for PlotJuggler",
+    "description": "Export a time window of topic data as a PlotJuggler session: a flattened CSV (one scalar column per signal) plus a layout file with the curves pre-added and the window pre-framed. Opening the returned command shows the event already plotted and zoomed. Use after preview_pipeline to hand an event to a human for visual inspection.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "topics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Topics",
+          "type": "array"
+        },
+        "start_seconds": {
+          "title": "Start Seconds",
+          "type": "number"
+        },
+        "end_seconds": {
+          "title": "End Seconds",
+          "type": "number"
+        },
+        "name": {
+          "default": "event",
+          "title": "Name",
+          "type": "string"
+        },
+        "signals": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signals"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        }
+      },
+      "required": [
+        "path",
+        "topics",
+        "start_seconds",
+        "end_seconds"
+      ],
+      "title": "export_for_plotjugglerArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "export_for_plotjugglerDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "export_for_rerun",
+    "title": "Export an event window for the Rerun viewer",
+    "description": "Export a time window of topic data as a Rerun recording (.rrd): every scalar signal becomes a Rerun time series, so `rerun <file>` opens the event in the Rerun viewer. Use after preview_pipeline to hand an event to a human for visual inspection. Needs the optional rerun-sdk dependency (uv sync --group viz).",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "topics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Topics",
+          "type": "array"
+        },
+        "start_seconds": {
+          "title": "Start Seconds",
+          "type": "number"
+        },
+        "end_seconds": {
+          "title": "End Seconds",
+          "type": "number"
+        },
+        "name": {
+          "default": "event",
+          "title": "Name",
+          "type": "string"
+        },
+        "signals": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signals"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        }
+      },
+      "required": [
+        "path",
+        "topics",
+        "start_seconds",
+        "end_seconds"
+      ],
+      "title": "export_for_rerunArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "export_for_rerunDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "export_for_lichtblick",
+    "title": "Export an event window for Lichtblick / Foxglove",
+    "description": "Export a time window of topic data as a Lichtblick session: an MCAP file with JSON-encoded channels plus a layout with the plot series and time/value ranges pre-set. Works in Lichtblick (open source) and Foxglove, which share the layout format. Use after preview_pipeline to hand an event to a human.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "topics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Topics",
+          "type": "array"
+        },
+        "start_seconds": {
+          "title": "Start Seconds",
+          "type": "number"
+        },
+        "end_seconds": {
+          "title": "End Seconds",
+          "type": "number"
+        },
+        "name": {
+          "default": "event",
+          "title": "Name",
+          "type": "string"
+        },
+        "signals": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Signals"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        }
+      },
+      "required": [
+        "path",
+        "topics",
+        "start_seconds",
+        "end_seconds"
+      ],
+      "title": "export_for_lichtblickArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "export_for_lichtblickDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "export_for_lerobot",
+    "title": "Export event windows as a LeRobot training dataset (beta)",
+    "description": "Export time windows as a LeRobotDataset v3.0 for robot-learning training: each window becomes an episode, resampled to a uniform fps, with the given signals composing feature vectors like observation.state and action. Use after preview_pipeline to turn detected events into a curated dataset. Beta: load-tests clean with the lerobot package; awaiting validation by real training runs.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "topics": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Topics",
+          "type": "array"
+        },
+        "episodes": {
+          "items": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object"
+          },
+          "title": "Episodes",
+          "type": "array"
+        },
+        "features": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Features",
+          "type": "object"
+        },
+        "fps": {
+          "title": "Fps",
+          "type": "integer"
+        },
+        "task": {
+          "title": "Task",
+          "type": "string"
+        },
+        "name": {
+          "default": "dataset",
+          "title": "Name",
+          "type": "string"
+        },
+        "robot_type": {
+          "default": "unknown",
+          "title": "Robot Type",
+          "type": "string"
+        },
+        "args": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Args"
+        }
+      },
+      "required": [
+        "path",
+        "topics",
+        "episodes",
+        "features",
+        "fps",
+        "task"
+      ],
+      "title": "export_for_lerobotArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "export_for_lerobotDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "snap_hardware",
+    "title": "Snapshot robot hardware into a WaffleForm (experimental beta)",
+    "description": "Auto-detect the robot's current hardware, firmware, and software using waffle-iron and return the resulting hardware state. Requires the waffle CLI on PATH (cargo install waffle-iron). The WaffleForm it writes is immediately queryable as a data source.",
+    "inputSchema": {
+      "properties": {
+        "directory": {
+          "default": ".",
+          "title": "Directory",
+          "type": "string"
+        }
+      },
+      "title": "snap_hardwareArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "snap_hardwareDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "enroll_fleet_identity",
+    "title": "Enroll this robot with a fleet broker",
+    "description": "Use this tool to enroll this robot with a fleet broker using a one-time enrollment token issued out of band. The token is single-use and is never stored on disk or logged: it is sent once, in the enrollment request body, and forgotten. If the server responds 200 but this process crashes before finishing, the token has already been consumed server-side -- the operator must re-issue a fresh token and retry (mirrors the enrollment runbook).",
+    "inputSchema": {
+      "properties": {
+        "token": {
+          "title": "Token",
+          "type": "string"
+        },
+        "enroll_url": {
+          "title": "Enroll Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token",
+        "enroll_url"
+      ],
+      "title": "enroll_fleet_identityArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "enroll_fleet_identityDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "stream_live_topics",
+    "title": "Start or update live streaming rules",
+    "description": "Use this tool to add or replace channel and event rules that stream data to a fleet broker in real time, then (re)start streaming with the merged rule set. A channel rule projects fields (or a `lat`/`lon` geo pair) off a topic at a capped rate; an event rule fires a named predicate with optional pre/post capture windows. A matching `topic`/`name` REPLACES the existing rule; anything new is appended.",
+    "inputSchema": {
+      "properties": {
+        "channels": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Channels"
+        },
+        "events": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Events"
+        }
+      },
+      "title": "stream_live_topicsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "stream_live_topicsDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "stop_live_streams",
+    "title": "Stop live streaming rules",
+    "description": "Use this tool to remove channel and event rules by name from the live streaming service, then restart with what remains (or leave a running service alone when nothing matched).",
+    "inputSchema": {
+      "properties": {
+        "channels": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Channels"
+        },
+        "events": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Events"
+        }
+      },
+      "title": "stop_live_streamsArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "stop_live_streamsDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "pause_fleet_streaming",
+    "title": "Pause fleet streaming",
+    "description": "Use this tool to take the live streaming connection to a fleet broker offline while keeping this robot's identity and streaming rules intact, so `resume_fleet_streaming` can bring it back exactly as it was.",
+    "inputSchema": {
+      "properties": {
+        "discard": {
+          "default": false,
+          "title": "Discard",
+          "type": "boolean"
+        }
+      },
+      "title": "pause_fleet_streamingArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "pause_fleet_streamingDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "resume_fleet_streaming",
+    "title": "Resume fleet streaming",
+    "description": "Use this tool to bring a paused streaming connection to a fleet broker back online, mirroring `pause_fleet_streaming`.",
+    "inputSchema": {
+      "properties": {},
+      "title": "resume_fleet_streamingArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "resume_fleet_streamingDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "describe_stream_status",
+    "title": "Describe fleet streaming status",
+    "description": "Use this tool to check this robot's fleet-streaming state: whether the fleet dependencies are installed, enabled, whether this robot is enrolled, and what the live streaming service is currently doing. This is the local source of truth -- it works and answers sanely in every state, including when a fleet broker itself is unreachable.",
+    "inputSchema": {
+      "properties": {},
+      "title": "describe_stream_statusArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "describe_stream_statusDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "unenroll_fleet_identity",
+    "title": "Unenroll this robot from its fleet broker",
+    "description": "Use this tool to permanently remove this robot's fleet identity and streaming rules, stopping any live streaming service first. The robot returns to local-only operation; re-enrolling later requires a fresh enrollment token.",
+    "inputSchema": {
+      "properties": {},
+      "title": "unenroll_fleet_identityArguments",
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "title": "unenroll_fleet_identityDictOutput",
+      "type": "object"
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  }
+]
