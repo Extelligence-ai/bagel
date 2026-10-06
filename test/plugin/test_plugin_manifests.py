@@ -1,4 +1,4 @@
-"""Structural tests for the Claude Code plugin manifests."""
+"""Structural tests for the shared agent plugin manifests."""
 
 import json
 import pathlib
@@ -53,3 +53,49 @@ def test_codex_sideload_marketplace_entry_is_codex_shaped() -> None:
     assert entry["policy"]["installation"] in {"INSTALLED_BY_DEFAULT", "AVAILABLE", "NOT_AVAILABLE"}
     assert entry["policy"]["authentication"] in {"ON_INSTALL", "ON_USE"}
     assert entry["category"]
+
+
+def test_cursor_marketplace_resolves_shared_plugin_and_components() -> None:
+    marketplace = json.loads(pathlib.Path(".cursor-plugin/marketplace.json").read_text())
+    (entry,) = marketplace["plugins"]
+    plugin_root = pathlib.Path(entry["source"])
+    assert plugin_root.resolve() == pathlib.Path("plugin").resolve()
+    manifest = json.loads((plugin_root / ".cursor-plugin/plugin.json").read_text())
+    assert entry["name"] == manifest["name"] == "bagel"
+    assert (plugin_root / manifest["mcpServers"]).resolve() == pathlib.Path(
+        "plugin/.mcp.json"
+    ).resolve()
+    skills = plugin_root / manifest["skills"]
+    assert skills.resolve() == pathlib.Path("plugin/skills").resolve()
+    assert {p.parent.name for p in skills.glob("*/SKILL.md")} == {
+        "authoring-pipelines",
+        "exporting-visualizations",
+        "operating-live-sinks",
+        "triaging-robot-logs",
+    }
+
+
+def test_cursor_directory_metadata_and_paths_match_shared_plugin() -> None:
+    # The directory importer reads the root plugin manifest before the marketplace.
+    # It discovers nested components through plugin/.cursor-plugin/plugin.json.
+    root_manifest = json.loads(pathlib.Path(".cursor-plugin/plugin.json").read_text())
+    nested = json.loads(pathlib.Path("plugin/.cursor-plugin/plugin.json").read_text())
+    claude = json.loads(pathlib.Path("plugin/.claude-plugin/plugin.json").read_text())
+    for key in (
+        "name",
+        "description",
+        "version",
+        "author",
+        "homepage",
+        "repository",
+        "license",
+        "keywords",
+    ):
+        assert root_manifest[key] == nested[key]
+    for key in ("name", "description", "version"):
+        assert root_manifest[key] == claude[key]
+    for key in ("skills", "mcpServers"):
+        root_path = pathlib.Path(root_manifest[key])
+        nested_path = pathlib.Path("plugin") / nested[key]
+        assert root_path.exists()
+        assert root_path.resolve() == nested_path.resolve()

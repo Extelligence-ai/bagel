@@ -10,6 +10,10 @@ Its Cursor manifest loads all four skills (log triage, pipeline authoring, live
 sinks, and visualization export) and the existing `.mcp.json` connection to
 `http://localhost:8000/mcp`.
 
+The root `.cursor-plugin/plugin.json` exposes the same metadata and component
+paths for repository-level importers. This lets Cursor Directory import the
+full listing metadata as well as the nested skills and MCP connection.
+
 The plugin connects to a local server; it does not install or start Docker.
 Start the container for your data format using the Quickstart below before
 using the plugin. Bagel runs locally and requires no Matcha account. The manual
