@@ -10,13 +10,12 @@ in Bagel data pipelines and write them to standard formats.
 
 ## Prerequisites
 
-Install the cloudini dependency group:
+Every Bagel image ships the cloudini Python dependencies, `wasmtime` (WebAssembly
+runtime) and `numpy` (since 2.4.2). Running the server outside Docker? Install them with:
 
 ```bash
 uv sync --group cloudini
 ```
-
-This installs `wasmtime` (WebAssembly runtime) and `numpy`.
 
 You also need the **cloudini WASM binary** (`cloudini_wasm.wasm`). Build it from the
 [cloudini repo](https://github.com/facontidavide/cloudini) or use a pre-built release:

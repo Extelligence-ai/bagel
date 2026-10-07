@@ -171,7 +171,8 @@ Credentials use the standard AWS resolution chain (env vars, `~/.aws`, instance 
 GCS (`src.pipeline.tasks.upload.gcs`, standard Google credential chain) and Azure Blob
 (`src.pipeline.tasks.upload.azure`, connection string or
 `AZURE_STORAGE_CONNECTION_STRING`) uploaders mirror the same source/prefix/window/skip
-semantics. Their SDKs live in the `upload` dependency group: `uv sync --group upload`.
+semantics. Every image ships their SDKs (since 2.4.2); outside Docker, install the `upload`
+dependency group: `uv sync --group upload`.
 
 ## Verify the mechanism without ROS
 

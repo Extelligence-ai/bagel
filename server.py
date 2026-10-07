@@ -1352,7 +1352,7 @@ def export_for_plotjuggler(  # noqa: PLR0913
     description=(
         "Write a selected time window as scalar time series in a Rerun .rrd recording; returns "
         "its path, signals, and an opening command. Choose this when the user requests Rerun. "
-        "Requires rerun-sdk (uv sync --group viz) and a separate viewer. Inspect topic schemas "
+        "Needs the Rerun viewer on the host (the SDK ships in every image). Inspect topic schemas "
         "and use source timestamps in seconds. This exporter does not produce camera or 3D "
         "scene replay and does not launch the viewer."
     ),

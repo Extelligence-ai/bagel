@@ -7,12 +7,14 @@ opens with the full signal tree ready to explore.
 
 ## Setup
 
-The export needs the optional `rerun-sdk` dependency, and the viewer itself:
+Every Bagel image ships the `rerun-sdk` the export needs (since 2.4.2). You only need
+the viewer on your machine to open the recording:
 
 ```bash
-uv sync --group viz          # the SDK, for the export
 uvx rerun-sdk@latest --help  # or: pip install rerun-sdk / the desktop app
 ```
+
+Running the server outside Docker? Install the SDK with `uv sync --group viz`.
 
 ## From a prompt
 
