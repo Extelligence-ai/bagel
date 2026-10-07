@@ -226,7 +226,10 @@ Codex and ChatGPT users: install bagel from the
 [OpenAI Plugins Directory](https://chatgpt.com/plugins/plugins_6a8623a0fe288191833ee0ca3fa883e7)
 (one click), or clone the repo and add it as a plugin marketplace (the repo
 carries `.agents/plugins/marketplace.json`). Directory installs bundle the
-skills only, so also connect the server once in `~/.codex/config.toml`:
+skills only (the directory accepts only public HTTPS MCP servers, and
+Bagel's runs on your machine), so also connect the server once with
+`codex mcp add bagel --url http://localhost:8000/mcp`, or in
+`~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.bagel]
@@ -234,6 +237,8 @@ url = "http://localhost:8000/mcp"
 ```
 
 Repo-marketplace and Claude Code installs wire this connection automatically.
+Maintainers build the directory ZIP with
+`uv run python scripts/package_codex_directory.py`.
 
 Then start the container for your data format (see Quickstart): the plugin
 connects to `http://localhost:8000/mcp` by default. Any other MCP client can

@@ -1,6 +1,6 @@
 {
   "name": "bagel",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Skills and MCP connection for Bagel: query rosbags, MCAP, CAN, MDF4, PX4/ArduPilot/Betaflight logs and live robot data in plain language; author event-windowed data-reduction pipelines; export to Rerun, Lichtblick, PlotJuggler, and LeRobot. Requires the Bagel server running locally in Docker; setup: https://github.com/Extelligence-ai/bagel",
   "author": {
     "name": "Extelligence",
@@ -23,7 +23,7 @@
   "interface": {
     "displayName": "Bagel",
     "shortDescription": "Query robot data in English",
-    "longDescription": "Bagel lets you ask questions about robotics, drone, and IoT data (ROS 1/2 bags, MCAP, PX4/ArduPilot/Betaflight logs, CAN/MF4, live MQTT) in plain English. Every answer is computed by DuckDB SQL over the actual messages and the query is shown for audit. Bagel also has an intelligent edge data reduction pipeline: describe an event once, preview what would be kept, then run it on the robot. The plugin bundles the MCP connection (localhost:8000/mcp; server runs in Docker, data never leaves the machine) plus four skills that teach the agent the server's own workflows: triage, pipeline authoring, live sinks, and export to Rerun / Lichtblick / PlotJuggler / LeRobot.",
+    "longDescription": "Bagel lets you ask questions about robotics, drone, and IoT data (ROS 1/2 bags, MCAP, PX4/ArduPilot/Betaflight logs, CAN/MF4, live MQTT) in plain English. Every answer is computed by DuckDB SQL over the actual messages and the query is shown for audit. Bagel also has an intelligent edge data reduction pipeline: describe an event once, preview what would be kept, then run it on the robot. The plugin adds four skills that teach the agent the server's own workflows: triage, pipeline authoring, live sinks, and export to Rerun / Lichtblick / PlotJuggler / LeRobot. Bagel runs in Docker on your machine, so your data never leaves it: start the container, then connect Codex once with `codex mcp add bagel --url http://localhost:8000/mcp`.",
     "developerName": "Extelligence",
     "websiteURL": "https://trybagel.com/",
     "privacyPolicyURL": "https://trybagel.com/privacy/",

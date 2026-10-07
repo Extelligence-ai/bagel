@@ -19,5 +19,8 @@ preview-before-run rule. Do not write pipeline YAML from memory:
    CLI (`run.py`); that path is for users at a terminal in the repo, not for
    plugin sessions — do not shell out to it.
 
-If the connection fails, the server container is not running — see
-references/formats.md.
+If the bagel tools are missing, Bagel is not connected yet. The user must
+start the Docker container for their data format (see references/formats.md
+for the format → image → extra-args table) and, in Codex, connect it once
+with `codex mcp add bagel --url http://localhost:8000/mcp`. Claude Code
+installs connect automatically.
