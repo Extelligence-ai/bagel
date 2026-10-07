@@ -29,8 +29,8 @@ def _cloudini_available() -> bool:
     """Return True if cloudini dependencies are installed and globally enabled."""
     if not _HAS_CLOUDINI:
         logging.warning(
-            "cloudini dependencies (wasmtime, numpy) are not installed. "
-            "Install them with: uv sync --group cloudini"
+            "Skipping cloudini decoding: wasmtime is not installed. %s",
+            module.missing_group_hint("cloudini"),
         )
         return False
     if not settings.CLOUDINI_ENABLED:

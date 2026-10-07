@@ -15,6 +15,7 @@ from typing import Any
 import duckdb
 
 from settings import settings
+from src.di import module
 from src.pipeline import flatten as flatten_module
 from src.pipeline.plotjuggler import _numeric_columns
 
@@ -53,8 +54,8 @@ def export_window(  # noqa: PLR0913
         import rerun as rr
     except ImportError as error:  # pragma: no cover -- exercised only without the dep
         raise ImportError(
-            "The Rerun export needs the optional 'rerun-sdk' dependency; "
-            "install it with: uv sync --group viz"
+            f"The Rerun export needs the optional 'rerun-sdk' package. "
+            f"{module.missing_group_hint('viz')}"
         ) from error
 
     flat = flatten_module.flatten(relation)

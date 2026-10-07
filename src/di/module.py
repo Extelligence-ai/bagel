@@ -17,6 +17,48 @@ class Module(Protocol):
         """Register the module's constructor by its name."""
 
 
+# Top-level packages of the optional dependency groups that every image ships
+# since 2.4.2, mapped to the group that installs them outside Docker.
+OPTIONAL_PACKAGE_GROUPS = {
+    "asammdf": "automotive",
+    "can": "automotive",
+    "cantools": "automotive",
+    "azure": "upload",
+    "google": "upload",
+    "wasmtime": "cloudini",
+    "rerun": "viz",
+}
+
+
+def missing_group_hint(group: str) -> str:
+    """Return how to install an optional dependency group, in Docker or out of it."""
+    return (
+        f"In Docker, pull a Bagel image from 2.4.2 or later (`docker compose pull`); "
+        f"outside Docker, run: uv sync --group {group}"
+    )
+
+
+def import_module(import_path: str) -> Module:
+    """Import a module, naming the fix when an optional dependency is missing.
+
+    Raises:
+        ModuleNotFoundError: With the dependency group to install, when the
+            missing package belongs to one.
+
+    """
+    try:
+        return importlib.import_module(import_path)
+    except ModuleNotFoundError as error:
+        package = (error.name or "").split(".")[0]
+        group = OPTIONAL_PACKAGE_GROUPS.get(package)
+        if group is None:
+            raise
+        raise ModuleNotFoundError(
+            f"{import_path} needs the optional '{error.name}' package. {missing_group_hint(group)}",
+            name=error.name,
+        ) from error
+
+
 def provide(import_path: str, args: dict[str, Any]) -> object:
     """Provide an instance of a module based on the base module and data source.
 
@@ -28,7 +70,7 @@ def provide(import_path: str, args: dict[str, Any]) -> object:
         object: An instance of the module.
 
     """
-    module: Module = importlib.import_module(import_path)
+    module = import_module(import_path)
     module.register()
     return construct(global_registry[import_path], args)
 
