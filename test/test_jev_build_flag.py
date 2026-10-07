@@ -101,8 +101,9 @@ def test_every_pipeline_service_forwards_the_typesafe_key() -> None:
     assert missing == []
 
 
-def test_sync_always_adds_the_viz_group(tmp_path: pathlib.Path) -> None:
-    # export_for_rerun is served by every image; without the group it fails at call time.
+def test_sync_always_adds_the_shared_feature_groups(tmp_path: pathlib.Path) -> None:
+    # Every image serves these tools and sources; a missing group fails at call time.
     for groups in ((), ("ros2",), ("ros1", "cv")):
         args = _sync_args(tmp_path, {}, *groups)
-        assert args[args.index("viz") - 1] == "--group"
+        for shared in ("viz", "automotive", "upload", "cloudini"):
+            assert args[args.index(shared) - 1] == "--group"

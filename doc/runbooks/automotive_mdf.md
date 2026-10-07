@@ -7,7 +7,8 @@ prompt that works on a ROS bag works on a measurement.
 
 ## Setup
 
-The MDF reader needs the optional `automotive` dependency group:
+Every Bagel image ships the MDF reader (since 2.4.2). Running the server outside
+Docker? Install the optional `automotive` dependency group:
 
 ```bash
 uv sync --group automotive
