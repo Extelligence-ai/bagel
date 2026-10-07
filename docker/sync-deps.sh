@@ -7,6 +7,8 @@ args=(--locked)
 if [[ "$dev_mode" != true ]]; then
     args+=(--no-dev)
 fi
+# Every image serves export_for_rerun, so every image needs rerun-sdk.
+set -- "$@" viz
 # JEV_MODE (a Docker build arg) opts the image into the on-robot decision model.
 if [[ "${JEV_MODE:-false}" == true ]]; then
     set -- "$@" jev

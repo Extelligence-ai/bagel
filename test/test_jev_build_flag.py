@@ -99,3 +99,10 @@ def test_every_pipeline_service_forwards_the_typesafe_key() -> None:
         and "TYPESAFE_API_KEY" not in (service.get("environment") or {})
     ]
     assert missing == []
+
+
+def test_sync_always_adds_the_viz_group(tmp_path: pathlib.Path) -> None:
+    # export_for_rerun is served by every image; without the group it fails at call time.
+    for groups in ((), ("ros2",), ("ros1", "cv")):
+        args = _sync_args(tmp_path, {}, *groups)
+        assert args[args.index("viz") - 1] == "--group"
