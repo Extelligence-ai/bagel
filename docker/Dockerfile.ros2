@@ -4,7 +4,9 @@ FROM ros:${ROS_DISTRO}-ros-core
 # this label on the public image before accepting the server record.
 LABEL io.modelcontextprotocol.server.name="io.github.Extelligence-ai/bagel"
 
-# Install common tools and ROS2 packages
+# Install common tools and ROS2 packages. asammdf (automotive group) has no
+# linux-aarch64 wheel, so arm64 builds compile it and need a C toolchain.
+ARG TARGETARCH
 # hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get upgrade -y && \
@@ -20,6 +22,9 @@ RUN apt-get update && \
     "ros-${ROS_DISTRO}-ros2bag" \
     "ros-${ROS_DISTRO}-rosbag2-transport" \
     "ros-${ROS_DISTRO}-rosbag2-storage-mcap" && \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
+    apt-get install -y --no-install-recommends gcc libc6-dev; \
+    fi && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
