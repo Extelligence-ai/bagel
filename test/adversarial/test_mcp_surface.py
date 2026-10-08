@@ -2,7 +2,7 @@
 
 import pytest
 
-import server
+from bagel_mcp import server
 
 # Paths that should raise errors
 BAD_PATHS_SHOULD_RAISE = ["/does/not/exist.mcap", "relative/nope.bag", "\x00null"]

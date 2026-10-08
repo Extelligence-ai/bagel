@@ -8,9 +8,9 @@ import pytest
 
 pytest.importorskip("paho")
 
-from settings import settings
-from src.sink import base as sink_base
-from src.sink import mqtt
+from bagel_mcp.settings import settings
+from bagel_mcp.sink import base as sink_base
+from bagel_mcp.sink import mqtt
 
 
 class FakePahoClient:

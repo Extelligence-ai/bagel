@@ -24,7 +24,7 @@ def test_settings_instantiate_without_env_file(tmp_path: pathlib.Path) -> None:
             sys.executable,
             "-c",
             f"import sys; sys.path.insert(0, {project!r}); "
-            "from settings import settings; "
+            "from bagel_mcp.settings import settings; "
             "print(settings.CONTAINER_MODE, settings.MCP_SERVER_HOST, settings.MCP_SERVER_PORT)",
         ],
         capture_output=True,
@@ -46,7 +46,7 @@ def test_defaults_match_repo_env_file() -> None:
         for line in pathlib.Path(".env").read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.startswith("#")
     )
-    from settings import Settings
+    from bagel_mcp.settings import Settings
 
     fields = Settings.model_fields
     assert fields["MCP_SERVER_HOST"].default == env["MCP_SERVER_HOST"]

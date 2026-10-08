@@ -5,10 +5,10 @@ import pathlib
 
 import pytest
 
-from src.di import module
-from src.di.types.base_module import BaseModule
-from src.di.types.data_source import DataSource, resolve
-from src.topic import base as topic_base
+from bagel_mcp.di import module
+from bagel_mcp.di.types.base_module import BaseModule
+from bagel_mcp.di.types.data_source import DataSource, resolve
+from bagel_mcp.topic import base as topic_base
 
 SAMPLE = "data/sample/waffle/robot.waffleform.yaml"
 

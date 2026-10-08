@@ -1,7 +1,7 @@
 import datetime
 import pathlib
 
-from src.source.ros.parse import LogRecord, looks_like_ros_log, parse_file, parse_line
+from bagel_mcp.source.ros.parse import LogRecord, looks_like_ros_log, parse_file, parse_line
 
 SAMPLE_DIRECTORY = pathlib.Path("data/sample/ros/log")
 

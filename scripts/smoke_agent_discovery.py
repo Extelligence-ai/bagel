@@ -55,7 +55,7 @@ async def run(output: Path) -> None:
     }
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-c", "import server; server.server.run(transport='stdio')"],
+        args=["-c", "from bagel_mcp import server; server.server.run(transport='stdio')"],
         cwd=str(Path(__file__).resolve().parents[1]),
         env=env,
     )

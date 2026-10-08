@@ -18,7 +18,7 @@ cadence:
     every: 10
     unit: second
 gates:
-  - module: src.pipeline.gates.decide
+  - module: bagel_mcp.pipeline.gates.decide
     lookback:
       last: 10
       unit: second
@@ -35,7 +35,7 @@ gates:
       # backend: local
       # model: <hugging-face-model-id-or-path>
 tasks:
-  - module: src.pipeline.tasks.snippet.mcap
+  - module: bagel_mcp.pipeline.tasks.snippet.mcap
     lookback:
       last: 10
       unit: second

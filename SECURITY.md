@@ -61,6 +61,6 @@ the product working as intended:
 - Cloud upload tasks use your ambient credentials (AWS/GCS/Azure SDK chains);
   scope those credentials to the destination buckets.
 - Published images contain no `.env`. Runtime configuration comes from the
-  defaults in `settings.py`, Compose's `environment:`/`env_file:`, or the
+  defaults in `bagel_mcp/settings.py`, Compose's `environment:`/`env_file:`, or the
   process environment — so a secret added to a local `.env` is never baked
   into a published image layer.

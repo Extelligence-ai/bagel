@@ -2,11 +2,11 @@
 
 import pathlib
 
-from src.agent.capabilities import list_capabilities
+from bagel_mcp.agent.capabilities import list_capabilities
 
 
 def _recipe() -> str:
-    return pathlib.Path("src/agent/compose/anomaly_pipeline.poml").read_text(encoding="utf-8")
+    return pathlib.Path("bagel_mcp/agent/compose/anomaly_pipeline.poml").read_text(encoding="utf-8")
 
 
 def test_recipe_is_discovered_with_a_summary() -> None:
@@ -21,7 +21,7 @@ def test_recipe_walks_the_calibrate_first_workflow() -> None:
         "describe_topic",
         "preview_anomalies",
         "list_pipeline_capabilities",
-        "src.pipeline.gates.anomaly",
+        "bagel_mcp.pipeline.gates.anomaly",
         "write_annotations",
     ):
         assert step in text, step

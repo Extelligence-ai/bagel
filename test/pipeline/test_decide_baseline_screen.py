@@ -1,10 +1,10 @@
-"""Tests for the rolling baseline and the on-robot screen (`src.pipeline.decide`)."""
+"""Tests for the rolling baseline and the on-robot screen (`bagel_mcp.pipeline.decide`)."""
 
 import random
 
 import pytest
 
-from src.pipeline.decide import baseline, screen
+from bagel_mcp.pipeline.decide import baseline, screen
 
 
 def _window(end: float, values: list[float], topic_last: float | None = None) -> dict:

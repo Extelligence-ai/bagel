@@ -6,10 +6,10 @@ import pathlib
 import pyarrow as pa
 import pytest
 
-from settings import settings
-from src.pipeline import base as pipeline_base
-from src.sink import base
-from src.sink.buffer import TopicBufferWriter
+from bagel_mcp.pipeline import base as pipeline_base
+from bagel_mcp.settings import settings
+from bagel_mcp.sink import base
+from bagel_mcp.sink.buffer import TopicBufferWriter
 from test._fixtures.fault_log import write_fault_log
 
 _port_counter = itertools.count(19500)
@@ -57,12 +57,12 @@ def _config(cadence_topic: str) -> dict:
         "cadence": {"topic": cadence_topic, "when": {"every": 10, "unit": "second"}},
         "gates": [
             {
-                "module": "src.pipeline.gates.anomaly",
+                "module": "bagel_mcp.pipeline.gates.anomaly",
                 "lookback": {"last": 10, "unit": "second"},
                 "args": {"anomalies": {"overcurrent": "too much current"}},
             }
         ],
-        "tasks": [{"module": "src.pipeline.tasks.write_annotations"}],
+        "tasks": [{"module": "bagel_mcp.pipeline.tasks.write_annotations"}],
     }
 
 
@@ -75,7 +75,7 @@ def test_a_live_topic_accepts_an_anomaly_pipeline(sink: _FakeSink, tmp_path: pat
 
 
 def test_subscribe_with_pipeline_accepts_an_anomaly_pipeline(sink: _FakeSink) -> None:
-    from src.sink import startup
+    from bagel_mcp.sink import startup
 
     assert startup.subscribe_with_pipeline(sink, ["/a", "/b"], _config("/b")) == ["/a", "/b"]
     assert sink._buffers["/b"].pipeline is not None
@@ -83,7 +83,7 @@ def test_subscribe_with_pipeline_accepts_an_anomaly_pipeline(sink: _FakeSink) ->
 
 
 def test_resubscribing_a_topic_stops_the_replaced_pipeline_worker(sink: _FakeSink) -> None:
-    from src.sink import startup
+    from bagel_mcp.sink import startup
 
     startup.subscribe_with_pipeline(sink, ["/b"], _config("/b"))
     old = sink._buffers["/b"]
@@ -97,8 +97,8 @@ class _SlowPipeline:
     """Duck-typed live pipeline whose single fire takes a while."""
 
     def __init__(self, seconds: float) -> None:
-        from src.pipeline.base import Cadence, Frequency, Unit
-        from src.pipeline.results import RunSummary
+        from bagel_mcp.pipeline.base import Cadence, Frequency, Unit
+        from bagel_mcp.pipeline.results import RunSummary
 
         self.name = "slow"
         self.cadence = Cadence(topic="/a", when=Frequency(every=1, unit=Unit.FRAME))
@@ -171,11 +171,11 @@ def test_a_failed_transport_subscribe_leaves_no_writer_or_worker(
 @pytest.mark.parametrize(
     "task",
     [
-        {"module": "src.pipeline.tasks.snippet.mcap"},
-        {"module": "src.pipeline.tasks.snippet.ros1.bag"},
-        {"module": "src.pipeline.tasks.cloudini.compress_pointcloud"},
+        {"module": "bagel_mcp.pipeline.tasks.snippet.mcap"},
+        {"module": "bagel_mcp.pipeline.tasks.snippet.ros1.bag"},
+        {"module": "bagel_mcp.pipeline.tasks.cloudini.compress_pointcloud"},
         {
-            "module": "src.pipeline.tasks.reduce.mcap",
+            "module": "bagel_mcp.pipeline.tasks.reduce.mcap",
             "args": {"event_topic": "/b", "predicate": "x > 1", "pre_seconds": 5},
         },
     ],
@@ -185,7 +185,7 @@ def test_a_live_pipeline_refuses_tasks_that_need_a_recorded_log(
 ) -> None:
     # The live sink buffer is not a bag file: these tasks would fail on every fire (and
     # with allow_failure false, stop the pipeline). Refuse them before subscribing.
-    from src.sink import startup
+    from bagel_mcp.sink import startup
 
     config = _config("/b")
     config["tasks"] = [task, *config["tasks"]]
@@ -196,12 +196,12 @@ def test_a_live_pipeline_refuses_tasks_that_need_a_recorded_log(
 
 
 def test_a_live_pipeline_can_slice_the_window_to_parquet(sink: _FakeSink) -> None:
-    from src.sink import startup
+    from bagel_mcp.sink import startup
 
     config = _config("/b")
     config["tasks"] = [
         {
-            "module": "src.pipeline.tasks.write_topics_to_file",
+            "module": "bagel_mcp.pipeline.tasks.write_topics_to_file",
             "lookback": {"last": 10, "unit": "second"},
             "args": {"topics": None, "output_format": "parquet"},
         },
@@ -236,7 +236,7 @@ def test_unsubscribe_an_unknown_topic_changes_nothing(sink: _FakeSink) -> None:
 def test_the_unsubscribe_tool_stops_topics_and_closes_an_emptied_sink(
     sink: _FakeSink, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import server
+    from bagel_mcp import server
 
     monkeypatch.setattr(server, "_sink_class", lambda ts_type: _FakeSink)
 
@@ -256,7 +256,7 @@ def test_the_unsubscribe_tool_stops_topics_and_closes_an_emptied_sink(
 
 
 def test_the_unsubscribe_tool_never_opens_a_new_connection(sink: _FakeSink) -> None:
-    import server
+    from bagel_mcp import server
 
     before = base.live_sinks()
     with pytest.raises(ValueError, match="No live"):
@@ -301,7 +301,7 @@ def test_unsubscribe_keeps_a_topic_whose_fire_outlives_the_drain_window(
 def test_the_unsubscribe_tool_matches_the_sink_type(
     sink: _FakeSink, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import server
+    from bagel_mcp import server
 
     class _OtherSink(_FakeSink):
         pass

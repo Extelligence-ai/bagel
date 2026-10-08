@@ -1,6 +1,6 @@
-from src.logging.ros1.bag import LoggingDataset
-from src.source.ros1.bag import SourceFactory
-from src.topic.ros1.bag import TopicRegistry
+from bagel_mcp.logging.ros1.bag import LoggingDataset
+from bagel_mcp.source.ros1.bag import SourceFactory
+from bagel_mcp.topic.ros1.bag import TopicRegistry
 
 
 def test_logging_dataset() -> None:

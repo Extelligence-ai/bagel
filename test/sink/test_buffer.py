@@ -9,9 +9,9 @@ from unittest.mock import Mock
 import pyarrow as pa
 import pytest
 
-from src.pipeline.base import Cadence, Frequency, Lookback, OnceAtEnd, OnEvent, Unit
-from src.sink.base import TopicSink
-from src.sink.buffer import TopicBufferReader, TopicBufferWriter, _artifact_paths
+from bagel_mcp.pipeline.base import Cadence, Frequency, Lookback, OnceAtEnd, OnEvent, Unit
+from bagel_mcp.sink.base import TopicSink
+from bagel_mcp.sink.buffer import TopicBufferReader, TopicBufferWriter, _artifact_paths
 
 TOPIC = "/imu"
 STRUCT = pa.struct([pa.field("x", pa.float64()), pa.field("note", pa.string())])

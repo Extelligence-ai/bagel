@@ -1,6 +1,6 @@
-from src.message.ros2.mcap import MessageDataset
-from src.source.ros2.mcap import SourceFactory
-from src.topic.ros2.mcap import TopicRegistry
+from bagel_mcp.message.ros2.mcap import MessageDataset
+from bagel_mcp.source.ros2.mcap import SourceFactory
+from bagel_mcp.topic.ros2.mcap import TopicRegistry
 
 
 def test_message_dataset() -> None:

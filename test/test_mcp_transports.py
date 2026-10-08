@@ -12,7 +12,7 @@ import httpx
 import uvicorn
 from starlette.testclient import TestClient
 
-from src import mcp_compat
+from bagel_mcp import mcp_compat
 
 INITIALIZE = {
     "jsonrpc": "2.0",

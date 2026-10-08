@@ -1,6 +1,6 @@
 # Resource & behavior knobs (env vars on the server container)
 
-Defined in `settings.py`; set via the container environment or `.env`.
+Defined in `bagel_mcp/settings.py`; set via the container environment or `.env`.
 
 | Knob | Default | Meaning |
 |---|---|---|

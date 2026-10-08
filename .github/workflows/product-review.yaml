@@ -29,20 +29,20 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     # Must cover every surface the persona (.github/agents/product-completeness-agent.md)
-    # claims to grade: MCP tools + CLI entry (server.py, run.py), agent
-    # capabilities/.poml (src/agent/**), pipeline tasks/gates/discovery
-    # (src/pipeline/**), wire-contract/publish surfaces (src/sink/**), a
-    # user-settable knob (settings.py, compose.yaml), and the docs the
+    # claims to grade: MCP tools + CLI entry (bagel_mcp/server.py, bagel_mcp/run.py), agent
+    # capabilities/.poml (bagel_mcp/agent/**), pipeline tasks/gates/discovery
+    # (bagel_mcp/pipeline/**), wire-contract/publish surfaces (bagel_mcp/sink/**), a
+    # user-settable knob (bagel_mcp/settings.py, compose.yaml), and the docs the
     # persona checks for parity (protocol doc, runbooks, plugin skills). A
     # gap here is a doc/contract-parity miss inside the agent itself (lens 6).
     paths:
-      - "server.py"
-      - "run.py"
-      - "settings.py"
+      - "bagel_mcp/server.py"
+      - "bagel_mcp/run.py"
+      - "bagel_mcp/settings.py"
       - "compose.yaml"
-      - "src/agent/**"
-      - "src/pipeline/**"
-      - "src/sink/**"
+      - "bagel_mcp/agent/**"
+      - "bagel_mcp/pipeline/**"
+      - "bagel_mcp/sink/**"
       - "doc/fleet_protocol_v1.md"
       - "doc/runbooks/**"
       - "plugin/skills/**"

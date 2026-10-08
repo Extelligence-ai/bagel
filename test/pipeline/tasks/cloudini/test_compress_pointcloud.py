@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from settings import settings
-from src.pipeline.tasks.cloudini.compress_pointcloud import (
+from bagel_mcp.pipeline.tasks.cloudini.compress_pointcloud import (
     CLOUDINI_CONVERTER,
     CompressPointCloud,
     _converter_available,
 )
+from bagel_mcp.settings import settings
 
 
 def _task(tmp_path: pathlib.Path, cloudini: bool = True) -> CompressPointCloud:

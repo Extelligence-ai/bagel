@@ -3,7 +3,10 @@
 set -euo pipefail
 dev_mode="$1"
 shift
-args=(--locked)
+# The package itself (bagel_mcp/) is copied in after this layer, so only the
+# locked dependencies are installed here; `uv run` resolves the package from
+# the working directory like any other script.
+args=(--locked --no-install-project)
 if [[ "$dev_mode" != true ]]; then
     args+=(--no-dev)
 fi

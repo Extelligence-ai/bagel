@@ -364,11 +364,11 @@ correct any errors.
 
 Bagel learns new capabilities through [POML](https://microsoft.github.io/poml/latest/)
 files: a structured set of instructions that describe a “trick,”
-such as [computing latency statistics](./src/agent/diagnose/latency.poml).
+such as [computing latency statistics](./bagel_mcp/agent/diagnose/latency.poml).
 
 #### ✍️ Create a .poml file
 
-For example, let’s define `./src/agent/examples/woof.poml`.
+For example, let’s define `./bagel_mcp/agent/examples/woof.poml`.
 
 ```poml
 <poml>
@@ -387,7 +387,7 @@ For example, let’s define `./src/agent/examples/woof.poml`.
 
 Prompt Bagel:
 
-> Run the POML capability "./src/agent/examples/woof.poml" on the ROS2 bag "./data/sample/ros2/mcap".
+> Run the POML capability "./bagel_mcp/agent/examples/woof.poml" on the ROS2 bag "./data/sample/ros2/mcap".
 
 Result:
 
@@ -404,7 +404,7 @@ Bagel discovers your own capabilities from `~/.bagel/capabilities/`:
   and it's reusable in any future session.
 - **As a file:** drop a markdown file with your steps (or a
   [POML](https://github.com/microsoft/poml) file, if you want parameterized
-  templates — see `src/agent/compose/pipeline.poml` for the house style)
+  templates — see `bagel_mcp/agent/compose/pipeline.poml` for the house style)
   into `~/.bagel/capabilities/`.
 
 Either way it shows up in `list_agent_capabilities` as `user/<name>` and runs

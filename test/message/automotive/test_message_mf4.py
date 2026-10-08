@@ -8,10 +8,10 @@ asammdf = pytest.importorskip("asammdf", reason="asammdf is optional (uv sync --
 import numpy as np  # noqa: E402
 from asammdf import MDF, Signal  # noqa: E402
 
-from src.di import module  # noqa: E402
-from src.di.types.base_module import BaseModule  # noqa: E402
-from src.di.types.data_source import DataSource, resolve  # noqa: E402
-from src.topic import base as topic_base  # noqa: E402
+from bagel_mcp.di import module  # noqa: E402
+from bagel_mcp.di.types.base_module import BaseModule  # noqa: E402
+from bagel_mcp.di.types.data_source import DataSource, resolve  # noqa: E402
+from bagel_mcp.topic import base as topic_base  # noqa: E402
 
 
 @pytest.fixture(scope="module")

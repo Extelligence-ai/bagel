@@ -1,7 +1,7 @@
 import pyarrow as pa
 
-from src.source.betaflight.bbl import SourceFactory
-from src.topic.betaflight.bbl import TopicRegistry
+from bagel_mcp.source.betaflight.bbl import SourceFactory
+from bagel_mcp.topic.betaflight.bbl import TopicRegistry
 
 
 def test_topic_registry() -> None:

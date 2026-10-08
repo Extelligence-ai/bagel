@@ -18,11 +18,11 @@ pytest.importorskip("influxdb_client_3")
 
 import pyarrow as pa
 
-from src.di.types import data_source
-from src.message import influxdb as message_influxdb
-from src.source import influxdb
-from src.source.context import SourceContext
-from src.topic.influxdb import TopicRegistry
+from bagel_mcp.di.types import data_source
+from bagel_mcp.message import influxdb as message_influxdb
+from bagel_mcp.source import influxdb
+from bagel_mcp.source.context import SourceContext
+from bagel_mcp.topic.influxdb import TopicRegistry
 
 INFLUX_URL = os.environ.get("BAGEL_INFLUXDB_TEST_URL")
 
@@ -69,7 +69,7 @@ def test_bounds_uses_aggregate_queries_not_full_row_downloads(
 ) -> None:
     """bounds() must not download every row of every measurement.
 
-    Regression for PR #237 review (src/source/context.py:50): `SourceContext.bounds()`
+    Regression for PR #237 review (bagel_mcp/source/context.py:50): `SourceContext.bounds()`
     called `to_duckdb()` with no `topics`, which downloads and struct-packs every row
     of every measurement (`_topic_arrow`'s `SELECT * FROM ... ORDER BY time`) merely
     to compute two numbers.
@@ -117,11 +117,11 @@ def test_bounds_uses_aggregate_queries_not_full_row_downloads(
 @pytest.mark.integration
 @requires_db
 def test_end_to_end_over_live_influxdb() -> None:
-    import server
-    from src.di import module
+    from bagel_mcp import server
+    from bagel_mcp.di import module
 
-    factory = module.provide("src.source.influxdb", {"path": INFLUX_URL})
-    registry = module.provide("src.topic.influxdb", {})
+    factory = module.provide("bagel_mcp.source.influxdb", {"path": INFLUX_URL})
+    registry = module.provide("bagel_mcp.topic.influxdb", {})
     database = factory.build()
 
     topics = registry.available_topics(database)
@@ -147,7 +147,7 @@ def test_end_to_end_over_live_influxdb() -> None:
 @pytest.mark.integration
 @requires_db
 def test_preview_pipeline_detects_events_in_influxdb() -> None:
-    import server
+    from bagel_mcp import server
 
     result = server.preview_pipeline(
         path=INFLUX_URL,

@@ -1,6 +1,6 @@
 import pytest
 
-from src.di import module
+from bagel_mcp.di import module
 
 
 class Cat:

@@ -5,7 +5,7 @@ from itertools import pairwise
 from hypothesis import given
 from hypothesis import strategies as st
 
-from src.pipeline import windows
+from bagel_mcp.pipeline import windows
 
 _ts = st.floats(min_value=-1e6, max_value=1e6, allow_nan=False, allow_infinity=False)
 

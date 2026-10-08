@@ -1,11 +1,11 @@
-"""Tests for typed-decision backends (`src.pipeline.decide.backends`)."""
+"""Tests for typed-decision backends (`bagel_mcp.pipeline.decide.backends`)."""
 
 import importlib.util
 from collections.abc import Iterator
 
 import pytest
 
-from src.pipeline.decide import backends
+from bagel_mcp.pipeline.decide import backends
 from test._fixtures.decision_server import DecisionServer, decision_server, jev_reply
 
 CHOICES = {"stall": "wheels not moving", "other_unusual": "anything else", "normal": "fine"}

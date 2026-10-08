@@ -2,7 +2,7 @@
 
 Zero MCP client, zero LLM, zero config: ``python demo.py [path]`` runs the
 same deterministic checks documented in
-``src/agent/diagnose/robot_health.poml`` directly against the describe/query
+``bagel_mcp/agent/diagnose/robot_health.poml`` directly against the describe/query
 primitives that back ``server.py``'s MCP tools (``module.provide`` ->
 ``SourceFactory`` / ``TopicRegistry`` / ``MessageDataset`` /
 ``LoggingDataset``) -- never through the MCP or LLM layer, and never printing
@@ -26,12 +26,12 @@ from typing import Any
 
 import pandas as pd
 
-from settings import settings
-from src import query
-from src.di import module
-from src.di.types.base_module import BaseModule
-from src.di.types.data_source import DataSource, resolve
-from src.logging.base import NoLoggingTopicsFoundError
+from bagel_mcp import query
+from bagel_mcp.di import module
+from bagel_mcp.di.types.base_module import BaseModule
+from bagel_mcp.di.types.data_source import DataSource, resolve
+from bagel_mcp.logging.base import NoLoggingTopicsFoundError
+from bagel_mcp.settings import settings
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent
 TIMESTAMP_COL = settings.TIMESTAMP_SECONDS_COLUMN_NAME
@@ -50,7 +50,7 @@ UPSELL = (
 )
 
 # Ecosystems this demo walks through end to end. ArduPilot (.bin) is
-# deliberately NOT here: src/topic/ardupilot/bin.py's TopicRegistry.struct()
+# deliberately NOT here: bagel_mcp/topic/ardupilot/bin.py's TopicRegistry.struct()
 # unconditionally calls pymavlink's DFMetaData.download() with no opt-out
 # (unlike PX4's download_description=False below), so querying even one
 # ArduPilot field makes a real network call -- that breaks this demo's "zero
@@ -67,7 +67,7 @@ SUPPORTED_DS_TYPES = {
 ROS_DS_TYPES = {DataSource.ROS1_BAG, DataSource.ROS2_DB3, DataSource.MCAP}
 
 # Per-ecosystem topic-*name* hints, mirrored from the documented skeleton in
-# src/agent/diagnose/robot_health.poml -- treated as hints, not requirements:
+# bagel_mcp/agent/diagnose/robot_health.poml -- treated as hints, not requirements:
 # matched by name/prefix first, and only ruled out if none matches.
 TOPIC_NAME_HINTS: dict[str, dict[str, list[str]]] = {
     DataSource.PX4_ULOG.value: {
@@ -300,7 +300,7 @@ def _query_field(ctx: Context, topic: str, field_path: list[str]) -> pd.DataFram
         f"FROM {_quote_ident(topic)} ORDER BY {TIMESTAMP_COL}"
     )
     # query.sql scopes the registration to this relation's own connection
-    # (see src/query.py): the dataset's relation may live on a different
+    # (see bagel_mcp/query.py): the dataset's relation may live on a different
     # DuckDB connection than the module-global `duckdb`, so registering it
     # there and querying via `duckdb.sql` would raise "created by another
     # Connection" (or silently touch the wrong table on a busier process).

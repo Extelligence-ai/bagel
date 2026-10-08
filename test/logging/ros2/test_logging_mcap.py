@@ -2,9 +2,9 @@ import os
 
 import pytest
 
-from src.logging.ros2.mcap import LoggingDataset
-from src.source.ros2.mcap import SourceFactory
-from src.topic.ros2.mcap import TopicRegistry
+from bagel_mcp.logging.ros2.mcap import LoggingDataset
+from bagel_mcp.source.ros2.mcap import SourceFactory
+from bagel_mcp.topic.ros2.mcap import TopicRegistry
 
 ROS_DISTRO = os.getenv("ROS_DISTRO")
 

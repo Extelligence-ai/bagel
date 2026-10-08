@@ -65,7 +65,7 @@ cadence:
   topic: /motor/current
   when: {every: 10, unit: second}
 gates:
-  - module: src.pipeline.gates.anomaly
+  - module: bagel_mcp.pipeline.gates.anomaly
     lookback: {last: 10, unit: second}
     args:
       topics: [/motor/current, /heartbeat]   # dropout needs a topic other than the
@@ -75,17 +75,17 @@ gates:
         stall: "velocity commanded but the wheels are not moving"
       backend: jev
 tasks:
-  - module: src.pipeline.tasks.snippet.mcap
+  - module: bagel_mcp.pipeline.tasks.snippet.mcap
     lookback: {last: 10, unit: second}
-  - module: src.pipeline.tasks.write_annotations
-  - module: src.pipeline.tasks.upload.s3
+  - module: bagel_mcp.pipeline.tasks.write_annotations
+  - module: bagel_mcp.pipeline.tasks.upload.s3
     args:
       bucket: my-robot-anomalies
       prefix: anomalies
       source: /home/ubuntu/.bagel/artifacts/pipeline=anomaly_upload
 ```
 
-3. Calibrate it (next section), then run it: `uv run run.py pipelines/anomaly_upload.yaml`.
+3. Calibrate it (next section), then run it: `uv run bagel-run pipelines/anomaly_upload.yaml`.
 
 Swap `upload.s3` for `upload.gcs` or `upload.azure`, or give `upload.s3` an
 `endpoint_url` for MinIO / Cloudflare R2. Anything the gate passes goes to whichever
@@ -99,7 +99,7 @@ and no decision model is called:
 > What would the anomaly gate flag on ./shift_042 with 10 s windows, watching
 > `/motor/current.value` and `/imu.linear_acceleration.x`?
 
-That is the `preview_anomalies` tool (`calibrate()` in `src/pipeline/decide/calibrate.py`):
+That is the `preview_anomalies` tool (`calibrate()` in `bagel_mcp/pipeline/decide/calibrate.py`):
 
 ```text
 preview_anomalies("./shift_042", window_seconds=10,
@@ -190,10 +190,10 @@ refuses them on a live subscription:
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.write_topics_to_file
+  - module: bagel_mcp.pipeline.tasks.write_topics_to_file
     lookback: {last: 10, unit: second}
     args: {topics: null, output_format: parquet}
-  - module: src.pipeline.tasks.write_annotations
+  - module: bagel_mcp.pipeline.tasks.write_annotations
   # ...upload task unchanged
 ```
 
@@ -257,7 +257,7 @@ Open-Jev's decision head.
 ## Asking your own question: the `decide` gate
 
 For a single typed question without a baseline (*"upload, keep_local or discard?"*),
-use `src.pipeline.gates.decide`: `question`, `choices`, the `accept` list that opens
+use `bagel_mcp.pipeline.gates.decide`: `question`, `choices`, the `accept` list that opens
 the gate, `min_probability`, and the same `backend` options (default `remote`). It
 also hands its decision to `write_annotations`.
 

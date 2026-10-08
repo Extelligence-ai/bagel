@@ -10,8 +10,8 @@ import pytest
 from google.protobuf.wrappers_pb2 import DoubleValue
 from mcap_protobuf.writer import Writer as ProtobufWriter
 
-from src.di import module
-from src.pipeline import base
+from bagel_mcp.di import module
+from bagel_mcp.pipeline import base
 
 EPOCH = 1_700_000_000.0
 SECOND_NS = 1_000_000_000
@@ -197,5 +197,5 @@ def test_a_gate_named_asof_seconds_cannot_shadow_the_timestamp(mcap_path: pathli
         _run(
             mcap_path,
             [{"module": "fake_labeller", "name": "asof_seconds", "args": {"key": "k"}}],
-            tasks=[{"module": "src.pipeline.tasks.write_annotations"}],
+            tasks=[{"module": "bagel_mcp.pipeline.tasks.write_annotations"}],
         )

@@ -11,9 +11,9 @@ import pathlib
 import pyarrow as pa
 import pytest
 
-from settings import settings
-from src.sink import base
-from src.sink.buffer import TopicBufferWriter
+from bagel_mcp.settings import settings
+from bagel_mcp.sink import base
+from bagel_mcp.sink.buffer import TopicBufferWriter
 
 _port_counter = itertools.count(19000)
 
@@ -87,7 +87,7 @@ def test_batch_subscribe_is_all_or_nothing(
 ) -> None:
     """Codex review on #156: admission failure mid-batch must not leave a
     partial subscription set behind."""
-    from src.sink import startup
+    from bagel_mcp.sink import startup
 
     per_topic = settings.JSONL_BUFFER_SIZE_PER_TOPIC_BYTES
     monkeypatch.setattr(settings, "SINK_TOTAL_BUFFER_BYTES", int(per_topic * 2.5))

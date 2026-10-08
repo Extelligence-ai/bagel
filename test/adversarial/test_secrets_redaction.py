@@ -12,10 +12,10 @@ import traceback
 
 import pytest
 
-from src.di.types import data_source
-from src.pipeline.tasks.notify.slack import NotifySlack
-from src.source import postgres
-from src.source.redact import redact_url, scrub_secrets
+from bagel_mcp.di.types import data_source
+from bagel_mcp.pipeline.tasks.notify.slack import NotifySlack
+from bagel_mcp.source import postgres
+from bagel_mcp.source.redact import redact_url, scrub_secrets
 
 # -- redact_url: the helper itself ---------------------------------------------------
 
@@ -206,7 +206,7 @@ def test_postgres_connect_error_does_not_leak_password_for_malformed_ipv6_dsn(
 
 def test_influxdb_bad_scheme_error_does_not_leak_token() -> None:
     pytest.importorskip("influxdb_client_3")
-    from src.source import influxdb
+    from bagel_mcp.source import influxdb
 
     with pytest.raises(ValueError) as excinfo:
         influxdb.parse_url("mysql://s3cr3ttoken@influx.local:8181/fleet")
@@ -216,7 +216,7 @@ def test_influxdb_bad_scheme_error_does_not_leak_token() -> None:
 
 def test_influxdb_missing_database_error_does_not_leak_token() -> None:
     pytest.importorskip("influxdb_client_3")
-    from src.source import influxdb
+    from bagel_mcp.source import influxdb
 
     with pytest.raises(ValueError) as excinfo:
         influxdb.parse_url("influxdb://s3cr3ttoken@influx.local:8181")
@@ -228,7 +228,7 @@ def test_influxdb_missing_database_error_does_not_leak_token() -> None:
 
 def test_influxdb_connect_error_does_not_leak_token(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("influxdb_client_3")
-    from src.source import influxdb
+    from bagel_mcp.source import influxdb
 
     def _boom(self: object) -> None:
         raise RuntimeError("connection refused")
@@ -258,9 +258,9 @@ def test_slack_rejects_non_http_webhook_without_echoing_it() -> None:
 
 # -- mqtt: broker credentials never appear in logs -----------------------------------
 #
-# `src/sink/mqtt.py` was audited and found NOT to leak: every `logging.*` call there
+# `bagel_mcp/sink/mqtt.py` was audited and found NOT to leak: every `logging.*` call there
 # is parameterized with a topic name, count, or duration -- never `username`/
-# `password` -- and `TopicSink.metadata` (inherited from `src/sink/base.py`) only
+# `password` -- and `TopicSink.metadata` (inherited from `bagel_mcp/sink/base.py`) only
 # includes `host`/`port`/`available_topics`/`magic`. A full end-to-end regression
 # test (constructing a real sink with credentials via the fake-paho-client fixture,
 # then asserting the secrets are absent from both logs and metadata) lives in

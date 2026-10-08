@@ -28,7 +28,7 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
   kept seconds, get user confirmation, then `run_pipeline`.
 - Output artifacts are written under the artifacts directory; tools return the
   paths.
-- Anomaly detection (beta): `src.pipeline.gates.anomaly` + `snippet.mcap` +
+- Anomaly detection (beta): `bagel_mcp.pipeline.gates.anomaly` + `snippet.mcap` +
   `write_annotations` + an `upload.*` task keeps only anomalous slices with a JSON
   label. Calibrate with `preview_anomalies` first (rates and errors as `signals`,
   never positions or orientations); the `compose/anomaly_pipeline` capability walks
@@ -36,6 +36,12 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
 
 ## Develop on Bagel
 
+- The code is the `bagel_mcp` package (PyPI distribution `bagel-mcp`; the
+  `bagel` name belongs to an unrelated project). `uv sync` installs it
+  editable, so `uv run bagel-mcp` starts the server and
+  `uv run bagel-run <pipeline.yaml>` runs a pipeline. Pipeline configs name
+  tasks and gates by import path (`bagel_mcp.pipeline.tasks...`); the pre-2.5
+  `src.` spelling still loads, with a deprecation warning.
 - Runtime-independent tests run on the host: `uv sync` then
   `uv run pytest test/*.py test/pipeline test/sink` (full list in
   `.github/workflows/test.yaml`, job `host-tests`).

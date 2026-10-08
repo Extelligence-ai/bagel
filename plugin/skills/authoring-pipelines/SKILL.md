@@ -9,14 +9,14 @@ The bagel MCP server owns the authoring workflow, including the
 reduce-vs-snippet decision, window/debounce extraction, and the
 preview-before-run rule. Do not write pipeline YAML from memory:
 
-1. Call `run_poml_capability` with `poml_path="./src/agent/compose/pipeline.poml"`.
+1. Call `run_poml_capability` with `poml_path="./bagel_mcp/agent/compose/pipeline.poml"`.
 2. Follow it exactly. In particular: always call `preview_pipeline` and show the
    user the summary (events found, data kept) BEFORE running anything.
 3. Use `list_pipeline_capabilities` for the exact task/gate module paths and
    arguments — never guess them.
 4. Execute the approved config through the MCP tools (`run_pipeline`, or
    `run_pipeline_batch` for many sources). The capability also mentions a host
-   CLI (`run.py`); that path is for users at a terminal in the repo, not for
+   CLI (`bagel-run`); that path is for users at a terminal in the repo, not for
    plugin sessions — do not shell out to it.
 
 If the bagel tools are missing, Bagel is not connected yet. The user must

@@ -20,9 +20,9 @@ pytestmark = pytest.mark.e2e
 
 @pytest.mark.skipif(not LARGE_FIXTURE, reason="BAGEL_LARGE_FIXTURE not set")
 def test_describe_and_windowed_query_on_large_file() -> None:
-    from src.di import module
-    from src.di.types.base_module import BaseModule
-    from src.di.types.data_source import resolve
+    from bagel_mcp.di import module
+    from bagel_mcp.di.types.base_module import BaseModule
+    from bagel_mcp.di.types.data_source import resolve
 
     path = pathlib.Path(LARGE_FIXTURE)
     assert path.exists()

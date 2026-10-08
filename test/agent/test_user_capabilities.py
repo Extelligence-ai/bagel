@@ -1,6 +1,6 @@
 """User-authored capabilities: discovery, markdown support, and saving.
 
-Before this feature, list_capabilities() walked only the builtin src/agent
+Before this feature, list_capabilities() walked only the builtin bagel_mcp/agent
 tree, so Docker users could not add capabilities without rebuilding the
 image. Now a second root (settings.USER_CAPABILITIES_DIRECTORY) is walked,
 accepting both .poml and .md files, with names prefixed "user/".
@@ -11,8 +11,8 @@ from typing import NoReturn
 
 import pytest
 
-from settings import settings
-from src.agent import capabilities
+from bagel_mcp.agent import capabilities
+from bagel_mcp.settings import settings
 
 
 @pytest.fixture
@@ -140,7 +140,7 @@ def test_overwrite_replaces_across_formats(user_dir: pathlib.Path) -> None:
 
 
 def test_run_markdown_capability_end_to_end(user_dir: pathlib.Path) -> None:
-    import server
+    from bagel_mcp import server
 
     saved = capabilities.save_capability("checklist", "# Checklist\n\nDo the thing.\n")
     result = server.run_poml_capability(saved["path"])
@@ -149,7 +149,7 @@ def test_run_markdown_capability_end_to_end(user_dir: pathlib.Path) -> None:
 
 
 def test_run_markdown_with_context_raises(user_dir: pathlib.Path) -> None:
-    import server
+    from bagel_mcp import server
 
     saved = capabilities.save_capability("static", "No variables here.\n")
     with pytest.raises(capabilities.InvalidCapabilityError, match="POML"):
@@ -157,7 +157,7 @@ def test_run_markdown_with_context_raises(user_dir: pathlib.Path) -> None:
 
 
 def test_save_tool_round_trip(user_dir: pathlib.Path) -> None:
-    import server
+    from bagel_mcp import server
 
     saved = server.save_agent_capability("via-tool", VALID_POML)
     assert saved["name"] == "user/via-tool"
@@ -482,7 +482,7 @@ def test_delete_capability_serializes_with_save_lock(
 
 
 def test_delete_capability_tool_round_trip(user_dir: pathlib.Path) -> None:
-    import server
+    from bagel_mcp import server
 
     server.save_agent_capability("via-tool", VALID_POML)
     result = server.delete_capability("user/via-tool")

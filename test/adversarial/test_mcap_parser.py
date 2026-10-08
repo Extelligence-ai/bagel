@@ -6,7 +6,7 @@ import pytest
 import zstandard
 from mcap.exceptions import McapError
 
-from src.source import mcap
+from bagel_mcp.source import mcap
 
 from . import make_corpus
 

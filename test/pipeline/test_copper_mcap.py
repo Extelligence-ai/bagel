@@ -15,10 +15,10 @@ import pathlib
 import pyarrow as pa
 import pytest
 
-import server
-from settings import settings
-from src.di import module
-from src.di.types import data_source
+from bagel_mcp import server
+from bagel_mcp.di import module
+from bagel_mcp.di.types import data_source
+from bagel_mcp.settings import settings
 
 SAMPLE = "./data/sample/copper/imu_probe.mcap"
 
@@ -35,8 +35,8 @@ def test_copper_mcap_resolves_as_mcap() -> None:
 
 
 def test_copper_topics_and_schema() -> None:
-    factory = module.provide("src.source.mcap", {"path": SAMPLE})
-    registry = module.provide("src.topic.mcap", {})
+    factory = module.provide("bagel_mcp.source.mcap", {"path": SAMPLE})
+    registry = module.provide("bagel_mcp.topic.mcap", {})
     bag = factory.build()
 
     topics = registry.available_topics(bag)

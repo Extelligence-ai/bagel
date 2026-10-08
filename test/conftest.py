@@ -5,7 +5,7 @@ import pathlib
 
 import pytest
 
-from settings import settings
+from bagel_mcp.settings import settings
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:

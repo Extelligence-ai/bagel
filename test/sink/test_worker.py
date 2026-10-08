@@ -8,11 +8,11 @@ import time
 import pyarrow as pa
 import pytest
 
-from settings import settings
-from src.pipeline.base import Cadence, Frequency, Unit
-from src.pipeline.results import RunSummary
-from src.sink.buffer import TopicBufferWriter
-from src.sink.worker import PipelineWorker
+from bagel_mcp.pipeline.base import Cadence, Frequency, Unit
+from bagel_mcp.pipeline.results import RunSummary
+from bagel_mcp.settings import settings
+from bagel_mcp.sink.buffer import TopicBufferWriter
+from bagel_mcp.sink.worker import PipelineWorker
 
 TOPIC = "/x"
 
@@ -176,7 +176,7 @@ def test_a_failure_stops_a_pipeline_that_does_not_allow_failures(tmp_path: pathl
 def test_shutdown_stops_and_joins_every_worker() -> None:
     # Registered with atexit: a worker thread still alive at interpreter exit holds a
     # thread-local DuckDB connection, and tearing that down aborts the process on Linux.
-    from src.sink import worker as worker_module
+    from bagel_mcp.sink import worker as worker_module
 
     workers = [PipelineWorker(SlowPipeline()) for _ in range(3)]
     workers[0].submit(1.0)
@@ -190,7 +190,7 @@ def test_shutdown_waits_the_drain_window_and_names_a_straggler(
     # A fire can outlast a few seconds (the anomaly gate's backend timeout is 10 s), so
     # exit waits the drain window, not a fixed short deadline, and says who is still
     # running if even that runs out.
-    from src.sink import worker as worker_module
+    from bagel_mcp.sink import worker as worker_module
 
     monkeypatch.setattr(settings, "LIVE_PIPELINE_DRAIN_SECONDS", 0.1)
     worker = PipelineWorker(SlowPipeline(delay_seconds=0.6))

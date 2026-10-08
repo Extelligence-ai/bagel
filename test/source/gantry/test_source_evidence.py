@@ -4,9 +4,9 @@ import pathlib
 import pyarrow as pa
 import pytest
 
-from src.di.types import data_source
-from src.source import errors
-from src.source.gantry import evidence
+from bagel_mcp.di.types import data_source
+from bagel_mcp.source import errors
+from bagel_mcp.source.gantry import evidence
 from test._fixtures import gantry_evidence
 
 
@@ -216,7 +216,7 @@ def test_invalid_metadata_is_rejected(tmp_path: pathlib.Path, key: str, value: o
 
 
 def test_bundle_can_be_described_and_queried_through_server(tmp_path: pathlib.Path) -> None:
-    import server
+    from bagel_mcp import server
 
     path = str(gantry_evidence.write_bundle(tmp_path / "bundle"))
     assert server.describe_data_source(path)

@@ -2,9 +2,9 @@ import pathlib
 
 import pytest
 
-from src.source.gantry import evidence as source
-from src.topic import base
-from src.topic.gantry import evidence as topic
+from bagel_mcp.source.gantry import evidence as source
+from bagel_mcp.topic import base
+from bagel_mcp.topic.gantry import evidence as topic
 from test._fixtures import gantry_evidence
 
 

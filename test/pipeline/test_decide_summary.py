@@ -1,12 +1,12 @@
-"""Tests for window summaries (`src.pipeline.decide.summary`)."""
+"""Tests for window summaries (`bagel_mcp.pipeline.decide.summary`)."""
 
 import pathlib
 
 import duckdb
 import pytest
 
-from settings import settings
-from src.pipeline.decide import summary
+from bagel_mcp.pipeline.decide import summary
+from bagel_mcp.settings import settings
 
 TS = settings.TIMESTAMP_SECONDS_COLUMN_NAME
 
@@ -137,7 +137,7 @@ def test_summarizes_a_real_source_with_nan_and_dotted_fields(tmp_path: pathlib.P
     # and PX4 flattens nested fields to names like "previous.vx". A CSV source shows
     # both through the same TopicMessageMixin path in milliseconds instead of parsing
     # the whole bundled ULog.
-    from src.pipeline import messages
+    from bagel_mcp.pipeline import messages
 
     (tmp_path / "flight.csv").write_text(
         "t,previous.vx,batt\n0.0,1.0,nan\n0.5,3.0,2.0\n1.0,inf,4.0\n"

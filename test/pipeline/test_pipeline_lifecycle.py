@@ -27,8 +27,8 @@ import pathlib
 import pytest
 import yaml
 
-import server
-from settings import settings
+from bagel_mcp import server
+from bagel_mcp.settings import settings
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def _config(name: str = "csv_smoke") -> dict:
         "cadence": {"topic": "message", "when": "once_at_end"},
         "tasks": [
             {
-                "module": "src.pipeline.tasks.write_topics_to_file",
+                "module": "bagel_mcp.pipeline.tasks.write_topics_to_file",
                 "setup": {"timestamp_column": "t", "timestamp_format": "seconds"},
                 "args": {"topics": ["message"], "output_format": "csv"},
             }

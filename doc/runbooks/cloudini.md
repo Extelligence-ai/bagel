@@ -41,7 +41,7 @@ cadence:
   when: once_at_end
 
 tasks:
-  - module: src.pipeline.tasks.cloudini.decode_pointcloud
+  - module: bagel_mcp.pipeline.tasks.cloudini.decode_pointcloud
     args:
       topics:
         - /lidar/points
@@ -75,7 +75,7 @@ Set `cloudini: false` in the task args:
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.cloudini.decode_pointcloud
+  - module: bagel_mcp.pipeline.tasks.cloudini.decode_pointcloud
     args:
       topics: [/lidar/points]
       output_directory: /output/pointclouds
@@ -136,7 +136,7 @@ failing the pipeline.
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.cloudini.compress_pointcloud
+  - module: bagel_mcp.pipeline.tasks.cloudini.compress_pointcloud
     args:
       cloudini: true # per-task opt-out; set false to skip this pipeline
 ```

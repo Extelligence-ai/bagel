@@ -23,7 +23,7 @@ cadence:                 # WHEN the pipeline fires
   when: once_at_end
 gates: []                # WHETHER to proceed once fired (optional)
 tasks:                   # WHAT to do
-  - module: src.pipeline.tasks.reduce.ros2.db3
+  - module: bagel_mcp.pipeline.tasks.reduce.ros2.db3
     args:
       event_topic: /imu
       predicate: "\"/imu\"['linear_acceleration']['x'] < -10"
@@ -65,7 +65,7 @@ A **gate** decides whether a fired pipeline proceeds. **Tasks** do the work. Gat
 also hand details to the tasks after them (for example, an anomaly label that
 `write_annotations` saves next to the slice).
 
-| Gate (`src.pipeline.gates.`…) | Proceeds when |
+| Gate (`bagel_mcp.pipeline.gates.`…) | Proceeds when |
 | --- | --- |
 | `sql` | A boolean SQL check at the fire timestamp is true |
 | `cv.object_too_close`* | A detected object is closer than a threshold (images; needs the `cv` image) |
@@ -74,7 +74,7 @@ also hand details to the tasks after them (for example, an anomaly label that
  Ask Bagel to *"list the pipeline capabilities"* (`list_pipeline_capabilities`) for the
 live catalog on your install; today the tasks include:
 
-| Task (`src.pipeline.tasks.`…) | What it does |
+| Task (`bagel_mcp.pipeline.tasks.`…) | What it does |
 | --- | --- |
 | `reduce.mcap`, `reduce.ros2.mcap`, `reduce.ros2.db3`* | Rewrite the bag keeping only event windows |
 | `snippet.mcap`, `snippet.ros1.bag`* | Cut a standalone snippet around the fire timestamp |
@@ -102,7 +102,7 @@ Tasks chain: this is one standing pipeline on a live stream:
 2. **Run** · `run_pipeline` builds and executes the config, returning artifact paths.
 3. **Save** · `save_pipeline` persists it as YAML (like
    [`pipelines/hard_decel_reduce.yaml`](../../pipelines/hard_decel_reduce.yaml)) for
-   review, version control, and `run.py pipelines/<name>.yaml`. `list_pipelines`
+   review, version control, and `bagel-run pipelines/<name>.yaml`. `list_pipelines`
    shows what is saved, `get_pipeline` returns one's full config to edit, and
    `delete_pipeline` removes it.
 4. **Scale out** · `run_pipeline_batch` runs one config over globs of sources
