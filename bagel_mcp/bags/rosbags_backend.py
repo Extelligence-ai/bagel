@@ -16,6 +16,7 @@ import pathlib
 from collections.abc import Iterator
 from typing import Any
 
+import lz4.frame
 import yaml
 from rosbags.interfaces import MessageDefinitionFormat
 from rosbags.rosbag1 import Reader as Rosbag1Reader
@@ -308,6 +309,17 @@ class Reader:
         self._reader.close()
 
 
+def ros1_lz4_compress(data: bytes) -> bytes:
+    """Compress a rosbag1 chunk into an lz4 frame that ``roslz4`` can read back.
+
+    `rosbags` writes lz4 frames with linked blocks and a stored content size; the
+    ROS 1 stack's ``roslz4`` decoder supports neither and rejects such chunks as
+    malformed. Independent blocks without the size field are what ``roslz4`` itself
+    writes, and every lz4 frame decoder reads them.
+    """
+    return lz4.frame.compress(data, block_linked=False, store_size=False)
+
+
 class Writer:
     """A bag being written through rosbags; see :class:`bagel_mcp.bags.base.Writer`."""
 
@@ -327,6 +339,8 @@ class Writer:
                 self._writer.set_compression(
                     Rosbag1Writer.CompressionFormat[str(compression).upper()]
                 )
+                if str(compression).lower() == "lz4":
+                    self._writer.compressor = ros1_lz4_compress
             self._typestore = get_typestore(Stores.ROS1_NOETIC)
         else:
             plugin = {"sqlite3": StoragePlugin.SQLITE3, "mcap": StoragePlugin.MCAP}[storage]

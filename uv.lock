@@ -328,6 +328,7 @@ px4 = [
     { name = "pyulog" },
 ]
 ros = [
+    { name = "lz4" },
     { name = "rosbags" },
 ]
 upload = [
@@ -380,6 +381,7 @@ requires-dist = [
     { name = "influxdb3-python", marker = "extra == 'iot'", specifier = ">=0.10.0" },
     { name = "jinja2", specifier = ">=3.1.0,<4.0.0" },
     { name = "lark", specifier = ">=1.2.0,<2.0.0" },
+    { name = "lz4", marker = "extra == 'ros'", specifier = ">=4.0,<5" },
     { name = "mcap", specifier = ">=1.3.0,<2.0.0" },
     { name = "mcap-protobuf-support", specifier = ">=0.5.0,<1.0.0" },
     { name = "mcap-ros1-support", specifier = ">=0.7.0,<1.0.0" },

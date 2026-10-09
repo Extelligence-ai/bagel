@@ -19,6 +19,8 @@ from rosbags.rosbag2 import CompressionFormat, CompressionMode, StoragePlugin
 from rosbags.rosbag2 import Writer as Rosbag2Writer
 from rosbags.typesys import Stores, get_typestore
 
+from bagel_mcp.bags import rosbags_backend
+
 EPOCH = 1_700_000_000.0  # realistic, epoch-scale timestamps
 SECOND_NS = 1_000_000_000
 
@@ -118,6 +120,9 @@ def write_ros1_imu_bag(path: pathlib.Path, compression: str | None = None) -> pa
     writer = Rosbag1Writer(path)
     if compression:
         writer.set_compression(Rosbag1Writer.CompressionFormat[compression.upper()])
+        if compression == "lz4":
+            # rosbags' own lz4 frames are not readable by roslz4; use Bagel's layout.
+            writer.compressor = rosbags_backend.ros1_lz4_compress
     with writer:
         imu = writer.add_connection("/imu", imu_type, typestore=typestore)
         status = writer.add_connection("/status", string_type, typestore=typestore)

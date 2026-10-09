@@ -86,22 +86,17 @@ def locally_installed_ros2msg(type_name: str) -> str:
     return f"\n{separator}\n".join(sections)
 
 
-def _ros2_decompressed(path: pathlib.Path) -> pathlib.Path:
-    """Expand zstd-compressed storage files next to the originals, as rosbag2_py needs."""
-    path = decompress.ros2bag(path)
-    if path.is_dir():
-        metadata = rosbag2_py.Info().read_metadata(str(path), "")
-        if metadata.compression_format == "zstd":
-            import zstandard
+def _unique_topics(entries: list[Any]) -> list[Any]:
+    """Collapse topics the storage reports more than once, keeping the fuller count.
 
-            for rel_file, file_info in zip(
-                metadata.relative_file_paths, metadata.files, strict=True
-            ):
-                target = path / file_info.path
-                if not target.exists():
-                    with open(path / rel_file, "rb") as f_in, open(target, "wb") as f_out:
-                        zstandard.ZstdDecompressor().copy_stream(f_in, f_out)
-    return path
+    Iron's sqlite3 plugin lists every topic of a lone ``.db3`` file twice.
+    """
+    by_name: dict[str, Any] = {}
+    for entry in entries:
+        name = entry.topic_metadata.name
+        if name not in by_name or entry.message_count > by_name[name].message_count:
+            by_name[name] = entry
+    return list(by_name.values())
 
 
 class Reader:
@@ -116,7 +111,9 @@ class Reader:
             self._yaml = yaml.safe_load(self._bag._get_yaml_info())
             self._metadata = None
         else:
-            self._path = _ros2_decompressed(path)
+            # A lone compressed storage file is expanded into the cache; compressed bag
+            # directories are read as they are by the compression-aware reader below.
+            self._path = decompress.ros2bag(path)
             self._metadata = rosbag2_py.Info().read_metadata(str(self._path), "")
         self.info = self._info(path)
 
@@ -163,6 +160,7 @@ class Reader:
             )
 
         metadata = self._metadata
+        entries = _unique_topics(list(metadata.topics_with_message_count))
         topics = [
             base.TopicInfo(
                 name=entry.topic_metadata.name,
@@ -172,8 +170,11 @@ class Reader:
                 definition=None,
                 digest=getattr(entry.topic_metadata, "type_description_hash", "") or "",
             )
-            for entry in metadata.topics_with_message_count
+            for entry in entries
         ]
+        message_count = metadata.message_count
+        if len(entries) != len(metadata.topics_with_message_count):
+            message_count = sum(topic.message_count for topic in topics)
         return base.BagInfo(
             path=path,
             ros_version=2,
@@ -192,7 +193,7 @@ class Reader:
                 for file in metadata.files
             ],
             topics=topics,
-            message_count=metadata.message_count,
+            message_count=message_count,
             start_ns=metadata.starting_time.nanoseconds,
             end_ns=metadata.starting_time.nanoseconds + metadata.duration.nanoseconds,
             size_bytes=metadata.bag_size,
@@ -209,8 +210,15 @@ class Reader:
 
     # -- messages -----------------------------------------------------------------
 
-    def _ros2_reader(self) -> Any:  # noqa: ANN401 -- rosbag2_py.SequentialReader
-        reader = rosbag2_py.SequentialReader()
+    def _ros2_reader(self) -> Any:  # noqa: ANN401 -- rosbag2_py.Sequential*Reader
+        # The compression reader undoes file- and message-level compression the way
+        # `ros2 bag play` does; the plain reader would hand back compressed bytes or
+        # fail to open a `.db3.zstd` listed in metadata.yaml.
+        reader = (
+            rosbag2_py.SequentialCompressionReader()
+            if self.info.compression_format
+            else rosbag2_py.SequentialReader()
+        )
         reader.open(
             rosbag2_py.StorageOptions(uri=str(self._path), storage_id=self.info.storage_identifier),
             rosbag2_py.ConverterOptions(

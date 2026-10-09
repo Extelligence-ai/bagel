@@ -57,7 +57,7 @@ Changelog = "https://github.com/Extelligence-ai/bagel/releases"
 # (rosbags); live rosbridge topics still need the ROS stack of a Docker image.
 # ROS 2 MCAP bags need no extra at all.
 [project.optional-dependencies]
-ros = ["rosbags >=0.11.5,<0.12"]
+ros = ["rosbags >=0.11.5,<0.12", "lz4 >=4.0,<5"]
 px4 = ["pyulog >=1.2.0,<2.0.0", "GitPython >=3.1.0,<4.0.0"]
 ardupilot = ["pymavlink >=2.4.0,<3.0.0"]
 # orangebox 0.5.0 ships a wheel whose console-script entry is a file path
