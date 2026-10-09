@@ -14,8 +14,11 @@
   <a href="https://github.com/Extelligence-ai/bagel/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/License-Apache%202.0-blue?style=flat-square">
   </a>
-  <a>
-    <img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square">
+  <a href="https://pypi.org/project/bagel-mcp/">
+    <img src="https://img.shields.io/pypi/v/bagel-mcp?label=PyPI&style=flat-square">
+  </a>
+  <a href="https://pypi.org/project/bagel-mcp/">
+    <img src="https://img.shields.io/badge/python-3.10%E2%80%933.12-blue?style=flat-square">
   </a>
   <a href="https://github.com/Extelligence-ai/bagel/actions/workflows/test.yaml">
     <img src="https://img.shields.io/github/actions/workflow/status/Extelligence-ai/bagel/test.yaml?event=pull_request&label=tests&style=flat-square">
@@ -50,6 +53,33 @@ Bagel was the first MCP server to ship a real analysis toolkit for robotics data
 and it keeps the LLM where it belongs: in front of your logs, never in your robot's
 control loop.
 
+## 📦 Install
+
+Bagel is on PyPI as [`bagel-mcp`](https://pypi.org/project/bagel-mcp/). No Docker
+and no ROS install needed for recorded data.
+
+**Claude Code**, one line (needs [uv](https://docs.astral.sh/uv/getting-started/installation/)):
+
+```bash
+claude mcp add bagel -- uvx --from "bagel-mcp[ros]" bagel-mcp --transport stdio
+```
+
+**pip**, into any Python 3.10 to 3.12 environment:
+
+```bash
+pip install "bagel-mcp[ros]"
+```
+
+Then point your MCP client at the `bagel-mcp` command it installed (setup for
+Claude Desktop, Cursor and Codex is in the [Quickstart](#%EF%B8%8F-quickstart)).
+Open your agent and ask:
+
+> Summarize the bag "~/logs/run_42.mcap".
+
+The `ros` extra reads ROS 1 and ROS 2 bags. Flight logs, CAN / MDF4, live MQTT
+and the rest are [extras too](#-install-with-uvx-or-pip-no-docker). Live ROS
+robots and fleet/edge pipelines run in [Docker](#-run-with-docker-live-robots-fleet-and-edge-distro-specific-ros).
+
 ### 🥯 Key Features
 
 - **Ask in plain language**: No deep domain expertise needed.
@@ -58,7 +88,7 @@ control loop.
   one sentence becomes an auditable [pipeline](./doc/runbooks/pipelines.md): previewed
   before a byte is written, then run once, across a fleet, or standing at the edge.
 - **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, and more.
-- **Dockerized environments**: No local dependencies required.
+- **Installs your way**: `pip` / `uvx` for recorded data, Docker images for live robots and the edge.
 - **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
 - **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues).
 
@@ -94,19 +124,22 @@ Two ways to run Bagel. Pick by data:
 
 | You have | Run Bagel with |
 | --- | --- |
-| Recorded data: ROS 1 `.bag` and ROS 2 `.db3` / `.mcap` bags, flight logs (PX4, ArduPilot, Betaflight), CAN / MDF4, CSV / JSON / Parquet, ROS text logs | **`uvx`**, below: no Docker, no ROS install |
+| Recorded data: ROS 1 `.bag` and ROS 2 `.db3` / `.mcap` bags, flight logs (PX4, ArduPilot, Betaflight), CAN / MDF4, CSV / JSON / Parquet, ROS text logs | **`uvx` or `pip`**, below: no Docker, no ROS install |
 | Live rosbridge / MQTT robots, fleet and edge deployments | **Docker**, further down: the images carry the ROS stacks and the standing-pipeline runtime |
 
-### 🐍 Install with uvx (no Docker)
+### 🐍 Install with uvx or pip (no Docker)
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then
-register Bagel with your MCP client. The client launches the server itself
-over stdio, so there is nothing to start or keep running.
+Your MCP client launches the server itself over stdio, so there is nothing to
+start or keep running. Pick `uvx` (nothing to manage: it fetches and caches
+Bagel on first use) or `pip` (a normal install you control).
+
+**With uvx.** Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
+(`curl -LsSf https://astral.sh/uv/install.sh | sh` on macOS and Linux), then:
 
 Claude Code:
 
 ```bash
-claude mcp add bagel -- uvx bagel-mcp --transport stdio
+claude mcp add bagel -- uvx --from "bagel-mcp[ros]" bagel-mcp --transport stdio
 ```
 
 Any client that takes a JSON MCP config (Claude Desktop, Cursor, Codex, ...):
@@ -116,16 +149,28 @@ Any client that takes a JSON MCP config (Claude Desktop, Cursor, Codex, ...):
   "mcpServers": {
     "bagel": {
       "command": "uvx",
-      "args": ["bagel-mcp", "--transport", "stdio"]
+      "args": ["--from", "bagel-mcp[ros]", "bagel-mcp", "--transport", "stdio"]
     }
   }
 }
 ```
 
+**With pip.** Python 3.10 to 3.12; a virtual environment keeps it tidy:
+
+```bash
+python3 -m venv ~/.bagel-venv
+~/.bagel-venv/bin/pip install "bagel-mcp[ros]"
+claude mcp add bagel -- ~/.bagel-venv/bin/bagel-mcp --transport stdio
+```
+
+For a JSON config, use the full path as the command:
+`"command": "/Users/you/.bagel-venv/bin/bagel-mcp", "args": ["--transport", "stdio"]`.
+
 Format support comes as extras, so that a PX4 user never downloads the
-automotive parsers: `uvx --from "bagel-mcp[px4,automotive]" bagel-mcp
---transport stdio`, or in the JSON above `"args": ["--from",
-"bagel-mcp[px4,automotive]", "bagel-mcp", "--transport", "stdio"]`.
+automotive parsers. List the ones you need, comma-separated:
+`uvx --from "bagel-mcp[ros,px4,automotive]" bagel-mcp --transport stdio`, or
+`pip install "bagel-mcp[ros,px4,automotive]"`. If you ask about a format whose
+extra is missing, Bagel's error names the exact command to add it.
 
 | Extra | Adds |
 | --- | --- |
@@ -140,7 +185,13 @@ automotive parsers: `uvx --from "bagel-mcp[px4,automotive]" bagel-mcp
 | `cloudini` | Cloudini point-cloud tasks |
 
 MCAP, CSV / JSON / Parquet, ROS text logs, PlotJuggler / Lichtblick / LeRobot
-exports and S3 upload need no extra. Then prompt, pointing at your own file:
+exports and S3 upload need no extra.
+
+To upgrade: `uvx` picks up new releases on its own (force it with
+`uvx --refresh --from "bagel-mcp[ros]" bagel-mcp --help`); with pip, run
+`pip install -U "bagel-mcp[ros]"`.
+
+Then prompt, pointing at your own file:
 
 > Summarize the metadata of the MCAP bag "~/logs/run_42.mcap".
 
