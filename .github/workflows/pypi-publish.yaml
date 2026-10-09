@@ -1,18 +1,13 @@
-# Publishes the `bagel-mcp` distribution to TestPyPI when a release tag is pushed.
+# Publishes the `bagel-mcp` distribution to PyPI when a release tag is pushed.
 #
-# TestPyPI only, deliberately: real PyPI publication is a separate, explicitly
-# approved step (issue #15), so this workflow carries no job for it. Publishing
-# uses PyPI's trusted publishing (OIDC): no API token is stored anywhere. One-time
-# setup on https://test.pypi.org for the project `bagel-mcp` -- "Add a new pending
-# publisher": owner `Extelligence-ai`, repository `bagel`, workflow
-# `pypi-publish.yaml`, environment `testpypi` -- and a `testpypi` environment in
-# this repository's settings whose deployment branch policy allows tags only, so
-# the OIDC token can only be minted by workflow code that went through review on
-# `main` (same reasoning as mcp-registry-publish.yaml).
+# Publishing uses PyPI's trusted publishing (OIDC): no API token is stored
+# anywhere. The project's trusted publisher on https://pypi.org is: owner
+# `Extelligence-ai`, repository `bagel`, workflow `pypi-publish.yaml`, environment
+# `pypi`. The `pypi` environment in this repository's settings allows `v*` tags
+# only, so the OIDC token can only be minted by workflow code that went through
+# review on `main` (same reasoning as mcp-registry-publish.yaml).
 #
-# Install what it published: `uvx --index https://test.pypi.org/simple/
-# --index-strategy unsafe-best-match bagel-mcp` (dependencies still resolve
-# from PyPI).
+# Install what it published: `pip install bagel-mcp` or `uvx bagel-mcp`.
 
 name: pypi-publish
 
@@ -58,11 +53,11 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  testpypi:
+  pypi:
     needs: [build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: testpypi
+    environment: pypi
     permissions:
       id-token: write # mint the OIDC token the trusted publisher exchanges
       contents: read
@@ -74,9 +69,8 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.8.0"
-      - name: Publish to TestPyPI (trusted publishing)
+      - name: Publish to PyPI (trusted publishing)
         run: |
           uv publish --trusted-publishing always \
-            --publish-url https://test.pypi.org/legacy/ \
-            --check-url https://test.pypi.org/simple/bagel-mcp/ \
+            --check-url https://pypi.org/simple/bagel-mcp/ \
             dist/*
