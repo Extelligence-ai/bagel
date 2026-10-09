@@ -33,6 +33,11 @@ from bagel_mcp.topic.ros2.ros2msg import schema as ros2_schema
 from test._fixtures import ros_bags
 
 pytest.importorskip("rosbags")
+if not (ros_native.available("rosbag2_py") or ros_native.available("rosbag")):
+    # One module-level skip on the host (conftest allows it under
+    # BAGEL_REQUIRE_OPTIONAL_TESTS); inside an image the per-test markers below
+    # pick the ROS 1 or ROS 2 cases.
+    pytest.skip("native ROS stack: the ROS service images only", allow_module_level=True)
 pytestmark = pytest.mark.integration
 
 ROS_DISTRO = os.getenv("ROS_DISTRO", "")
