@@ -139,6 +139,10 @@ class Reader:
     def _info(self, path: pathlib.Path) -> base.BagInfo:
         reader = self._reader
         if self._ros_version == 1:
+            # rosbags' rosbag1 end_time is exclusive (last stamp + 1 ns); `rosbag` and
+            # the bag format report the last stamp itself, so the interface does too.
+            end_ns = reader.end_time - 1 if reader.message_count else reader.start_time
+            duration_ns = end_ns - reader.start_time
             modules = {
                 chunk.decompressor.__module__.split(".")[0] for chunk in reader.chunks.values()
             }
@@ -155,23 +159,25 @@ class Reader:
                 compression_mode="",
                 relative_file_paths=[path.name],
                 files=[
-                    base.FileInfo(
-                        path.name, reader.message_count, reader.start_time, reader.duration
-                    )
+                    base.FileInfo(path.name, reader.message_count, reader.start_time, duration_ns)
                 ],
                 topics=self._topics(),
                 message_count=reader.message_count,
                 start_ns=reader.start_time,
-                end_ns=reader.end_time,
+                end_ns=end_ns,
                 size_bytes=path.stat().st_size,
             )
 
         version, relative_paths, files = "", [], []
+        start_ns, end_ns = reader.start_time, reader.start_time
         metadata_file = path / "metadata.yaml" if path.is_dir() else None
         if metadata_file is not None and metadata_file.exists():
             metadata = yaml.safe_load(metadata_file.read_text(encoding="utf-8"))
             metadata = metadata["rosbag2_bagfile_information"]
             version = str(metadata.get("version", ""))
+            # The bounds `ros2 bag info` reports: starting_time and duration as recorded.
+            start_ns = int(metadata["starting_time"]["nanoseconds_since_epoch"])
+            end_ns = start_ns + int(metadata["duration"]["nanoseconds"])
             relative_paths = list(metadata.get("relative_file_paths", []))
             for entry in metadata.get("files", []):
                 files.append(
@@ -184,16 +190,20 @@ class Reader:
                 )
         if not relative_paths:
             relative_paths = [path.name] if path.is_file() else []
-        if not files:
-            files = [
-                base.FileInfo(name, reader.message_count, reader.start_time, reader.duration)
-                for name in relative_paths
-            ]
         storage = (
             "mcap"
             if any(".mcap" in pathlib.PurePath(name).suffixes for name in relative_paths)
             else "sqlite3"
         )
+        if metadata_file is None or not metadata_file.exists():
+            # A lone storage file: rosbags' end_time is exclusive (last stamp + 1 ns)
+            # for every storage plugin; the bag format reports the last stamp itself.
+            end_ns = reader.end_time - 1 if reader.message_count else reader.start_time
+        if not files:
+            files = [
+                base.FileInfo(name, reader.message_count, start_ns, end_ns - start_ns)
+                for name in relative_paths
+            ]
         size = (
             path.stat().st_size
             if path.is_file()
@@ -210,8 +220,8 @@ class Reader:
             files=files,
             topics=self._topics(),
             message_count=reader.message_count,
-            start_ns=reader.start_time,
-            end_ns=reader.start_time + reader.duration,
+            start_ns=start_ns,
+            end_ns=end_ns,
             size_bytes=size,
         )
 

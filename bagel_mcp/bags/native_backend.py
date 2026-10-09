@@ -124,8 +124,15 @@ class Reader:
                 )
                 for entry in info.get("topics", [])
             ]
-            start_ns = base.ros1_nanoseconds(self._bag.get_start_time()) or 0
-            end_ns = base.ros1_nanoseconds(self._bag.get_end_time()) or 0
+            # Exact stamps from the index: get_start_time()/get_end_time() go through
+            # floats and can lose the last nanosecond.
+            stamps = [
+                entry.time.to_nsec()
+                for entries in getattr(self._bag, "_connection_indexes", {}).values()
+                for entry in entries
+            ]
+            start_ns = min(stamps) if stamps else 0
+            end_ns = max(stamps) if stamps else 0
             return base.BagInfo(
                 path=path,
                 ros_version=1,
