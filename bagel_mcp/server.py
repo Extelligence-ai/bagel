@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import logging
+import os
 import pathlib
 from dataclasses import asdict
 from datetime import datetime
@@ -56,6 +57,11 @@ server = mcp_compat.create_server(
 )
 
 
+def expand_user(path: str) -> str:
+    """Expand a leading ``~`` the way a shell would; agents pass paths as the user typed them."""
+    return os.path.expanduser(path) if isinstance(path, str) else path
+
+
 @server.tool(
     title="Describe a data source",
     description=(
@@ -93,6 +99,7 @@ def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[
             >>> describe_data_source("./data/sample/ros2/mcap")
 
     """
+    path = expand_user(path)
     ds_type = resolve(path)
     factory = module.provide(
         f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
@@ -151,6 +158,7 @@ def describe_topic(
             >>> describe_topic("./data/sample/ros2/mcap", topic="/odom")
 
     """
+    path = expand_user(path)
     ds_type = resolve(path)
     factory = module.provide(
         f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
@@ -230,6 +238,7 @@ def query_messages(  # noqa: PLR0913
             ... )
 
     """
+    path = expand_user(path)
     source = SourceContext.build(path, args)
     relation = source.dataset.to_duckdb(
         source.factory, source.registry, [topic], start_seconds, end_seconds
@@ -283,6 +292,7 @@ def read_loggings(
             >>> read_loggings("./data/sample/px4/sample.ulg")
 
     """
+    path = expand_user(path)
     ds_type = resolve(path)
     factory = module.provide(
         f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
@@ -561,6 +571,7 @@ def run_poml_capability(
             >>> run_poml_capability("./bagel_mcp/agent/examples/woof.poml", {"foo": "bar"})
 
     """
+    poml_path = expand_user(poml_path)
     poml_file = agent_capabilities.resolve_path(poml_path)
     if not poml_file.exists():
         raise FileNotFoundError(poml_file)
@@ -787,6 +798,7 @@ def preview_pipeline(  # noqa: PLR0913
             ...                  "linear_acceleration_x < -10", pre_seconds=10, post_seconds=10)
 
     """
+    path = expand_user(path)
     source = SourceContext.build(path, args)
     bounds = source.bounds()
     relation = source.dataset.to_duckdb(source.factory, source.registry, [event_topic])
@@ -882,6 +894,7 @@ def preview_anomalies(  # noqa: PLR0913
             ...                   signals=["/imu.linear_acceleration.x", "/motor.current"])
 
     """
+    path = expand_user(path)
     return calibrate.calibrate(
         path,
         window_seconds=window_seconds,
@@ -1266,6 +1279,7 @@ def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, An
             >>> run_pipeline_batch(config, ["./logs/*"])
 
     """
+    paths = [expand_user(p) for p in paths]
     expanded = batch.expand_paths(paths)
     results = batch.run_batch(config, expanded)
     return batch.summarize(results)
@@ -1323,6 +1337,7 @@ def export_for_plotjuggler(  # noqa: PLR0913
             >>> export_for_plotjuggler("./flight.mcap", ["/imu"], 118.9, 138.9)
 
     """
+    path = expand_user(path)
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
@@ -1395,6 +1410,7 @@ def export_for_rerun(  # noqa: PLR0913
             >>> export_for_rerun("./flight.mcap", ["/imu"], 118.9, 138.9)
 
     """
+    path = expand_user(path)
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
@@ -1467,6 +1483,7 @@ def export_for_lichtblick(  # noqa: PLR0913
             >>> export_for_lichtblick("./flight.mcap", ["/imu"], 118.9, 138.9)
 
     """
+    path = expand_user(path)
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
@@ -1542,6 +1559,7 @@ def export_for_lerobot(  # noqa: PLR0913
             observation.state at 10 fps.
 
     """
+    path = expand_user(path)
     ds_type = resolve(path)
     factory = module.provide(
         # args first: the explicit `path` parameter must always win.
