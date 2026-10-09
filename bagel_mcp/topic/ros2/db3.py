@@ -1,109 +1,38 @@
 """A topic registry for ROS2 sqlite3 bags."""
 
-from __future__ import annotations
-
-import collections
-import functools
-import pathlib
-
 import pyarrow as pa
 
-from bagel_mcp import ros_native
+from bagel_mcp import bags
 from bagel_mcp.di import module
 from bagel_mcp.topic.ros2 import base
 from bagel_mcp.topic.ros2.ros2msg import parse, schema
 
 FEATURE = "Describing ROS 2 .db3 bag topics"
-rosbag2_py = ros_native.optional("rosbag2_py", feature=FEATURE)
-rosidl_definition = ros_native.optional("rosidl_parser.definition", feature=FEATURE)
-rosidl_runtime = ros_native.optional("rosidl_runtime_py", feature=FEATURE)
-rosidl_utilities = ros_native.optional("rosidl_runtime_py.utilities", feature=FEATURE)
-
-
-@functools.lru_cache
-def locally_installed_ros2msg(type_name: str) -> str:
-    """Return the ros2msg string of the given message type from locally installed packages.
-
-    If packages are not installed or sourced locally, this will throw an error.
-
-    """
-
-    def resolve(name: str) -> str:
-        match tuple(name.split("/")):
-            case (package, "msg", class_):
-                return name
-            case (package, class_):
-                return f"{package}/msg/{class_}"
-            case _:
-                raise ValueError(f"Invalid type name: {name}")
-
-    visited = set()
-    dependencies = []
-    stack = collections.deque([resolve(type_name)])
-    while stack:
-        current = stack.pop()
-        if current in visited:
-            continue
-        visited.add(current)
-        dependencies.append(current)
-        for slot_type in rosidl_utilities.get_message(current).SLOT_TYPES:
-            if isinstance(slot_type, rosidl_definition.NamespacedType):
-                stack.append("/".join(slot_type.namespaced_name()))
-
-    sections = []
-    for dependency_type_name in dependencies:
-        msg_file = rosidl_runtime.get_interface_path(dependency_type_name)
-        section = pathlib.Path(msg_file).read_text(encoding="utf-8")
-        if sections:
-            section = f"MSG: {dependency_type_name}\n{section}"
-        sections.append(section)
-
-    separator = "=" * 80
-    return f"\n{separator}\n".join(sections)
-
-
-@functools.lru_cache
-def message_definitions(
-    data_source: rosbag2_py.SequentialReader,
-) -> dict[str, base.MessageDefinition]:
-    """Return a mapping from message type name to its definition and encoding."""
-    return {
-        topic_metadata.type: base.MessageDefinition(
-            encoding="ros2msg", definition=locally_installed_ros2msg(topic_metadata.type)
-        )
-        for topic_metadata in data_source.get_all_topics_and_types()
-    }
 
 
 class TopicRegistry(base.TopicRegistry):
-    """A topic registry for ROS2 sqlite3 bags."""
+    """A topic registry for ROS2 sqlite3 bags.
 
-    def struct(self, topic: str, data_source: rosbag2_py.SequentialReader) -> pa.StructType:
+    Message definitions come from the bag itself when it carries them (rosbag2 since
+    Jazzy), from the locally installed interfaces inside a ROS 2 image, and from the
+    backend's bundled typestore otherwise.
+    """
+
+    def struct(self, topic: str, data_source: bags.Reader) -> pa.StructType:
         """Return the PyArrow StructType for the given topic."""
-        type_name = self.native_type_name(topic, data_source)
-        definition = message_definitions(data_source)[type_name]
-        match definition.encoding:
-            case "ros2msg":
-                main, deps = parse.parse(definition.definition.decode("utf-8"))
-                return schema.to_pa_struct(main, deps)
-            case _:
-                raise base.UnsupportedEncodingError(definition.encoding)
+        main, deps = parse.parse(self.describe(topic, data_source))
+        return schema.to_pa_struct(main, deps)
 
-    def describe(self, topic: str, data_source: rosbag2_py.SequentialReader) -> str:
+    def describe(self, topic: str, data_source: bags.Reader) -> str:
         """Return a human-readable description of the given topic."""
-        type_name = self.native_type_name(topic, data_source)
-        definition = message_definitions(data_source)[type_name]
-        match definition.encoding:
-            case "ros2msg":
-                return definition.definition.decode("utf-8")
-            case _:
-                raise base.UnsupportedEncodingError(definition.encoding)
+        self._topic_info(topic, data_source)
+        return data_source.definition(topic)
 
-    def _metadata(self, data_source: rosbag2_py.SequentialReader) -> rosbag2_py.BagMetadata:
-        return data_source.get_metadata()
+    def _metadata(self, data_source: bags.Reader) -> bags.BagInfo:
+        return data_source.info
 
 
 def register() -> None:
-    """Register module for dependency injection (only where native ROS 2 is present)."""
-    ros_native.require("rosbag2_py", feature=FEATURE)
+    """Register module for dependency injection (needs a bag backend: rosbags or native ROS 2)."""
+    bags.require(FEATURE, ros_version=2)
     module.global_registry[__name__] = TopicRegistry

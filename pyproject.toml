@@ -2,7 +2,7 @@
 # Distribution name on PyPI (`bagel` is taken by an unrelated project, whose wheel
 # also installs a top-level `bagel/` package -- hence the `bagel_mcp` import name).
 name = "bagel-mcp"
-version = "2.5.1"
+version = "2.6.0"
 description = "Plain-English analysis of robotics, drone, and IoT data over MCP, with edge data reduction"
 readme = "README.md"
 license = "Apache-2.0"
@@ -53,9 +53,11 @@ Issues = "https://github.com/Extelligence-ai/bagel/issues"
 Changelog = "https://github.com/Extelligence-ai/bagel/releases"
 
 # Feature extras: `pip install "bagel-mcp[px4,automotive]"`, `uv sync --extra px4`.
-# Native ROS (rosbag, rosbag2_py, rclpy) is not on PyPI, so .bag/.db3 bags and live
-# rosbridge stay with the Docker images; ROS 2 MCAP bags need no extra.
+# `ros` reads and writes ROS 1 .bag and ROS 2 .db3/.mcap bags in pure Python
+# (rosbags); live rosbridge topics still need the ROS stack of a Docker image.
+# ROS 2 MCAP bags need no extra at all.
 [project.optional-dependencies]
+ros = ["rosbags >=0.11.5,<0.12"]
 px4 = ["pyulog >=1.2.0,<2.0.0", "GitPython >=3.1.0,<4.0.0"]
 ardupilot = ["pymavlink >=2.4.0,<3.0.0"]
 # orangebox 0.5.0 ships a wheel whose console-script entry is a file path

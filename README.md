@@ -94,8 +94,8 @@ Two ways to run Bagel. Pick by data:
 
 | You have | Run Bagel with |
 | --- | --- |
-| Flight logs (PX4, ArduPilot, Betaflight), MCAP (including ROS 2 bags recorded as MCAP), CAN / MDF4, CSV / JSON / Parquet, ROS text logs | **`uvx`**, below: no Docker |
-| ROS 1 `.bag` or ROS 2 `.db3` bags, live rosbridge / MQTT robots, fleet and edge deployments | **Docker**, further down: the images carry the native ROS stacks |
+| Recorded data: ROS 1 `.bag` and ROS 2 `.db3` / `.mcap` bags, flight logs (PX4, ArduPilot, Betaflight), CAN / MDF4, CSV / JSON / Parquet, ROS text logs | **`uvx`**, below: no Docker, no ROS install |
+| Live rosbridge / MQTT robots, fleet and edge deployments | **Docker**, further down: the images carry the ROS stacks and the standing-pipeline runtime |
 
 ### 🐍 Install with uvx (no Docker)
 
@@ -129,6 +129,7 @@ automotive parsers: `uvx --from "bagel-mcp[px4,automotive]" bagel-mcp
 
 | Extra | Adds |
 | --- | --- |
+| `ros` | ROS 1 `.bag` and ROS 2 `.db3` bags (reading, and the reduce / snippet writers), in pure Python |
 | `px4` | PX4 `.ulg` |
 | `ardupilot` | ArduPilot `.bin` |
 | `betaflight` | Betaflight `.bbl` / `.bfl` |
@@ -144,13 +145,13 @@ exports and S3 upload need no extra. Then prompt, pointing at your own file:
 > Summarize the metadata of the MCAP bag "~/logs/run_42.mcap".
 
 > [!NOTE]
-> Native ROS (`rosbag`, `rosbag2_py`, `rclpy`) is not on PyPI, so a `uvx`
-> install reads ROS 2 bags only when they were recorded as MCAP (the rosbag2
-> default since Jazzy; `ros2 bag convert` turns a `.db3` bag into one). Point
-> it at a `.db3` or `.bag` and it tells you which Docker image to use instead.
-> Live ROS topics (rosbridge) and the fleet/edge runtime stay with Docker too.
+> No ROS installation is needed for bag files: the `ros` extra reads and writes
+> them with the pure-Python [rosbags](https://pypi.org/project/rosbags/) library
+> (sqlite3 and MCAP storage, zstd / bz2 / lz4 compression, message types from the
+> bag itself or from the bundled interface definitions of every distro from Humble
+> on). Live ROS topics (rosbridge) and the fleet/edge runtime stay with Docker.
 
-### 🐳 Run with Docker (ROS bags, live robots, fleet and edge)
+### 🐳 Run with Docker (live robots, fleet and edge, distro-specific ROS)
 
 > [!TIP]
 > **Already have Claude Code?** Just paste the link to this repo and tell Claude

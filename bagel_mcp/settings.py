@@ -126,6 +126,12 @@ class Settings(BaseSettings):
     # Port of the MCP server
     MCP_SERVER_PORT: int = 8000
 
+    # Which library reads and writes ROS bag files (bagel_mcp.bags): "auto" picks the
+    # pure-Python rosbags library when it is installed (the `ros` extra; every service
+    # image has it) and otherwise the native ROS stack of a service image; "rosbags"
+    # or "native" pins one. The parity tests run both over the same fixtures.
+    BAG_BACKEND: str = "auto"
+
     # MCP transport: "both" (default) serves legacy SSE at /sse and streamable
     # HTTP at /mcp on one port, so SSE-configured clients and streamable-only
     # clients (Codex's native MCP client) connect without configuration (#168).
