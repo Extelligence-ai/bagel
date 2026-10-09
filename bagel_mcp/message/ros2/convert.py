@@ -22,6 +22,21 @@ def _scalar(value: object) -> object:
     return item() if callable(item) and not isinstance(value, bytes | str) else value
 
 
+def _constant(field: pa.Field) -> object | None:
+    """Return a constant field's value from the definition, in the schema's type.
+
+    The definition is the one source for constants: message classes expose them
+    inconsistently (rclpy renders a ``byte`` constant as ``bytes``, rosbags as an
+    int, mcap's dynamic classes not at all) while the column is typed from the
+    definition.
+    """
+    metadata = field.metadata or {}
+    value = metadata.get(base.DEFAULT_KEY.encode("utf-8"))
+    if value is None:
+        return None
+    return pc.cast(value.decode("utf-8"), field.type).as_py()
+
+
 def to_json(
     message: object, schema: pa.DataType
 ) -> PRIMITIVE_TYPE | list[PRIMITIVE_TYPE] | dict[str, Any]:
@@ -33,12 +48,11 @@ def to_json(
         case pa.StructType():
             result = {}
             for field in schema.fields:
-                try:
+                constant = _constant(field)
+                if constant is not None:
+                    value = constant
+                else:
                     value = getattr(message, field.name)
-                except AttributeError:
-                    # This must be a constant field.
-                    value_str = field.metadata[base.DEFAULT_KEY.encode("utf-8")].decode("utf-8")
-                    value = pc.cast(value_str, field.type).as_py()
                 result[field.name] = to_json(value, field.type)
             return result
 
