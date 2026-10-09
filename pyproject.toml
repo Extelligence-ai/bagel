@@ -2,7 +2,7 @@
 # Distribution name on PyPI (`bagel` is taken by an unrelated project, whose wheel
 # also installs a top-level `bagel/` package -- hence the `bagel_mcp` import name).
 name = "bagel-mcp"
-version = "2.5.1"
+version = "2.5.2"
 description = "Plain-English analysis of robotics, drone, and IoT data over MCP, with edge data reduction"
 readme = "README.md"
 license = "Apache-2.0"

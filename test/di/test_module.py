@@ -67,3 +67,21 @@ def test_missing_required_package_is_raised_unchanged(monkeypatch: pytest.Monkey
     # WHEN / THEN the original error passes through
     with pytest.raises(ModuleNotFoundError, match="No module named 'nope'"):
         module.import_module("bagel_mcp.anything")
+
+
+@pytest.mark.parametrize(
+    ("import_path", "image"),
+    [("bagel_mcp.sink.ros2.bridge", "ros2-kilted"), ("bagel_mcp.sink.ros1.bridge", "ros1-noetic")],
+)
+def test_live_ros_on_pip_points_to_docker(
+    monkeypatch: pytest.MonkeyPatch, import_path: str, image: str
+) -> None:
+    # GIVEN a pip install, where roslibpy (a Docker-only companion) is missing
+    def missing(name: str) -> None:
+        raise ModuleNotFoundError("No module named 'roslibpy'", name="roslibpy")
+
+    monkeypatch.setattr(module.importlib, "import_module", missing)
+
+    # WHEN / THEN the error says live topics run in Docker and names the service
+    with pytest.raises(ModuleNotFoundError, match=f"docker compose run --service-ports {image}"):
+        module.import_module(import_path)

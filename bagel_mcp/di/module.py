@@ -56,6 +56,21 @@ OPTIONAL_PACKAGE_EXTRAS = {
 }
 
 
+# Packages that only the Docker images install, because they serve features that
+# need a ROS stack (live rosbridge topics), mapped to the image to run.
+DOCKER_ONLY_PACKAGES = {"roslibpy": "ros2-kilted"}
+
+
+def _docker_only_hint(import_path: str, package: str) -> str:
+    image = "ros1-noetic" if ".ros1." in f".{import_path}." else DOCKER_ONLY_PACKAGES[package]
+    return (
+        f"{import_path} streams live ROS topics, which run in the Bagel Docker images, not "
+        f"a pip install (pip covers recorded files). Start one with: git clone "
+        f"https://github.com/Extelligence-ai/bagel.git && cd bagel && docker compose run "
+        f"--service-ports {image}, then connect your client to http://localhost:8000/sse."
+    )
+
+
 def import_module(import_path: str) -> "Module":
     """Import a module, naming the extra to install when an optional package is missing.
 
@@ -68,6 +83,10 @@ def import_module(import_path: str) -> "Module":
         return importlib.import_module(import_path)
     except ModuleNotFoundError as error:
         package = (error.name or "").split(".")[0]
+        if package in DOCKER_ONLY_PACKAGES:
+            raise ModuleNotFoundError(
+                _docker_only_hint(import_path, package), name=error.name
+            ) from error
         extra = OPTIONAL_PACKAGE_EXTRAS.get(package)
         if extra is None:
             raise
