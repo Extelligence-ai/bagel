@@ -78,7 +78,7 @@ Open your agent and ask:
 
 The `ros` extra reads ROS 1 and ROS 2 bags. Flight logs, CAN / MDF4, live MQTT
 and the rest are [extras too](#-install-with-uvx-or-pip-no-docker). Live ROS
-robots and fleet/edge pipelines run in [Docker](#-run-with-docker-live-robots-fleet-and-edge-distro-specific-ros).
+robots (rosbridge) and fleet/edge pipelines run in [Docker](#-run-with-docker-live-robots-fleet-and-edge-distro-specific-ros).
 
 ### 🥯 Key Features
 
@@ -124,8 +124,8 @@ Two ways to run Bagel. Pick by data:
 
 | You have | Run Bagel with |
 | --- | --- |
-| Recorded data: ROS 1 `.bag` and ROS 2 `.db3` / `.mcap` bags, flight logs (PX4, ArduPilot, Betaflight), CAN / MDF4, CSV / JSON / Parquet, ROS text logs | **`uvx` or `pip`**, below: no Docker, no ROS install |
-| Live rosbridge / MQTT robots, fleet and edge deployments | **Docker**, further down: the images carry the ROS stacks and the standing-pipeline runtime |
+| Recorded data: ROS 1 `.bag` and ROS 2 `.db3` / `.mcap` bags, flight logs (PX4, ArduPilot, Betaflight), CAN / MDF4, CSV / JSON / Parquet, ROS text logs; live MQTT robots | **`uvx` or `pip`**, below: no Docker, no ROS install |
+| Live ROS robots (rosbridge), fleet and edge deployments | **Docker**, further down: the images carry the ROS stacks and the standing-pipeline runtime |
 
 ### 🐍 Install with uvx or pip (no Docker)
 
@@ -187,9 +187,10 @@ extra is missing, Bagel's error names the exact command to add it.
 MCAP, CSV / JSON / Parquet, ROS text logs, PlotJuggler / Lichtblick / LeRobot
 exports and S3 upload need no extra.
 
-To upgrade: `uvx` picks up new releases on its own (force it with
-`uvx --refresh --from "bagel-mcp[ros]" bagel-mcp --help`); with pip, run
-`pip install -U "bagel-mcp[ros]"`.
+To upgrade, repeat the extras you installed with, so their dependencies
+update too. `uvx` picks up new releases on its own (force it with
+`uvx --refresh --from "bagel-mcp[ros,px4]" bagel-mcp --help`); with pip, run
+`pip install -U "bagel-mcp[ros,px4]"`, using your own list of extras.
 
 Then prompt, pointing at your own file:
 
