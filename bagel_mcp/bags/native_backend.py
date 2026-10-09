@@ -31,6 +31,21 @@ rosidl_runtime = ros_native.optional("rosidl_runtime_py", feature=FEATURE)
 rosidl_utilities = ros_native.optional("rosidl_runtime_py.utilities", feature=FEATURE)
 
 
+def _nested_message_types(type_name: str) -> list[str]:
+    """Return the message types a type's fields hold, arrays and sequences unwrapped."""
+    nested = []
+    for slot_type in rosidl_utilities.get_message(type_name).SLOT_TYPES:
+        # Arrays and sequences wrap their element type (`Parameter[] new_parameters`).
+        element_type = (
+            slot_type.value_type
+            if isinstance(slot_type, rosidl_definition.AbstractNestedType)
+            else slot_type
+        )
+        if isinstance(element_type, rosidl_definition.NamespacedType):
+            nested.append("/".join(element_type.namespaced_name()))
+    return nested
+
+
 @functools.lru_cache
 def locally_installed_ros2msg(type_name: str) -> str:
     """Return the full-text definition of a type from the locally installed ROS 2 packages.
@@ -57,9 +72,7 @@ def locally_installed_ros2msg(type_name: str) -> str:
             continue
         visited.add(current)
         dependencies.append(current)
-        for slot_type in rosidl_utilities.get_message(current).SLOT_TYPES:
-            if isinstance(slot_type, rosidl_definition.NamespacedType):
-                stack.append("/".join(slot_type.namespaced_name()))
+        stack.extend(_nested_message_types(current))
 
     sections = []
     for dependency_type_name in dependencies:
