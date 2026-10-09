@@ -22,6 +22,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
         "test/source/test_influxdb.py::test_end_to_end_over_live_influxdb",
         "test/source/test_influxdb.py::test_preview_pipeline_detects_events_in_influxdb",
         "test/pipeline/integration/test_ros2_write_paths.py",
+        "test/pipeline/integration/test_bag_backend_parity.py",
     }
     unexpected = [
         report.nodeid

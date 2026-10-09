@@ -194,8 +194,8 @@ class Context:
 def _ecosystem_importable(ds_type: DataSource) -> bool:
     """Return whether the optional dependency behind an ecosystem is installed."""
     try:
-        importlib.import_module(f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}")
-    except (ImportError, ModuleNotFoundError):
+        importlib.import_module(f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}").register()
+    except (ImportError, ModuleNotFoundError):  # includes native ROS missing (pip install)
         return False
     return True
 
@@ -203,10 +203,10 @@ def _ecosystem_importable(ds_type: DataSource) -> bool:
 def _default_sample() -> pathlib.Path:
     """Pick the bundled sample this environment can actually parse.
 
-    PX4's .ulg parsing needs the ``px4`` optional dependency group
+    PX4's .ulg parsing needs the ``px4`` extra
     (``pyulog``), which the flagship ``ros2-kilted`` image doesn't install
     (it only syncs the ``ros2`` group). Prefer the richer PX4 walkthrough
-    when it's available (e.g. ``uv sync --group px4``, or CI's host-tests
+    when it's available (e.g. ``uv sync --extra px4``, or CI's host-tests
     job); otherwise fall back to the bundled MCAP sample, which needs no
     optional dependency at all.
     """
@@ -214,7 +214,7 @@ def _default_sample() -> pathlib.Path:
         return PX4_SAMPLE
     print(
         "(px4 support isn't installed in this image -- showing the bundled "
-        "ROS 2 MCAP sample instead. `uv sync --group px4` or "
+        "ROS 2 MCAP sample instead. `uv sync --extra px4` or "
         "`demo data/sample/px4/sample.ulg` on an image that has pyulog "
         "gets the full PX4 walkthrough.)\n"
     )

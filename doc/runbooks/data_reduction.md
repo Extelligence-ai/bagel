@@ -172,7 +172,7 @@ GCS (`bagel_mcp.pipeline.tasks.upload.gcs`, standard Google credential chain) an
 (`bagel_mcp.pipeline.tasks.upload.azure`, connection string or
 `AZURE_STORAGE_CONNECTION_STRING`) uploaders mirror the same source/prefix/window/skip
 semantics. Every image ships their SDKs (since 2.4.2); outside Docker, install the `upload`
-dependency group: `uv sync --group upload`.
+extra: `pip install "bagel-mcp[upload]"` (`uv sync --extra upload` in a checkout).
 
 ## Verify the mechanism without ROS
 

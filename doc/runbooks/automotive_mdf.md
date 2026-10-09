@@ -11,7 +11,7 @@ Every Bagel image ships the MDF reader (since 2.4.2). Running the server outside
 Docker? Install the optional `automotive` dependency group:
 
 ```bash
-uv sync --group automotive
+uv sync --extra automotive
 ```
 
 Everything is pure pip (`asammdf`): no vendor tooling required.

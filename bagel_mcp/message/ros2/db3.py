@@ -4,18 +4,13 @@ from collections.abc import Iterator
 from typing import Any
 
 import pyarrow as pa
-import rosbag2_py
-from rclpy.serialization import deserialize_message
-from rosidl_runtime_py.utilities import get_message
 
+from bagel_mcp import bags
 from bagel_mcp.di import module
 from bagel_mcp.message import base
 from bagel_mcp.message.ros2 import convert
 
-NANOSECOND = 1
-MICROSECOND = 1_000 * NANOSECOND
-MILLISECOND = 1_000 * MICROSECOND
-SECOND = 1_000 * MILLISECOND
+FEATURE = "Reading ROS 2 .db3 bag messages"
 
 
 class MessageDataset(base.MessageDataset):
@@ -23,26 +18,16 @@ class MessageDataset(base.MessageDataset):
 
     def _messages(
         self,
-        data_source: rosbag2_py.SequentialReader,
+        data_source: bags.Reader,
         topics: list[str],
         start_seconds_inclusive: float | None,
         end_seconds_inclusive: float | None,
     ) -> Iterator[tuple[str, float, object]]:
         """Return an iterator of topic name, timestamp in seconds, and deserialized ROS2 message."""
-        data_source.set_filter(rosbag2_py.StorageFilter(topics))
-        if start_seconds_inclusive is not None:
-            data_source.seek(int(start_seconds_inclusive * SECOND))
-        type_names = {
-            topic_metadata.name: topic_metadata.type
-            for topic_metadata in data_source.get_all_topics_and_types()
-        }
-        while data_source.has_next():
-            topic, serialized_msg, nanoseconds = data_source.read_next()
-            timestamp_seconds = nanoseconds / SECOND
-            if end_seconds_inclusive is not None and timestamp_seconds > end_seconds_inclusive:
-                return
-            deserialized_msg = deserialize_message(serialized_msg, get_message(type_names[topic]))
-            yield topic, timestamp_seconds, deserialized_msg
+        for topic, timestamp_ns, message in data_source.messages(
+            topics, start_seconds_inclusive, end_seconds_inclusive
+        ):
+            yield topic, bags.base.ros2_seconds(timestamp_ns), message
 
     def _to_json(self, message: object, struct: pa.StructType) -> dict[str, Any]:
         """Cast a deserialized ROS2 message into a JSON-serializable dictionary."""
@@ -50,5 +35,6 @@ class MessageDataset(base.MessageDataset):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (needs a bag backend: rosbags or native ROS 2)."""
+    bags.require(FEATURE, ros_version=2)
     module.global_registry[__name__] = MessageDataset

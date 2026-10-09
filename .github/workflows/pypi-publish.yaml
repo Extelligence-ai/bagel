@@ -1,0 +1,82 @@
+# Publishes the `bagel-mcp` distribution to TestPyPI when a release tag is pushed.
+#
+# TestPyPI only, deliberately: real PyPI publication is a separate, explicitly
+# approved step (issue #15), so this workflow carries no job for it. Publishing
+# uses PyPI's trusted publishing (OIDC): no API token is stored anywhere. One-time
+# setup on https://test.pypi.org for the project `bagel-mcp` -- "Add a new pending
+# publisher": owner `Extelligence-ai`, repository `bagel`, workflow
+# `pypi-publish.yaml`, environment `testpypi` -- and a `testpypi` environment in
+# this repository's settings whose deployment branch policy allows tags only, so
+# the OIDC token can only be minted by workflow code that went through review on
+# `main` (same reasoning as mcp-registry-publish.yaml).
+#
+# Install what it published: `uvx --index https://test.pypi.org/simple/
+# --index-strategy unsafe-best-match bagel-mcp` (dependencies still resolve
+# from PyPI).
+
+name: pypi-publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.8.0"
+          python-version: "3.12"
+      - name: Require the tag to match pyproject.toml
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match pyproject version ${VERSION}"
+            exit 1
+          fi
+      - name: Build the sdist and wheel
+        run: uv build --out-dir dist
+      - name: Check the wheel installs and the server imports from it
+        run: |
+          uv venv --python 3.12 "${RUNNER_TEMP}/check"
+          uv pip install --python "${RUNNER_TEMP}/check/bin/python" dist/bagel_mcp-*.whl
+          cd "${RUNNER_TEMP}"
+          "${RUNNER_TEMP}/check/bin/python" -c "import bagel_mcp.server"
+          "${RUNNER_TEMP}/check/bin/bagel-mcp" --help
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  testpypi:
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: testpypi
+    permissions:
+      id-token: write # mint the OIDC token the trusted publisher exchanges
+      contents: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.8.0"
+      - name: Publish to TestPyPI (trusted publishing)
+        run: |
+          uv publish --trusted-publishing always \
+            --publish-url https://test.pypi.org/legacy/ \
+            --check-url https://test.pypi.org/simple/bagel-mcp/ \
+            dist/*

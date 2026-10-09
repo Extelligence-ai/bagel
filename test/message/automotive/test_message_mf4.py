@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-asammdf = pytest.importorskip("asammdf", reason="asammdf is optional (uv sync --group automotive)")
+asammdf = pytest.importorskip("asammdf", reason="asammdf is optional (uv sync --extra automotive)")
 import numpy as np  # noqa: E402
 from asammdf import MDF, Signal  # noqa: E402
 

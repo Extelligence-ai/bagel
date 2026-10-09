@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-can = pytest.importorskip("can", reason="python-can is optional (uv sync --group automotive)")
+can = pytest.importorskip("can", reason="python-can is optional (uv sync --extra automotive)")
 cantools = pytest.importorskip("cantools")
 
 from bagel_mcp.di import module  # noqa: E402

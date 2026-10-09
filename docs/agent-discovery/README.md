@@ -18,7 +18,7 @@ makes model requests charged to that account. Discovery additionally uses live
 web search. Model calls are never run automatically in CI.
 
 ```sh
-uv sync --frozen --group px4
+uv sync --frozen --extra px4
 uv run python scripts/export_tool_catalog.py > /tmp/bagel-catalog.json
 uv run python scripts/smoke_agent_discovery.py --output /tmp/bagel-mcp-smoke
 uv run python scripts/audit_agent_discovery.py --output /tmp/bagel-public-audit

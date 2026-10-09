@@ -3,13 +3,14 @@
 from collections.abc import Iterator
 from typing import Any
 
-import genpy
 import pyarrow as pa
-import rosbag
 
+from bagel_mcp import bags
 from bagel_mcp.di import module
 from bagel_mcp.message import base
 from bagel_mcp.message.ros1 import convert
+
+FEATURE = "Reading ROS 1 .bag messages"
 
 
 class MessageDataset(base.MessageDataset):
@@ -17,19 +18,16 @@ class MessageDataset(base.MessageDataset):
 
     def _messages(
         self,
-        data_source: rosbag.Bag,
+        data_source: bags.Reader,
         topics: list[str],
         start_seconds_inclusive: float | None,
         end_seconds_inclusive: float | None,
     ) -> Iterator[tuple[str, float, object]]:
         """Return an iterator of topic name, timestamp in seconds, and deserialized ROS1 message."""
-        messages = data_source.read_messages(
-            topics,
-            genpy.Time.from_sec(start_seconds_inclusive) if start_seconds_inclusive else None,
-            genpy.Time.from_sec(end_seconds_inclusive) if end_seconds_inclusive else None,
-        )
-        for topic, message, timestamp in messages:
-            yield topic, timestamp.to_sec(), message
+        for topic, timestamp_ns, message in data_source.messages(
+            topics, start_seconds_inclusive, end_seconds_inclusive
+        ):
+            yield topic, bags.base.ros1_seconds(timestamp_ns), message
 
     def _to_json(self, message: object, struct: pa.StructType) -> dict[str, Any]:
         """Cast a deserialized ROS1 message into a JSON-serializable dictionary."""
@@ -37,5 +35,6 @@ class MessageDataset(base.MessageDataset):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (needs a bag backend: rosbags or native ROS 1)."""
+    bags.require(FEATURE, ros_version=1)
     module.global_registry[__name__] = MessageDataset

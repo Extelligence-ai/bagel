@@ -1,10 +1,4 @@
-import os
-
-import pytest
-
 from bagel_mcp.source.ros2 import db3
-
-ROS_DISTRO = os.getenv("ROS_DISTRO")
 
 
 def test_should_build_db3_directory() -> None:
@@ -15,8 +9,8 @@ def test_should_build_db3_directory() -> None:
     reader = factory.build()
 
     # THEN
-    assert isinstance(reader, db3.rosbag2_py.SequentialReader)
-    assert reader.has_next()
+    assert reader.info.message_count == 6074
+    assert next(reader.raw_messages(reader.info.topic_names, None, None), None) is not None
 
 
 def test_should_build_db3_file() -> None:
@@ -27,24 +21,25 @@ def test_should_build_db3_file() -> None:
     reader = factory.build()
 
     # THEN
-    assert isinstance(reader, db3.rosbag2_py.SequentialReader)
-    assert reader.has_next()
+    assert reader.info.message_count == 1246
+    assert next(reader.raw_messages(reader.info.topic_names, None, None), None) is not None
 
 
-@pytest.mark.skipif(
-    ROS_DISTRO in ["iron", "humble"],
-    reason=f"Skipping this test for ROS_DISTRO={ROS_DISTRO} due to lack of zstd support.",
-)
-def test_should_raise_db3_zstd_directory() -> None:
-    # GIVEN / WHEN / THEN
-    with pytest.raises(ValueError):
-        db3.SourceFactory("data/sample/ros2/db3_zstd/")
+def test_should_build_db3_zstd_directory() -> None:
+    """A directory recorded with file-level zstd compression reads as it is."""
+    # GIVEN
+    factory = db3.SourceFactory("data/sample/ros2/db3_zstd/")
+
+    # WHEN
+    reader = factory.build()
+
+    # THEN
+    assert factory.compression_format == "zstd"
+    assert factory.compression_mode == "file"
+    assert reader.info.message_count == 6
+    assert sum(1 for _ in reader.raw_messages(reader.info.topic_names, None, None)) == 6
 
 
-@pytest.mark.skipif(
-    ROS_DISTRO in ["iron", "humble"],
-    reason=f"Skipping this test for ROS_DISTRO={ROS_DISTRO} due to lack of zstd support.",
-)
 def test_should_build_db3_zstd_file() -> None:
     # GIVEN
     factory = db3.SourceFactory("data/sample/ros2/db3_zstd/part_0.db3.zstd")
@@ -53,5 +48,5 @@ def test_should_build_db3_zstd_file() -> None:
     reader = factory.build()
 
     # THEN
-    assert isinstance(reader, db3.rosbag2_py.SequentialReader)
-    assert reader.has_next()
+    assert reader.info.message_count == 6
+    assert next(reader.raw_messages(reader.info.topic_names, None, None), None) is not None

@@ -1,31 +1,20 @@
-"""Utility function that decompresses a ROS2 bag."""
+"""Decompress a single zstd-compressed ROS 2 storage file so a reader can open it.
+
+A ``.db3.zstd`` / ``.mcap.zstd`` *file* has no metadata.yaml to tell a reader how to
+undo the compression, so it is expanded into the cache (keyed by the source's path,
+size and mtime; the source is never touched) the way the format-agnostic MCAP source
+does. Compressed bag *directories* (``compression_mode: file`` or ``message``) are
+left alone: both bag backends read those as they are.
+"""
 
 import pathlib
 
-import rosbag2_py
-import zstandard as zstd
+from bagel_mcp.source import mcap
 
 
 def ros2bag(path: pathlib.Path) -> pathlib.Path:
-    """Decompress a ROS2 bag if needed and return the decompressed path."""
-    decompressed_path = path
-    if path.is_file():
-        if path.suffix == ".zstd":
-            decompressed_path = path.with_suffix("")
-            with (
-                open(path, "rb") as f_in,
-                open(decompressed_path, "wb") as f_out,
-            ):
-                zstd.ZstdDecompressor().copy_stream(f_in, f_out)
-    elif path.is_dir():
-        metadata = rosbag2_py.Info().read_metadata(str(path), "")
-        if metadata.compression_format == "zstd":
-            for rel_file, file_info in zip(
-                metadata.relative_file_paths, metadata.files, strict=True
-            ):
-                with (
-                    open(path / rel_file, "rb") as f_in,
-                    open(path / file_info.path, "wb") as f_out,
-                ):
-                    zstd.ZstdDecompressor().copy_stream(f_in, f_out)
-    return decompressed_path
+    """Return a path a bag reader can open, decompressing a lone ``.zstd`` file if needed."""
+    path = pathlib.Path(path)
+    if path.is_file() and path.suffix == ".zstd":
+        return mcap.decompress(path)
+    return path

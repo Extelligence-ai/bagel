@@ -1,20 +1,15 @@
 """Create a new ROS2 DB3 bag snippet."""
 
+import dataclasses
 import logging
 import pathlib
 from collections import deque
 
-import rosbag2_py
-from rclpy.serialization import serialize_message
-
+from bagel_mcp import bags
 from bagel_mcp.di import module
 from bagel_mcp.pipeline import base, messages
-from bagel_mcp.pipeline.tasks import ros2_compat
 
-NANOSECOND = 1
-MICROSECOND = 1_000 * NANOSECOND
-MILLISECOND = 1_000 * MICROSECOND
-SECOND = 1_000 * MILLISECOND
+FEATURE = "Writing ROS 2 .db3 bag snippets"
 
 
 class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
@@ -65,39 +60,31 @@ class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
 
         match lookback:
             case base.Lookback(last=int(last), unit=base.Unit.FRAME):
-                messages = deque(maxlen=last)
-                for tup in self.dataset._messages(data_source, topics, None, asof_seconds):
-                    messages.append(tup)
+                records = deque(maxlen=last)
+                for record in data_source.raw_messages(topics, None, asof_seconds):
+                    records.append(record)
             case base.Lookback(last=_, unit=_):
                 start_seconds = asof_seconds - lookback.to_seconds()
-                messages = self.dataset._messages(data_source, topics, start_seconds, end_seconds)
+                records = data_source.raw_messages(topics, start_seconds, end_seconds)
             case _:
-                messages = self.dataset._messages(data_source, topics, None, end_seconds)
+                records = data_source.raw_messages(topics, None, end_seconds)
 
         bag_directory = self.artifact_path(asof_seconds)
 
-        storage_options = rosbag2_py.StorageOptions(
-            uri=str(bag_directory), storage_id=self._output_storage_id
-        )
-        converter_options = rosbag2_py.ConverterOptions("", "")
-
-        writer = rosbag2_py.SequentialWriter()
-
-        try:
-            writer.open(storage_options, converter_options)
-            for i, topic in enumerate(topics):
-                writer.create_topic(
-                    ros2_compat.topic_metadata(
-                        i,
-                        topic,
-                        self.registry.native_type_name(topic, data_source),
-                        self._output_serialization_format,
+        # Serialized bytes are copied as recorded: no deserialize/serialize round trip.
+        with bags.open_writer(
+            bag_directory, ros_version=2, storage=self._output_storage_id
+        ) as writer:
+            for topic in topics:
+                writer.add_topic(
+                    dataclasses.replace(
+                        data_source.info.topic(topic),
+                        definition=data_source.definition(topic),
+                        serialization_format=self._output_serialization_format,
                     )
                 )
-            for topic, timestamp_seconds, message in messages:
-                writer.write(topic, serialize_message(message), int(timestamp_seconds * SECOND))
-        finally:
-            writer.close()
+            for topic, timestamp_ns, data in records:
+                writer.write(topic, timestamp_ns, data)
 
         logging.info("Wrote %s", bag_directory)
 
@@ -105,5 +92,6 @@ class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (needs a bag backend: rosbags or native ROS 2)."""
+    bags.require(FEATURE, ros_version=2)
     module.global_registry[__name__] = SnipRosbag

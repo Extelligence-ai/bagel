@@ -13,6 +13,7 @@ import inspect
 import pathlib
 from typing import Any
 
+from bagel_mcp import bags, ros_native
 from bagel_mcp.di import module
 from bagel_mcp.pipeline import base, gates, tasks
 
@@ -107,7 +108,17 @@ def list_capabilities(include_unavailable: bool = True) -> list[dict[str, Any]]:
         register = getattr(discovered, "register", None)
         if not callable(register):
             continue
-        register()
+        try:
+            register()
+        except (  # bag support (the `ros` extra / native ROS) or native-only pieces missing
+            bags.BagSupportUnavailableError,
+            ros_native.NativeRosUnavailableError,
+        ) as error:
+            if include_unavailable:
+                capabilities.append(
+                    {"module": module_name, "available": False, "reason": str(error)}
+                )
+            continue
         cls = module.global_registry.get(module_name)
         if cls is None or not isinstance(cls, type):
             continue

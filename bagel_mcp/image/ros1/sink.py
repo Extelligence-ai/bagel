@@ -3,15 +3,11 @@
 import base64
 from typing import Any
 
-import cv2
-from cv_bridge import CvBridge
 from PIL import Image as PILImage
-from sensor_msgs.msg import Image
 
 from bagel_mcp.di import module
 from bagel_mcp.image.bagel import sink
-
-bridge = CvBridge()
+from bagel_mcp.image.ros1 import decode
 
 
 class ImageDataset(sink.ImageDataset):
@@ -23,30 +19,17 @@ class ImageDataset(sink.ImageDataset):
         return "sensor_msgs/Image"
 
     def _to_image(self, msg: dict[str, Any]) -> PILImage.Image:
-        """Cast a message dictionary into a PIL.Image object."""
-        image = Image()
-        image.header.seq = msg["header"]["seq"]
-        image.header.stamp.secs = msg["header"]["stamp"]["secs"]
-        image.header.stamp.nsecs = msg["header"]["stamp"]["nsecs"]
-        image.header.frame_id = msg["header"]["frame_id"]
-        image.height = msg["height"]
-        image.width = msg["width"]
-        image.encoding = msg["encoding"]
-        image.is_bigendian = msg["is_bigendian"]
-        image.step = msg["step"]
-
+        """Cast a message dictionary (rosbridge JSON) into a PIL.Image object."""
         data_field = msg["data"]
-        if isinstance(data_field, str):
-            image.data = base64.b64decode(data_field)
-        else:
-            image.data = bytes(data_field)
-
-        cv_image = bridge.imgmsg_to_cv2(image, desired_encoding="passthrough")
-
-        if image.encoding.lower() in ("bgr8", "bgr16"):
-            cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-
-        return PILImage.fromarray(cv_image)
+        data = base64.b64decode(data_field) if isinstance(data_field, str) else bytes(data_field)
+        return decode.to_pil(
+            msg["encoding"],
+            msg["height"],
+            msg["width"],
+            msg["step"],
+            data,
+            bigendian=bool(msg.get("is_bigendian", 0)),
+        )
 
 
 def register() -> None:

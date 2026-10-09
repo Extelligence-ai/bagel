@@ -1,42 +1,26 @@
 """Provide a data source for reading ROS2 sqlite3 bags."""
 
-import pathlib
-
-import rosbag2_py
-
+from bagel_mcp import bags
 from bagel_mcp.di import module
 from bagel_mcp.source.ros2 import base
 
+FEATURE = "Reading ROS 2 .db3 bags"
+
 
 class SourceFactory(base.SourceFactory):
-    """A data source factory for reading from ROS2 sqlite3 bags."""
+    """A data source factory for reading from ROS2 sqlite3 bags.
 
-    def __init__(self, path: str) -> None:
-        """Initialize the ROS2 sqlite3 bag data source factory.
+    Accepts a bag directory (with ``metadata.yaml``), a single ``.db3`` file, or a single
+    ``.db3.zstd`` file, including directories recorded with file- or message-level
+    zstd compression.
+    """
 
-        Args:
-            path (str): The path to the ROS2 sqlite3 bag file or directory.
-
-        """
-        super().__init__(path)
-        if pathlib.Path(path).is_dir() and self.compression_format == "zstd":
-            raise ValueError(f"Directory contains .db3.zstd files is not supported: {path}")
-
-    def build(self) -> rosbag2_py.SequentialReader:
-        """Return a ROS2 SequentialReader object."""
-        storage_options = rosbag2_py.StorageOptions(
-            uri=str(self.path),
-            storage_id="sqlite3",
-        )
-        converter_options = rosbag2_py.ConverterOptions(
-            input_serialization_format="",
-            output_serialization_format="",
-        )
-        reader = rosbag2_py.SequentialReader()
-        reader.open(storage_options, converter_options)
-        return reader
+    def build(self) -> bags.Reader:
+        """Return the open bag reader."""
+        return self._reader
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (needs a bag backend: rosbags or native ROS 2)."""
+    bags.require(FEATURE, ros_version=2)
     module.global_registry[__name__] = SourceFactory

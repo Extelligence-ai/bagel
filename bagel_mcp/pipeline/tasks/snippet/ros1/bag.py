@@ -1,17 +1,19 @@
-"""Create a new ROS1 bag snippet using the `rosbag filter` CLI tool."""
+"""Create a new ROS1 bag snippet."""
 
-import heapq
+import dataclasses
 import logging
 import pathlib
-import shlex
-import subprocess
+from collections import deque
 
+from bagel_mcp import bags
 from bagel_mcp.di import module
 from bagel_mcp.pipeline import base, messages
 
+FEATURE = "Writing ROS 1 .bag snippets"
+
 
 class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
-    """Create a new ROS1 bag snippet using the `rosbag filter` CLI tool."""
+    """Create a new ROS1 bag snippet: the recorded bytes of a window, in a new .bag."""
 
     needs_recorded_log = True
 
@@ -45,61 +47,41 @@ class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
 
     def execute(self, asof_seconds: float, lookback: base.Lookback | None) -> list[pathlib.Path]:
         """Execute the task at the given time."""
-        conditions = []
+        data_source = self.factory.build()
+        topics = self._topics or self.registry.available_topics(data_source)
 
-        topics, data_source = self._topics, None
-        if topics is None:
-            data_source = self.factory.build()
-            topics = self.registry.available_topics(data_source)
-
-        if topics:
-            condition = " or ".join(f"topic == '{topic}'" for topic in topics)
-            conditions.append(f"({condition})")
+        end_seconds = asof_seconds + self._post_seconds
 
         match lookback:
             case base.Lookback(last=int(last), unit=base.Unit.FRAME):
-                timestamps = []
-                data_source = data_source or self.factory.build()
-                connections = data_source._get_connections(topics=topics)
-                for indexes in data_source._get_indexes(connections=connections):
-                    for index in indexes:
-                        timestamp_seconds = index.time.to_sec()
-                        if timestamp_seconds <= asof_seconds:
-                            heapq.heappush(timestamps, timestamp_seconds)
-                start_seconds = timestamps[-last] if len(timestamps) >= last else timestamps[0]
-                conditions.append(f"{start_seconds} <= t.to_sec() <= {asof_seconds}")
+                records = deque(maxlen=last)
+                for record in data_source.raw_messages(topics, None, asof_seconds):
+                    records.append(record)
             case base.Lookback(last=_, unit=_):
                 start_seconds = asof_seconds - lookback.to_seconds()
-                end_seconds = asof_seconds + self._post_seconds
-                conditions.append(f"{start_seconds} <= t.to_sec() <= {end_seconds}")
+                records = data_source.raw_messages(topics, start_seconds, end_seconds)
             case _:
-                end_seconds = asof_seconds + self._post_seconds
-                conditions.append(f"t.to_sec() <= {end_seconds}")
+                records = data_source.raw_messages(topics, None, end_seconds)
 
         output_file = self.artifact_path(asof_seconds, ".bag")
 
-        command = [
-            "rosbag",
-            "filter",
-            str(self.factory.path),
-            str(output_file),
-            " and ".join(conditions),
-        ]
+        # Serialized bytes are copied as recorded: no deserialize/serialize round trip.
+        with bags.open_writer(output_file, ros_version=1) as writer:
+            for topic in topics:
+                writer.add_topic(
+                    dataclasses.replace(
+                        data_source.info.topic(topic), definition=data_source.definition(topic)
+                    )
+                )
+            for topic, timestamp_ns, data in records:
+                writer.write(topic, timestamp_ns, data)
 
-        result = subprocess.run(  # noqa: S603
-            command,
-            check=True,  # raise CalledProcessError if nonzero exit
-            text=True,
-            capture_output=True,
-        )
-
-        logging.debug(shlex.join(result.args))
-        logging.debug(result.stdout.strip())
         logging.info("Wrote %s", output_file)
 
         return [output_file]
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (needs a bag backend: rosbags or native ROS 1)."""
+    bags.require(FEATURE, ros_version=1)
     module.global_registry[__name__] = SnipRosbag

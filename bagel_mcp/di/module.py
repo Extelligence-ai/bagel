@@ -32,6 +32,53 @@ def canonical(import_path: str) -> str:
     return import_path
 
 
+# Top-level packages that only an optional extra installs, mapped to that extra.
+OPTIONAL_PACKAGE_EXTRAS = {
+    "rosbags": "ros",
+    "lz4": "ros",
+    "pyulog": "px4",
+    "git": "px4",
+    "pymavlink": "ardupilot",
+    "orangebox": "betaflight",
+    "asammdf": "automotive",
+    "can": "automotive",
+    "cantools": "automotive",
+    "influxdb_client_3": "iot",
+    "paho": "iot",
+    "rerun": "viz",
+    "azure": "upload",
+    "google": "upload",
+    "wasmtime": "cloudini",
+    "cv2": "cv",
+    "PIL": "cv",
+    "torch": "cv",
+    "transformers": "cv",
+}
+
+
+def import_module(import_path: str) -> "Module":
+    """Import a module, naming the extra to install when an optional package is missing.
+
+    Raises:
+        ModuleNotFoundError: With the install command, when the missing package
+            belongs to an optional extra.
+
+    """
+    try:
+        return importlib.import_module(import_path)
+    except ModuleNotFoundError as error:
+        package = (error.name or "").split(".")[0]
+        extra = OPTIONAL_PACKAGE_EXTRAS.get(package)
+        if extra is None:
+            raise
+        raise ModuleNotFoundError(
+            f"{import_path} needs the optional '{package}' package. Install it with: "
+            f"pip install 'bagel-mcp[{extra}]' (uv sync --extra {extra} in a checkout). "
+            "In Docker, pull the latest Bagel image.",
+            name=error.name,
+        ) from error
+
+
 class Module(Protocol):
     """Protocol for an import module that can be registered."""
 
@@ -51,7 +98,7 @@ def provide(import_path: str, args: dict[str, Any]) -> object:
 
     """
     import_path = canonical(import_path)
-    module: Module = importlib.import_module(import_path)
+    module: Module = import_module(import_path)
     module.register()
     return construct(global_registry[import_path], args)
 

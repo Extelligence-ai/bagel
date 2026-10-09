@@ -7,7 +7,7 @@ import pytest
 from bagel_mcp import server
 from bagel_mcp.settings import settings
 
-rr = pytest.importorskip("rerun", reason="rerun-sdk is optional (uv sync --group viz)")
+rr = pytest.importorskip("rerun", reason="rerun-sdk is optional (uv sync --extra viz)")
 
 SAMPLE = "./data/sample/pyarrow/csv/flight.csv"
 SAMPLE_ARGS = {"timestamp_column": "t", "timestamp_format": "seconds"}

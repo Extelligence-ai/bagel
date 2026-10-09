@@ -30,7 +30,7 @@ def _cloudini_available() -> bool:
     if not _HAS_CLOUDINI:
         logging.warning(
             "cloudini dependencies (wasmtime, numpy) are not installed. "
-            "Install them with: uv sync --group cloudini"
+            "Install them with: pip install 'bagel-mcp[cloudini]' (uv sync --extra cloudini)"
         )
         return False
     if not settings.CLOUDINI_ENABLED:
