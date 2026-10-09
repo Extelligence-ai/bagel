@@ -1,14 +1,11 @@
 """Native ROS Python bindings: present in the ROS service images, absent on a pip install.
 
-``rosbag``, ``genpy`` and ``cv_bridge`` (ROS 1) and ``rosbag2_py``, ``rclpy`` and
-``rosidl_runtime_py`` (ROS 2) are apt packages sourced from ``/opt/ros``, not wheels
-on PyPI, so ``pip install bagel-mcp`` cannot provide them. The modules that need them
-bind the import through :func:`optional`, which keeps them importable without ROS, and
-call :func:`require` from their ``register()`` so that, without ROS, they never enter
-the DI registry or the pipeline capability list. Whatever reaches them anyway gets a
-:class:`NativeRosUnavailableError` naming the Docker image to use instead.
-
-ROS 2 MCAP bags are unaffected: Bagel reads those with its own MCAP reader.
+``rosbag`` and ``genpy`` (ROS 1) and ``rosbag2_py``, ``rclpy`` and ``rosidl_runtime_py``
+(ROS 2) are apt packages sourced from ``/opt/ros``, not wheels on PyPI. Bag files no
+longer need them: the ``ros`` extra's pure-Python backend reads and writes them (see
+:mod:`bagel_mcp.bags`). The native bag backend binds them through :func:`optional`,
+which keeps it importable without ROS, and whatever reaches a missing binding gets a
+:class:`NativeRosUnavailableError` naming the alternatives.
 """
 
 import importlib
@@ -40,9 +37,10 @@ def _message(name: str, feature: str) -> str:
     image = _IMAGES.get(name, ROS2_IMAGE)
     return (
         f"{feature} needs the native ROS package '{name}', which is not on PyPI and so "
-        f"not part of a pip install. Run Bagel from the `{image}` Docker image instead "
-        f"(`docker compose run --service-ports {image}`; see the README Quickstart). "
-        "ROS 2 MCAP bags do not need it: Bagel reads them with its own MCAP reader."
+        f"not part of a pip install. Bag files need no native ROS: install the `ros` extra "
+        f"(`pip install 'bagel-mcp[ros]'`) or leave BAG_BACKEND on auto. For live ROS "
+        f"topics run the `{image}` Docker image (`docker compose run --service-ports "
+        f"{image}`; see the README Quickstart)."
     )
 
 

@@ -429,10 +429,8 @@ def subscribe_live_topics(  # noqa: PLR0913
 
 def _sink_class(ts_type: TopicSink) -> type:
     """Return the TopicSink class for a sink type, without constructing (connecting) one."""
-    import importlib
-
     import_path = f"{BaseModule.TOPIC_SINK.value}.{ts_type.value}"
-    importlib.import_module(import_path).register()
+    module.import_module(import_path).register()
     return module.global_registry[import_path]
 
 

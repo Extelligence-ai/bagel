@@ -2,7 +2,6 @@
 
 import abc
 import copy
-import importlib
 import logging
 import pathlib
 from collections.abc import Iterator, Mapping
@@ -259,7 +258,7 @@ class Operator(abc.ABC):
 
         """
         module_path = module.canonical(config["module"])
-        importlib.import_module(module_path).register()
+        module.import_module(module_path).register()
         cls = module.global_registry[module_path]
         instance: Operator = cls(**config.get("args", {}))
         instance.setup(path=path, **config.get("setup", {}))

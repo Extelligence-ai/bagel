@@ -2,13 +2,13 @@
 
 Two ways to run the server; the data decides.
 
-**No Docker (`uvx`)** for every format marked "pip" below: the MCP client launches
-the server over stdio (`{"command": "uvx", "args": ["bagel-mcp", "--transport",
+**No Docker (`uvx`)** for every recorded format: the MCP client launches the
+server over stdio (`{"command": "uvx", "args": ["bagel-mcp", "--transport",
 "stdio"]}`; Claude Code: `claude mcp add bagel -- uvx bagel-mcp --transport
 stdio`; Codex: `codex mcp add bagel -- uvx bagel-mcp --transport stdio`). Add the
 format's extra with `uvx --from "bagel-mcp[<extra>]" bagel-mcp --transport
-stdio`. Native ROS is not on PyPI, so `.db3` / `.bag` bags and live rosbridge
-need Docker; the server names the image if asked for one.
+stdio`; `ros` covers `.bag` and `.db3` bags in pure Python. Live rosbridge needs
+Docker; the server names the image if asked for one.
 
 **Docker** for everything: start the container matching the data format, then
 connect (default `http://localhost:8000/mcp`). Codex: `codex mcp add bagel --url
@@ -17,8 +17,8 @@ http://localhost:8000/mcp` once. Claude Code installs connect automatically.
 | Data | Typical files | pip extra (`uvx`) | Compose service (Docker) | Extra args needed |
 |---|---|---|---|---|
 | ROS 2 bag, MCAP storage | `.mcap` dirs with `metadata.yaml` | none (Bagel's own MCAP reader) | `ros2-kilted` / `ros2-jazzy` / `ros2-iron` / `ros2-humble` | none |
-| ROS 2 bag, sqlite storage | `.db3` dirs | Docker only | `ros2-kilted` / `ros2-jazzy` / `ros2-iron` / `ros2-humble` (match the bag's distro) | none |
-| ROS 1 bag | `.bag` | Docker only | `ros1-noetic` (`ros1-noetic-cv` for image topics) | none |
+| ROS 2 bag, sqlite storage | `.db3` dirs | `ros` | `ros2-kilted` / `ros2-jazzy` / `ros2-iron` / `ros2-humble` (match the bag's distro) | none |
+| ROS 1 bag | `.bag` | `ros` | `ros1-noetic` (`ros1-noetic-cv` for image topics) | none |
 | ROS text logs | `~/.ros/log/*.log` | none | any ros image | none |
 | PX4 | `.ulg` | `px4` | `px4` | none |
 | ArduPilot | `.bin` | `ardupilot` | `ardupilot` | none |
@@ -31,7 +31,7 @@ http://localhost:8000/mcp` once. Claude Code installs connect automatically.
 | Live rosbridge | websocket | Docker only | image matching the robot's ROS stack | host/port of the bridge |
 
 Symptoms of a wrong setup: connection refused → container not running or wrong
-port; "needs the native ROS package" → a `.db3`/`.bag` on a `uvx` install, use
-the named Docker image (or record ROS 2 bags as MCAP); a typed error naming the format → wrong image or corrupt file;
+port; "needs ROS bag support" → a `.db3`/`.bag` on a `uvx` install without the
+`ros` extra (`uvx --from "bagel-mcp[ros]" ...`); a typed error naming the format → wrong image or corrupt file;
 "Missing required constructor arguments: dbc" → CAN without its DBC;
 "No module named 'asammdf'" or "'can'" → an image older than 2.4.2, so pull `:latest`.

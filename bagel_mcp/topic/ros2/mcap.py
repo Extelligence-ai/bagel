@@ -1,7 +1,5 @@
 """A topic registry for ROS2 MCAP bags."""
 
-from __future__ import annotations
-
 import functools
 
 import pyarrow as pa
@@ -9,7 +7,7 @@ from google.protobuf import descriptor_pb2
 from google.protobuf.descriptor_pool import DescriptorPool
 from mcap.reader import make_reader
 
-from bagel_mcp import ros_native
+from bagel_mcp import bags
 from bagel_mcp.di import module
 from bagel_mcp.source.ros2.mcap import McapRos2Bag
 from bagel_mcp.topic.ros2 import base
@@ -17,8 +15,7 @@ from bagel_mcp.topic.ros2.protobuf import schema as protobuf_schema
 from bagel_mcp.topic.ros2.ros2msg import parse as ros2msg_parse
 from bagel_mcp.topic.ros2.ros2msg import schema as ros2msg_schema
 
-FEATURE = "Reading ROS 2 MCAP bags through rosbag2"
-rosbag2_py = ros_native.optional("rosbag2_py", feature=FEATURE)
+FEATURE = "Describing ROS 2 MCAP bag topics through rosbag2 metadata"
 
 
 @functools.lru_cache
@@ -71,11 +68,11 @@ class TopicRegistry(base.TopicRegistry):
             case _:
                 raise base.UnsupportedEncodingError(definition.encoding)
 
-    def _metadata(self, data_source: McapRos2Bag) -> rosbag2_py.BagMetadata:
+    def _metadata(self, data_source: McapRos2Bag) -> bags.BagInfo:
         return data_source.metadata
 
 
 def register() -> None:
-    """Register module for dependency injection (only where native ROS 2 is present)."""
-    ros_native.require("rosbag2_py", feature=FEATURE)
+    """Register module for dependency injection (needs a bag backend: rosbags or native ROS 2)."""
+    bags.require(FEATURE, ros_version=2)
     module.global_registry[__name__] = TopicRegistry

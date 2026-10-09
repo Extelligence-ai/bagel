@@ -119,7 +119,9 @@ jobs:
         # to actually exercise it instead of skipping (demo.py's default
         # image, ros2-kilted, doesn't install this group -- see demo.py's
         # _default_sample()).
-        run: uv sync --locked --extra iot --extra automotive --extra upload --extra viz --extra px4
+        # ros: the pure-Python bag backend, so the ROS 1/2 bag suites run here too
+        # (the service images run them again on the native backend's parity tests).
+        run: uv sync --locked --extra iot --extra automotive --extra upload --extra viz --extra px4 --extra ros
       - name: Run host-side tests
         env:
           COVERAGE_FILE: .coverage.host-${{ matrix.python }}
@@ -142,7 +144,16 @@ jobs:
             test/source/test_postgres.py \
             test/logging/ros \
             test/message/ros \
-            test/source/ros
+            test/source/ros \
+            test/bags \
+            test/source/ros1 \
+            test/topic/ros1 \
+            test/message/ros1 \
+            test/logging/ros1 \
+            test/source/ros2 \
+            test/topic/ros2 \
+            test/message/ros2 \
+            test/logging/ros2
       - name: Upload coverage data
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -161,9 +172,9 @@ jobs:
   # A pip user's environment: a clean virtualenv with no ROS and no checkout on
   # sys.path, the built wheel installed with every non-ROS extra, the `bagel-mcp`
   # console script serving MCP over stdio from a scratch directory. Every non-ROS
-  # source in data/sample and test/_fixtures must describe and query; the
-  # native-ROS sources (.db3, .bag) must fail with the error that names the Docker
-  # image. The `cv` and `jev` extras are left out on purpose: both pull in
+  # source in data/sample and test/_fixtures must describe and query, the ROS
+  # bags (.db3, .bag) through the `ros` extra's pure-Python backend, and a
+  # reduce pipeline must write a .db3 bag the backend reopens. The `cv` and `jev` extras are left out on purpose: both pull in
   # PyTorch, which the smoke test does not need and which would dominate the job.
   pip-install:
     runs-on: ubuntu-latest
@@ -181,7 +192,7 @@ jobs:
           uv venv --python 3.12 "${RUNNER_TEMP}/bagel-venv"
           WHEEL=$(ls dist/bagel_mcp-*.whl)
           uv pip install --python "${RUNNER_TEMP}/bagel-venv/bin/python" \
-            "bagel-mcp[px4,ardupilot,betaflight,automotive,iot,viz,upload,cloudini] @ file://${PWD}/${WHEEL}"
+            "bagel-mcp[px4,ardupilot,betaflight,automotive,iot,viz,upload,cloudini,ros] @ file://${PWD}/${WHEEL}"
       - name: Smoke-test every non-ROS source over MCP from outside the checkout
         run: |
           cd "${RUNNER_TEMP}"

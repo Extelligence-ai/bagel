@@ -1,18 +1,8 @@
-import os
-
-import pytest
-
 from bagel_mcp.logging.ros2.mcap import LoggingDataset
 from bagel_mcp.source.ros2.mcap import SourceFactory
 from bagel_mcp.topic.ros2.mcap import TopicRegistry
 
-ROS_DISTRO = os.getenv("ROS_DISTRO")
 
-
-@pytest.mark.skipif(
-    ROS_DISTRO in ["iron", "humble"],
-    reason=f"Skipping this test for ROS_DISTRO={ROS_DISTRO} due to lack of zstd support.",
-)
 def test_logging_dataset() -> None:
     # GIVEN
     factory = SourceFactory("data/sample/ros2/mcap_zstd")
@@ -26,10 +16,6 @@ def test_logging_dataset() -> None:
     assert relation.to_df().shape == (6, 3)
 
 
-@pytest.mark.skipif(
-    ROS_DISTRO in ["iron", "humble"],
-    reason=f"Skipping this test for ROS_DISTRO={ROS_DISTRO} due to lack of zstd support.",
-)
 def test_can_select_time_range() -> None:
     # GIVEN
     factory = SourceFactory("data/sample/ros2/mcap_zstd")

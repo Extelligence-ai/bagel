@@ -19,9 +19,11 @@ if [[ "${JEV_MODE:-false}" == true ]]; then
 fi
 # Feature sets are pip extras (`[project.optional-dependencies]`, shared with pip
 # users); ros1/ros2 are dependency groups because their native half is apt-only.
+# The ROS images also take the `ros` extra: the pure-Python bag backend is the
+# default everywhere, the native stack stays for live topics and parity tests.
 for feature in "$@"; do
     case "$feature" in
-        ros1 | ros2) args+=(--group "$feature") ;;
+        ros1 | ros2) args+=(--group "$feature" --extra ros) ;;
         *) args+=(--extra "$feature") ;;
     esac
 done

@@ -1,16 +1,12 @@
 """A base class for topic registry for ROS2 bags."""
 
-from __future__ import annotations
-
 import abc
 
 import pyarrow as pa
 
-from bagel_mcp import ros_native
+from bagel_mcp import bags
 from bagel_mcp.source.ros2.mcap import McapRos2Bag
 from bagel_mcp.topic import base
-
-rosbag2_py = ros_native.optional("rosbag2_py", feature="Reading ROS 2 bags")
 
 # Shared with the format-agnostic MCAP registry; re-exported here for back-compat.
 UnsupportedEncodingError = base.UnsupportedEncodingError
@@ -21,49 +17,32 @@ class TopicRegistry(base.TopicRegistry):
     """A base class for topic registry for ROS2 bags."""
 
     @abc.abstractmethod
-    def struct(
-        self, topic: str, data_source: McapRos2Bag | rosbag2_py.SequentialReader
-    ) -> pa.StructType:
+    def struct(self, topic: str, data_source: McapRos2Bag | bags.Reader) -> pa.StructType:
         """Return the PyArrow StructType for the given topic."""
 
     @abc.abstractmethod
-    def describe(self, topic: str, data_source: McapRos2Bag | rosbag2_py.SequentialReader) -> str:
+    def describe(self, topic: str, data_source: McapRos2Bag | bags.Reader) -> str:
         """Return a human-readable description of the given topic."""
 
     @abc.abstractmethod
-    def _metadata(
-        self, data_source: McapRos2Bag | rosbag2_py.SequentialReader
-    ) -> rosbag2_py.BagMetadata:
-        """Return the BagMetadata for the given data source."""
+    def _metadata(self, data_source: McapRos2Bag | bags.Reader) -> bags.BagInfo:
+        """Return the bag metadata for the given data source."""
 
-    def available_topics(self, data_source: McapRos2Bag | rosbag2_py.SequentialReader) -> list[str]:
+    def available_topics(self, data_source: McapRos2Bag | bags.Reader) -> list[str]:
         """Return a list of available topic names."""
-        return sorted(
-            [
-                info.topic_metadata.name
-                for info in self._metadata(data_source).topics_with_message_count
-            ]
-        )
+        return self._metadata(data_source).topic_names
 
-    def native_type_name(
-        self, topic: str, data_source: McapRos2Bag | rosbag2_py.SequentialReader
-    ) -> str:
+    def native_type_name(self, topic: str, data_source: McapRos2Bag | bags.Reader) -> str:
         """Return the native type name for the given topic."""
-        info = self._topic_info(topic, data_source)
-        return info.topic_metadata.type
+        return self._topic_info(topic, data_source).type_name
 
-    def message_count(
-        self, topic: str, data_source: McapRos2Bag | rosbag2_py.SequentialReader
-    ) -> int:
+    def message_count(self, topic: str, data_source: McapRos2Bag | bags.Reader) -> int:
         """Return the number of messages for the given topic."""
-        info = self._topic_info(topic, data_source)
-        return info.message_count
+        return self._topic_info(topic, data_source).message_count
 
-    def _topic_info(
-        self, topic: str, data_source: McapRos2Bag | rosbag2_py.SequentialReader
-    ) -> rosbag2_py.TopicInformation:
-        """Return the TopicInformation for the given topic."""
-        for info in self._metadata(data_source).topics_with_message_count:
-            if info.topic_metadata.name == topic:
-                return info
-        raise base.TopicNotFoundError(topic)
+    def _topic_info(self, topic: str, data_source: McapRos2Bag | bags.Reader) -> bags.TopicInfo:
+        """Return the topic's recorded metadata."""
+        try:
+            return self._metadata(data_source).topic(topic)
+        except bags.UnknownTopicError as error:
+            raise base.TopicNotFoundError(topic) from error

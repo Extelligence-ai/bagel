@@ -16,8 +16,10 @@ exercises:
 3. Every non-ROS source in ``data/sample`` and the generated ``test/_fixtures`` inputs
    describe, drill into a topic and answer a SQL count over MCP -- including
    rosbag2-produced MCAP bags, which go through Bagel's own MCAP reader.
-4. The native-ROS sources (``.db3``, ``.bag``) fail with the error that names the
-   Docker image, not with a traceback about a missing module.
+4. ROS 1 ``.bag`` and ROS 2 ``.db3`` bags describe and query through the ``ros``
+   extra's pure-Python backend, and a reduce pipeline writes a ``.db3`` bag that the
+   same backend reopens. Without the extra, those sources fail with the error that
+   names it and the Docker image, never with a traceback about a missing module.
 """
 
 from __future__ import annotations
@@ -165,13 +167,52 @@ async def _check_source(
     raise AssertionError(f"{path}: every topic is empty: {topics}")
 
 
-async def _check_native_ros_refusal(session: ClientSession, path: str, image: str) -> str:
+async def _check_bag_refusal(session: ClientSession, path: str, image: str) -> str:
     result = await session.call_tool("describe_data_source", {"path": path})
     text = _text(result)
-    assert result.isError, f"{path} should need native ROS on a pip install: {text}"
-    assert image in text and "Docker" in text, f"{path}: error does not name the image: {text}"
+    assert result.isError, f"{path} should need the ros extra on this install: {text}"
+    assert "bagel-mcp[ros]" in text and image in text, f"{path}: error names no way out: {text}"
     assert "No module named" not in text, f"{path}: raw import error leaked: {text}"
-    return f"{path}: refused with a pointer to {image}"
+    return f"{path}: refused, pointing at the ros extra and {image}"
+
+
+async def _check_reduce_writes_a_bag(
+    session: ClientSession, source: str, scratch: pathlib.Path
+) -> str:
+    """Run a reduce pipeline over the synthetic IMU bag; the backend must reopen its .db3."""
+    from bagel_mcp import bags
+
+    config = {
+        "name": "pip_smoke_reduce",
+        "site": "smoke",
+        "asset": "imu",
+        "path": source,
+        "allow_failure": False,
+        "cadence": {"topic": "/imu", "when": "once_at_end"},
+        "tasks": [
+            {
+                "module": "bagel_mcp.pipeline.tasks.reduce.ros2.db3",
+                "args": {
+                    "event_topic": "/imu",
+                    "predicate": "\"/imu\"['linear_acceleration']['x'] < -10",
+                    "pre_seconds": 1.0,
+                    "post_seconds": 1.0,
+                },
+            }
+        ],
+    }
+    result = await session.call_tool("run_pipeline", {"config": config})
+    assert not result.isError, f"run_pipeline: {_text(result)}"
+    (summary,) = _parsed(result)
+    outputs = [pathlib.Path(path) for path in summary["artifacts"]]
+    assert outputs and (outputs[0] / "metadata.yaml").exists(), summary
+    assert (scratch / "artifacts") in outputs[0].parents, outputs
+    reader = bags.open_reader(outputs[0], ros_version=2)
+    assert reader.info.message_count > 0
+    source_count = bags.open_reader(source, ros_version=2).info.message_count
+    assert reader.info.message_count < source_count, "reduction must drop data"
+    kept, total = reader.info.message_count, source_count
+    return f"reduce.ros2.db3 wrote {outputs[0].name}: {kept}/{total} messages"
 
 
 async def run(repo: pathlib.Path, scratch: pathlib.Path) -> list[str]:
@@ -186,7 +227,19 @@ async def run(repo: pathlib.Path, scratch: pathlib.Path) -> list[str]:
     assert console_script, "bagel-mcp console script missing from the venv"
 
     samples = repo / "data" / "sample"
+    ros_extra = importlib.util.find_spec("rosbags") is not None
+    bag_sources: list[tuple[str, dict]] = []
+    if ros_extra:
+        ros_bags = _load_fixture_module(repo, "ros_bags")
+        bag_sources = [
+            (str(samples / "ros2" / "db3"), {}),  # rosbag2 sqlite3 directory, five parts
+            (str(samples / "ros2" / "db3_zstd"), {}),  # file-level zstd
+            (str(samples / "ros1" / "sample.bag"), {}),
+            (str(ros_bags.write_ros2_imu_bag(scratch / "imu_ros2", "sqlite3")), {}),
+            (str(ros_bags.write_ros1_imu_bag(scratch / "imu_ros1.bag", "lz4")), {}),
+        ]
     sources: list[tuple[str, dict]] = [
+        *bag_sources,
         (str(samples / "ros2" / "mcap"), {}),  # rosbag2 MCAP directory, generic reader
         (str(samples / "ros2" / "mcap_zstd"), {}),  # zstd-compressed rosbag2 MCAP
         (str(samples / "copper" / "imu_probe.mcap"), {}),  # bare MCAP file
@@ -257,27 +310,35 @@ async def run(repo: pathlib.Path, scratch: pathlib.Path) -> list[str]:
                 assert not logs.isError, _text(logs)
                 lines.append("ROS text logs read")
 
-                lines.append(
-                    await _check_native_ros_refusal(
-                        session, str(samples / "ros2" / "db3"), "ros2-kilted"
-                    )
-                )
-                lines.append(
-                    await _check_native_ros_refusal(
-                        session, str(samples / "ros1" / "sample.bag"), "ros1-noetic"
-                    )
-                )
-
                 caps = await session.call_tool(
                     "list_pipeline_capabilities", {"include_unavailable": True}
                 )
                 assert not caps.isError, _text(caps)
                 by_module = {entry["module"]: entry for entry in _parsed(caps)}
                 assert by_module["bagel_mcp.pipeline.tasks.reduce.mcap"]["available"]
-                assert not by_module["bagel_mcp.pipeline.tasks.reduce.ros2.db3"]["available"]
-                lines.append(
-                    "pipeline capabilities: MCAP reduce available, .db3 reduce marked unavailable"
-                )
+                if ros_extra:
+                    assert by_module["bagel_mcp.pipeline.tasks.reduce.ros2.db3"]["available"]
+                    lines.append("pipeline capabilities: MCAP and .db3 reduce available")
+                    lines.append(
+                        await _check_reduce_writes_a_bag(
+                            session, str(scratch / "imu_ros2"), scratch
+                        )
+                    )
+                else:
+                    assert not by_module["bagel_mcp.pipeline.tasks.reduce.ros2.db3"]["available"]
+                    lines.append(
+                        "pipeline capabilities: MCAP reduce available, .db3 reduce unavailable"
+                    )
+                    lines.append(
+                        await _check_bag_refusal(
+                            session, str(samples / "ros2" / "db3"), "ros2-kilted"
+                        )
+                    )
+                    lines.append(
+                        await _check_bag_refusal(
+                            session, str(samples / "ros1" / "sample.bag"), "ros1-noetic"
+                        )
+                    )
     return lines
 
 
