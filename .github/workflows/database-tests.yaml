@@ -27,7 +27,7 @@ jobs:
         with:
           version: "0.8.0"
           python-version: "3.12"
-      - run: uv sync --locked --group iot
+      - run: uv sync --locked --extra iot
       - name: Start disposable InfluxDB
         run: >-
           docker run -d --name bagel-ci-influx -p 127.0.0.1:8181:8181

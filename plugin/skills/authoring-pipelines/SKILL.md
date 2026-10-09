@@ -9,18 +9,21 @@ The bagel MCP server owns the authoring workflow, including the
 reduce-vs-snippet decision, window/debounce extraction, and the
 preview-before-run rule. Do not write pipeline YAML from memory:
 
-1. Call `run_poml_capability` with `poml_path="./src/agent/compose/pipeline.poml"`.
+1. Call `run_poml_capability` with `poml_path="./bagel_mcp/agent/compose/pipeline.poml"`.
 2. Follow it exactly. In particular: always call `preview_pipeline` and show the
    user the summary (events found, data kept) BEFORE running anything.
 3. Use `list_pipeline_capabilities` for the exact task/gate module paths and
    arguments — never guess them.
 4. Execute the approved config through the MCP tools (`run_pipeline`, or
    `run_pipeline_batch` for many sources). The capability also mentions a host
-   CLI (`run.py`); that path is for users at a terminal in the repo, not for
+   CLI (`bagel-run`); that path is for users at a terminal in the repo, not for
    plugin sessions — do not shell out to it.
 
-If the bagel tools are missing, Bagel is not connected yet. The user must
-start the Docker container for their data format (see references/formats.md
-for the format → image → extra-args table) and, in Codex, connect it once
-with `codex mcp add bagel --url http://localhost:8000/mcp`. Claude Code
-installs connect automatically.
+If the bagel tools are missing, Bagel is not connected yet. The user either
+registers the pip server (`claude mcp add bagel -- uvx bagel-mcp --transport
+stdio`; `codex mcp add bagel -- uvx bagel-mcp --transport stdio`) for recorded
+data (bags with the `ros` extra, flight logs, MCAP, CAN/MDF, CSV), or starts the
+Docker container for their data format (live robots, fleet/edge) and, in Codex, connects it once
+with `codex mcp add bagel --url http://localhost:8000/mcp`. See
+references/formats.md for the format → extra / image → extra-args table.
+Claude Code plugin installs connect to the Docker server automatically.

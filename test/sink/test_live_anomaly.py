@@ -11,8 +11,8 @@ pytest.importorskip("paho")
 
 from conftest import MakeSink
 
-from settings import settings
-from src.sink import startup
+from bagel_mcp.settings import settings
+from bagel_mcp.sink import startup
 from test._fixtures.decision_server import DecisionServer, decision_server, jev_reply
 
 server = decision_server
@@ -41,7 +41,7 @@ def _pipeline(url: str) -> dict:
         "cadence": {"topic": TOPIC, "when": {"every": 10, "unit": "second"}},
         "gates": [
             {
-                "module": "src.pipeline.gates.anomaly",
+                "module": "bagel_mcp.pipeline.gates.anomaly",
                 "lookback": {"last": 10, "unit": "second"},
                 "args": {
                     "anomalies": {"overcurrent": "motor current far above normal"},
@@ -53,7 +53,7 @@ def _pipeline(url: str) -> dict:
                 },
             }
         ],
-        "tasks": [{"module": "src.pipeline.tasks.write_annotations"}],
+        "tasks": [{"module": "bagel_mcp.pipeline.tasks.write_annotations"}],
     }
 
 

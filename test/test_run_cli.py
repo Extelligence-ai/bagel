@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-import run
+from bagel_mcp import run
 
 
 def test_key_value_preserves_embedded_equals() -> None:

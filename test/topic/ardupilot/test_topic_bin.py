@@ -1,5 +1,5 @@
-from src.source.ardupilot.bin import SourceFactory
-from src.topic.ardupilot.bin import TopicRegistry
+from bagel_mcp.source.ardupilot.bin import SourceFactory
+from bagel_mcp.topic.ardupilot.bin import TopicRegistry
 
 
 def test_topic_registry() -> None:
@@ -90,6 +90,6 @@ def test_char_array_fields_are_strings() -> None:
     queries return text, not bytearray reprs (issue #199)."""
     import pyarrow as pa
 
-    from src.topic.ardupilot import schema
+    from bagel_mcp.topic.ardupilot import schema
 
     assert schema.FORMAT_CHARACTER_TO_PYARROW_TYPE["Z"] == pa.string()

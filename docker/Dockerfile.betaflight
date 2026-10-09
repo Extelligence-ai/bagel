@@ -58,10 +58,7 @@ RUN if [ "_${DEV_MODE}" = "_true" ]; then \
 EXPOSE ${JUPYTER_PORT}
 
 # Copy common source code
-COPY --chown=${USERNAME}:${USERNAME} server.py ./server.py
-COPY --chown=${USERNAME}:${USERNAME} run.py ./run.py
-COPY --chown=${USERNAME}:${USERNAME} settings.py ./settings.py
-COPY --chown=${USERNAME}:${USERNAME} src ./src
+COPY --chown=${USERNAME}:${USERNAME} bagel_mcp ./bagel_mcp
 # MCAP as a first-class format (no ROS required)
 
 # Copy common test code
@@ -76,7 +73,7 @@ COPY --chown=${USERNAME}:${USERNAME} test/e2e ./test/e2e
 
 # Fail the build if the server cannot even import -- catches missing-module
 # regressions (issue #151) at build time instead of at the user's terminal.
-RUN uv run python -c "import server" && \
+RUN uv run python -c "import bagel_mcp.server" && \
     if [ "_${DEV_MODE}" != "_true" ]; then \
     uv run python -c "import importlib.util; assert importlib.util.find_spec('pytest') is None; assert importlib.util.find_spec('jupyterlab') is None"; \
     fi
@@ -95,4 +92,4 @@ COPY --chown=${USERNAME}:${USERNAME} test/logging/betaflight ./test/logging/beta
 RUN if [ "_$DEV_MODE" = "_false" ]; then rm -rf ./test; fi
 
 # By default, the Bagel MCP server will be launched
-CMD ["uv", "run", "server.py", "--transport", "sse"]
+CMD ["uv", "run", "python", "-m", "bagel_mcp.server"]

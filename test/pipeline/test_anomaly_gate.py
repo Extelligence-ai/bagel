@@ -1,4 +1,4 @@
-"""End-to-end and behavior tests for the Jev anomaly gate (`src.pipeline.gates.anomaly`).
+"""End-to-end and behavior tests for the Jev anomaly gate (`bagel_mcp.pipeline.gates.anomaly`).
 
 The log is 10 minutes of a motor-current topic at 10 Hz and a heartbeat topic at 5 Hz,
 with two planted faults: a current spike at t=401..403 s and a heartbeat gap at
@@ -16,9 +16,9 @@ from google.protobuf.wrappers_pb2 import DoubleValue
 from mcap.reader import make_reader
 from mcap_protobuf.writer import Writer as ProtobufWriter
 
-from settings import settings
-from src.pipeline import base
-from src.pipeline.gates import anomaly
+from bagel_mcp.pipeline import base
+from bagel_mcp.pipeline.gates import anomaly
+from bagel_mcp.settings import settings
 from test._fixtures.decision_server import DecisionServer, decision_server, jev_reply
 
 server = decision_server
@@ -104,7 +104,7 @@ def _pipeline(log_path: pathlib.Path, gate_args: dict, tasks: list[dict]) -> bas
             "cadence": {"topic": "/motor/current", "when": {"every": 10, "unit": "second"}},
             "gates": [
                 {
-                    "module": "src.pipeline.gates.anomaly",
+                    "module": "bagel_mcp.pipeline.gates.anomaly",
                     "lookback": {"last": 10, "unit": "second"},
                     "args": gate_args,
                 }
@@ -115,8 +115,8 @@ def _pipeline(log_path: pathlib.Path, gate_args: dict, tasks: list[dict]) -> bas
 
 
 SNIP_AND_WRITE = [
-    {"module": "src.pipeline.tasks.snippet.mcap", "lookback": {"last": 10, "unit": "second"}},
-    {"module": "src.pipeline.tasks.write_annotations"},
+    {"module": "bagel_mcp.pipeline.tasks.snippet.mcap", "lookback": {"last": 10, "unit": "second"}},
+    {"module": "bagel_mcp.pipeline.tasks.write_annotations"},
 ]
 
 
@@ -301,11 +301,11 @@ def test_upload_sends_slices_and_labels_to_any_bucket(
     tasks = [
         *SNIP_AND_WRITE,
         {
-            "module": "src.pipeline.tasks.upload.s3",
+            "module": "bagel_mcp.pipeline.tasks.upload.s3",
             "args": {"bucket": "robot-anomalies", "source": str(artifacts), "prefix": "fleet"},
         },
     ]
-    with patch("src.pipeline.tasks.upload.s3.boto3.client", return_value=client):
+    with patch("bagel_mcp.pipeline.tasks.upload.s3.boto3.client", return_value=client):
         _pipeline(log_path, _gate_args(server), tasks).run_all()
     # Every passing run re-uploads the artifact directory; the mock never reports a match.
     keys = sorted({call.kwargs["Key"] for call in client.upload_file.call_args_list})
@@ -519,8 +519,8 @@ def test_completed_sink_recordings_are_accepted(
 ) -> None:
     # A persisted TopicSink recording uses the same source class as a live sink; the gate
     # must not refuse it (Codex P2).
-    from src.pipeline import messages
-    from src.source.bagel import sink as bagel_sink
+    from bagel_mcp.pipeline import messages
+    from bagel_mcp.source.bagel import sink as bagel_sink
 
     recording = MagicMock()
     recording.factory = MagicMock(spec=bagel_sink.SourceFactory)

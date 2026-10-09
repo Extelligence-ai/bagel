@@ -1,6 +1,6 @@
-from src.logging.ardupilot.bin import LoggingDataset
-from src.source.ardupilot.bin import SourceFactory
-from src.topic.ardupilot.bin import TopicRegistry
+from bagel_mcp.logging.ardupilot.bin import LoggingDataset
+from bagel_mcp.source.ardupilot.bin import SourceFactory
+from bagel_mcp.topic.ardupilot.bin import TopicRegistry
 
 
 def test_logging_dataset() -> None:

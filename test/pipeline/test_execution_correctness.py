@@ -5,8 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
-import server
-from src.pipeline import base, windows
+from bagel_mcp import server
+from bagel_mcp.pipeline import base, windows
 
 
 def _config() -> dict:
@@ -47,7 +47,7 @@ def test_legacy_setup_is_shared_with_cadence() -> None:
     config = _config()
     config["tasks"] = [
         {
-            "module": "src.pipeline.tasks.write_topics_to_file",
+            "module": "bagel_mcp.pipeline.tasks.write_topics_to_file",
             "setup": config.pop("source_args"),
             "args": {"topics": ["message"], "output_format": "csv"},
         }

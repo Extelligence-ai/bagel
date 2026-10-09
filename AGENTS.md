@@ -4,6 +4,21 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
 
 ## Set up Bagel for a user
 
+Two paths. The data decides:
+
+- **No Docker (pip / uvx)** for recorded data: ROS 1 `.bag` and ROS 2 `.db3` /
+  `.mcap` bags (the `ros` extra, pure Python), flight logs (PX4, ArduPilot,
+  Betaflight), CAN / MDF4, CSV / JSON / Parquet, and ROS text logs. Needs [uv](https://docs.astral.sh/uv/) on PATH; the MCP client
+  launches the server over stdio, so nothing runs in the background. Claude
+  Code: `claude mcp add bagel -- uvx bagel-mcp --transport stdio`. Other
+  clients: `{"command": "uvx", "args": ["bagel-mcp", "--transport", "stdio"]}`.
+  Add format extras with `uvx --from "bagel-mcp[ros,px4]" bagel-mcp
+  --transport stdio` (`ros`, `px4`, `ardupilot`, `betaflight`, `automotive`,
+  `iot`, `viz`, `upload`, `cloudini`; MCAP and CSV need none). Live rosbridge
+  or a fleet/edge deployment needs the Docker path; without the `ros` extra a
+  `.db3` or `.bag` file gets an error naming the extra and the image.
+- **Docker** for everything else, and for every ROS distro-specific setup:
+
 1. Requires Docker. Pick the service matching their stack (see the table in
    README Quickstart): `ros2-kilted`, `ros2-jazzy`, `ros2-jazzy-jev`, `ros2-iron`, `ros2-humble`,
    `ros1-noetic`, `ros1-noetic-cv`, `px4`, `ardupilot`, `betaflight`, or `iot`.
@@ -28,7 +43,7 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
   kept seconds, get user confirmation, then `run_pipeline`.
 - Output artifacts are written under the artifacts directory; tools return the
   paths.
-- Anomaly detection (beta): `src.pipeline.gates.anomaly` + `snippet.mcap` +
+- Anomaly detection (beta): `bagel_mcp.pipeline.gates.anomaly` + `snippet.mcap` +
   `write_annotations` + an `upload.*` task keeps only anomalous slices with a JSON
   label. Calibrate with `preview_anomalies` first (rates and errors as `signals`,
   never positions or orientations); the `compose/anomaly_pipeline` capability walks
@@ -36,6 +51,18 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
 
 ## Develop on Bagel
 
+- ROS bag files go through one interface, `bagel_mcp.bags`, with two backends:
+  the pure-Python `rosbags` library (the `ros` extra; the default everywhere,
+  images included) and the native `rosbag` / `rosbag2_py` stack of the images
+  (`BAG_BACKEND=native`). `test/pipeline/integration/test_bag_backend_parity.py`
+  holds the two to the same topics, counts, timestamps, bytes and decoded values
+  inside the ROS images; keep both backends when touching bag I/O.
+- The code is the `bagel_mcp` package (PyPI distribution `bagel-mcp`; the
+  `bagel` name belongs to an unrelated project). `uv sync` installs it
+  editable, so `uv run bagel-mcp` starts the server and
+  `uv run bagel-run <pipeline.yaml>` runs a pipeline. Pipeline configs name
+  tasks and gates by import path (`bagel_mcp.pipeline.tasks...`); the pre-2.5
+  `src.` spelling still loads, with a deprecation warning.
 - Runtime-independent tests run on the host: `uv sync` then
   `uv run pytest test/*.py test/pipeline test/sink` (full list in
   `.github/workflows/test.yaml`, job `host-tests`).

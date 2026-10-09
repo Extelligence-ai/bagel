@@ -45,8 +45,8 @@ pytest.importorskip("cantools")
 import can
 import cantools
 
-from src.source import errors
-from src.source.automotive import can as can_source
+from bagel_mcp.source import errors
+from bagel_mcp.source.automotive import can as can_source
 
 VALID_DBC = """VERSION ""
 

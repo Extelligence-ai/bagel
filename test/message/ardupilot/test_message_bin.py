@@ -1,6 +1,6 @@
-from src.message.ardupilot.bin import MessageDataset
-from src.source.ardupilot.bin import SourceFactory
-from src.topic.ardupilot.bin import TopicRegistry
+from bagel_mcp.message.ardupilot.bin import MessageDataset
+from bagel_mcp.source.ardupilot.bin import SourceFactory
+from bagel_mcp.topic.ardupilot.bin import TopicRegistry
 
 
 def test_message_dataset() -> None:
@@ -59,7 +59,7 @@ def test_can_create_empty_table() -> None:
 
 def test_char_array_bytes_are_decoded_to_text() -> None:
     """pymavlink may hand back bytes for char[] fields it could not decode (#199)."""
-    from src.message.ardupilot.bin import _text
+    from bagel_mcp.message.ardupilot.bin import _text
 
     assert _text(b"ArduPlane V4.6.3\x00\x00") == "ArduPlane V4.6.3"
     assert _text(bytearray(b"PA\x06\xff")) == "PA\x06�"

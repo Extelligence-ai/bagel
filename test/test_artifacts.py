@@ -4,8 +4,8 @@ import time
 
 import pytest
 
-from settings import settings
-from src import artifacts
+from bagel_mcp import artifacts
+from bagel_mcp.settings import settings
 
 
 def test_should_return_arrow_file() -> None:
@@ -112,15 +112,15 @@ def test_to_duckdb_rebuilds_after_cache_file_deleted(
 ) -> None:
     """#134: losing a cache file (eviction race) degrades to a miss, not an error.
 
-    Note: `src.di.types.data_source.resolve()` returns a `DataSource` enum member,
+    Note: `bagel_mcp.di.types.data_source.resolve()` returns a `DataSource` enum member,
     not a bundle of factory/registry/dataset objects, so this mirrors the direct
     construction pattern used by e.g. `test/message/px4/test_message_ulg.py`
     (and the timestamp args from `test/pipeline/test_preview_pipeline.py`) rather
     than calling `resolve()` directly.
     """
-    from src.message.pyarrow.csv import MessageDataset
-    from src.source.pyarrow.csv import SourceFactory
-    from src.topic.pyarrow.csv import TopicRegistry
+    from bagel_mcp.message.pyarrow.csv import MessageDataset
+    from bagel_mcp.source.pyarrow.csv import SourceFactory
+    from bagel_mcp.topic.pyarrow.csv import TopicRegistry
 
     monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
     factory = SourceFactory(

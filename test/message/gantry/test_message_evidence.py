@@ -4,8 +4,8 @@ import time
 import pyarrow as pa
 import pytest
 
-from src.message.gantry import evidence as message
-from src.source.gantry import evidence as source
+from bagel_mcp.message.gantry import evidence as message
+from bagel_mcp.source.gantry import evidence as source
 from test._fixtures import gantry_evidence
 
 CREATED_AT_SECONDS = 1785606730.0  # 2026-08-01T17:52:10+00:00

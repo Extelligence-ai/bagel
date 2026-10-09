@@ -9,7 +9,7 @@ import pathlib
 import re
 
 SKILL_FILES = sorted(pathlib.Path("plugin/skills").glob("*/SKILL.md"))
-POML_ROUTE_PATTERN = re.compile(r"src/agent/[\w/]+\.poml")
+POML_ROUTE_PATTERN = re.compile(r"bagel_mcp/agent/[\w/]+\.poml")
 
 
 def test_exactly_four_skills_exist() -> None:
@@ -43,7 +43,7 @@ def test_referenced_reference_files_exist() -> None:
 
 def test_skills_only_reference_real_mcp_tools() -> None:
     """Tool names drift; a skill naming a nonexistent tool strands the agent."""
-    real = set(re.findall(r"^def (\w+)\(", pathlib.Path("server.py").read_text(), re.M))
+    real = set(re.findall(r"^def (\w+)\(", pathlib.Path("bagel_mcp/server.py").read_text(), re.M))
     claimed = set()
     for skill_file in SKILL_FILES:
         claimed.update(re.findall(r"`(\w+)`", skill_file.read_text(encoding="utf-8")))

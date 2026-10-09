@@ -1,6 +1,6 @@
 import pytest
 
-from src.di import module
+from bagel_mcp.di import module
 
 
 class Cat:
@@ -42,3 +42,28 @@ def test_should_raise_if_missing_required_args() -> None:
     # WHEN / THEN
     with pytest.raises(ValueError, match="Missing required constructor arguments: name"):
         module.construct(Cat, args)
+
+
+def test_missing_optional_package_names_the_pip_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    # GIVEN a PX4 source whose pyulog import fails, as on a pip install without the px4 extra
+    def missing(name: str) -> None:
+        raise ModuleNotFoundError("No module named 'pyulog'", name="pyulog")
+
+    monkeypatch.setattr(module.importlib, "import_module", missing)
+
+    # WHEN / THEN the error names the extra to install
+    with pytest.raises(ModuleNotFoundError, match=r"pip install 'bagel-mcp\[px4\]'") as raised:
+        module.import_module("bagel_mcp.source.px4.ulog")
+    assert raised.value.name == "pyulog"
+
+
+def test_missing_required_package_is_raised_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    # GIVEN a missing package that no extra provides
+    def missing(name: str) -> None:
+        raise ModuleNotFoundError("No module named 'nope'", name="nope")
+
+    monkeypatch.setattr(module.importlib, "import_module", missing)
+
+    # WHEN / THEN the original error passes through
+    with pytest.raises(ModuleNotFoundError, match="No module named 'nope'"):
+        module.import_module("bagel_mcp.anything")

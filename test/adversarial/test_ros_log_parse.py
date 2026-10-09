@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from src.source.ros.parse import LogRecord, parse_file, parse_line
+from bagel_mcp.source.ros.parse import LogRecord, parse_file, parse_line
 
 # ---------------------------------------------------------------------------
 # Vector 1: a line that MATCHES the rospy LINE_PATTERNS regex (the only

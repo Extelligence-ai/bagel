@@ -17,7 +17,7 @@ unhardened code):
   * ``exclude_invalid_files=True`` (the default): PyArrow performs its own
     internal per-file validity check during dataset construction and
     silently EXCLUDES any file that fails it. ``SourceFactory._build()``
-    (``src/source/pyarrow/base.py``) now closes that silent-data-loss gap
+    (``bagel_mcp/source/pyarrow/base.py``) now closes that silent-data-loss gap
     (#134): if EVERY candidate file was excluded, the resulting dataset
     would be indistinguishable from "path legitimately has no matching
     events", so ``_build()`` raises a typed ``errors.InvalidPathError``
@@ -32,21 +32,21 @@ unhardened code):
     will incur IO ... resulting in an error at scan time" when disabled):
     a single malformed file raises ``pyarrow.lib.ArrowInvalid`` directly out
     of ``ds.dataset(...)`` inside ``SourceFactory._build()``
-    (``src/source/pyarrow/base.py``). This is the PRIMARY crash boundary.
+    (``bagel_mcp/source/pyarrow/base.py``). This is the PRIMARY crash boundary.
   * Also with ``exclude_invalid_files=False``: a DIRECTORY containing one
     valid file (whose schema is used) and one malformed file that still
     passes the lightweight Python-side ``is_csv_file``/``is_json_file``
     sniffer, will construct successfully (schema comes from the first good
     file) but raises ``pyarrow.lib.ArrowInvalid`` later, at
     ``data_source.dataset.to_table()`` inside
-    ``src/message/pyarrow/base.py``'s ``MessageDataset._messages()``. This is
+    ``bagel_mcp/message/pyarrow/base.py``'s ``MessageDataset._messages()``. This is
     the SECONDARY crash boundary.
 
 - Separately (not a pyarrow exception at all): binary garbage with a
   ``.json`` extension was found to raise a raw, un-typed
   ``UnicodeDecodeError`` straight out of ``SourceFactory.__init__()`` (via
   ``validate_path()`` -> ``is_json_file()`` -> ``is_json_lines_file()`` /
-  ``is_standard_json_file()`` in ``src/di/types/data_source.py``), because
+  ``is_standard_json_file()`` in ``bagel_mcp/di/types/data_source.py``), because
   those two helpers only caught ``json.JSONDecodeError`` and not the
   ``UnicodeDecodeError`` that invalid UTF-8 bytes trigger during
   ``f.readline()`` / ``path.read_text()``. The sibling ``is_csv_file()`` in
@@ -65,11 +65,11 @@ import pathlib
 
 import pytest
 
-from src.di.types import data_source as data_source_types
-from src.message.pyarrow.base import MessageDataset
-from src.source import errors
-from src.source.pyarrow import csv as csv_source
-from src.source.pyarrow import json as json_source
+from bagel_mcp.di.types import data_source as data_source_types
+from bagel_mcp.message.pyarrow.base import MessageDataset
+from bagel_mcp.source import errors
+from bagel_mcp.source.pyarrow import csv as csv_source
+from bagel_mcp.source.pyarrow import json as json_source
 
 # ---------------------------------------------------------------------------
 # Vector 1 (PRIMARY CRASH -- _build() / ds.dataset()): a single malformed
@@ -168,7 +168,7 @@ def test_directory_with_malformed_sibling_raises_clean_error_at_to_table(
 # ---------------------------------------------------------------------------
 # Vector 3: binary garbage with a .json extension -- not a pyarrow exception
 # at all, but a raw UnicodeDecodeError leaking out of the JSON sniffer
-# helpers in src/di/types/data_source.py, straight out of
+# helpers in bagel_mcp/di/types/data_source.py, straight out of
 # SourceFactory.__init__() (via validate_path()).
 # ---------------------------------------------------------------------------
 
@@ -346,7 +346,7 @@ def test_describe_surfaces_excluded_file_count(tmp_path: pathlib.Path) -> None:
     excluded_file_count the triage workflow tells agents to check was
     always 0 in the describe response.
     """
-    import server
+    from bagel_mcp import server
 
     (tmp_path / "good.csv").write_text("t,a\n1.0,2\n", encoding="utf-8")
     # the first 4 KiB is valid CSV so the cheap sniff (is_csv_file reads 4096

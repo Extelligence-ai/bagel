@@ -2,7 +2,7 @@
 
 ``jsonschema_to_struct`` (and its helper ``_jsonschema_type``) is the entry point
 production code calls when an MCAP channel's schema encoding is "jsonschema"
-(``TopicRegistry.struct`` / ``describe`` in ``src/topic/mcap.py``). A malformed
+(``TopicRegistry.struct`` / ``describe`` in ``bagel_mcp/topic/mcap.py``). A malformed
 document -- non-UTF-8 bytes, non-JSON text, a non-object top level, type-confused
 ``properties``/``items``, or a pathologically deep nesting -- must raise the
 module's clean, typed error (``base.UnsupportedEncodingError``), never a raw
@@ -14,8 +14,8 @@ import json
 import pyarrow as pa
 import pytest
 
-from src.topic import base
-from src.topic.mcap import jsonschema_to_struct
+from bagel_mcp.topic import base
+from bagel_mcp.topic.mcap import jsonschema_to_struct
 
 
 def _deeply_nested_object_bytes(depth: int) -> bytes:

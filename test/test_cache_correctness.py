@@ -9,11 +9,10 @@ import filelock
 import pyarrow as pa
 import pytest
 
-import server
-from settings import settings
-from src import artifacts, cache, query
-from src.source import base
-from src.source.pyarrow.csv import SourceFactory
+from bagel_mcp import artifacts, cache, query, server
+from bagel_mcp.settings import settings
+from bagel_mcp.source import base
+from bagel_mcp.source.pyarrow.csv import SourceFactory
 
 SAMPLE = "data/sample/pyarrow/csv/flight.csv"
 
@@ -197,8 +196,8 @@ def test_to_duckdb_hashes_source_content_once_per_lookup(
     a second, separate call to `factory.uuid` to build the cache path doubles
     the I/O on every lookup, cache hits included.
     """
-    from src.message.pyarrow.csv import MessageDataset
-    from src.topic.pyarrow.csv import TopicRegistry
+    from bagel_mcp.message.pyarrow.csv import MessageDataset
+    from bagel_mcp.topic.pyarrow.csv import TopicRegistry
 
     monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
     calls: list[pathlib.Path] = []

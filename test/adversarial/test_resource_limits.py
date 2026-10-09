@@ -14,7 +14,7 @@ from typing import Any, NoReturn
 import numpy as np
 import pytest
 
-from src.source.ros.parse import parse_file
+from bagel_mcp.source.ros.parse import parse_file
 
 
 def test_parse_file_streams_instead_of_slurping(tmp_path: pathlib.Path) -> None:
@@ -73,7 +73,7 @@ def valid_asc_and_dbc(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Pat
 
 def test_can_stats_matches_records(valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path]) -> None:
     """stats must equal what a full decode reports, without storing frames."""
-    from src.source.automotive import can as can_source
+    from bagel_mcp.source.automotive import can as can_source
 
     capture, dbc = valid_asc_and_dbc
     log = can_source.CanLog(path=str(capture), dbc=str(dbc))
@@ -88,7 +88,7 @@ def test_can_metadata_does_not_materialize_records(
     valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """describe-path properties must never build the full decoded list."""
-    from src.source.automotive import can as can_source
+    from bagel_mcp.source.automotive import can as can_source
 
     capture, dbc = valid_asc_and_dbc
     factory = can_source.SourceFactory(path=str(capture), dbc=str(dbc))
@@ -105,7 +105,7 @@ def test_can_metadata_does_not_materialize_records(
 def test_can_records_window_filters_before_sort(
     valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path],
 ) -> None:
-    from src.source.automotive import can as can_source
+    from bagel_mcp.source.automotive import can as can_source
 
     capture, dbc = valid_asc_and_dbc
     log = can_source.CanLog(path=str(capture), dbc=str(dbc))
@@ -119,8 +119,8 @@ def test_can_topic_counts_come_from_one_pass_not_records(
     valid_asc_and_dbc: tuple[pathlib.Path, pathlib.Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Enumerating topics/counts must not re-decode via records() per topic (#134)."""
-    from src.source.automotive import can as can_source
-    from src.topic.automotive.can import TopicRegistry
+    from bagel_mcp.source.automotive import can as can_source
+    from bagel_mcp.topic.automotive.can import TopicRegistry
 
     capture, dbc = valid_asc_and_dbc
     log = can_source.CanLog(path=str(capture), dbc=str(dbc))
@@ -173,7 +173,7 @@ def _mf4_messages(
 ) -> list[tuple[str, float, dict[str, Any]]]:
     from asammdf import MDF
 
-    from src.message.automotive.mf4 import MessageDataset
+    from bagel_mcp.message.automotive.mf4 import MessageDataset
 
     mdf = MDF(str(path))
     try:
@@ -208,7 +208,7 @@ def test_mf4_window_loads_only_the_slice(
         return original_get(*args, **kwargs)
 
     monkeypatch.setattr(mdf, "get", spying_get)
-    from src.message.automotive.mf4 import MessageDataset
+    from bagel_mcp.message.automotive.mf4 import MessageDataset
 
     list(MessageDataset()._messages(mdf, ["Engine"], start_epoch + 2.0, start_epoch + 7.0))
     mdf.close()
@@ -221,8 +221,8 @@ def test_mf4_window_loads_only_the_slice(
 def test_mf4_struct_and_end_seconds_read_one_sample(
     small_mf4: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from src.source.automotive.mf4 import SourceFactory
-    from src.topic.automotive.mf4 import TopicRegistry
+    from bagel_mcp.source.automotive.mf4 import SourceFactory
+    from bagel_mcp.topic.automotive.mf4 import TopicRegistry
 
     factory = SourceFactory(str(small_mf4))
     mdf = factory.build()
@@ -254,8 +254,8 @@ def test_record_batches_row_count_is_clamped() -> None:
     """
     import pyarrow as pa
 
-    from settings import settings
-    from src.message.base import MessageDataset
+    from bagel_mcp.message.base import MessageDataset
+    from bagel_mcp.settings import settings
 
     class _Dataset(MessageDataset):
         def _messages(self, *args: object, **kwargs: object) -> NoReturn:  # pragma: no cover
@@ -290,7 +290,7 @@ def test_can_iter_records_streams_in_order(valid_asc_and_dbc: tuple) -> None:
     """
     import inspect
 
-    from src.source.automotive import can as can_source
+    from bagel_mcp.source.automotive import can as can_source
 
     capture, dbc = valid_asc_and_dbc
     log = can_source.CanLog(path=str(capture), dbc=str(dbc))
@@ -305,8 +305,8 @@ def test_can_message_layer_streams_not_materializes(
     valid_asc_and_dbc: tuple, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """_messages must consume the streaming iterator, never the full list."""
-    from src.message.automotive.can import MessageDataset as CanMessages
-    from src.source.automotive import can as can_source
+    from bagel_mcp.message.automotive.can import MessageDataset as CanMessages
+    from bagel_mcp.source.automotive import can as can_source
 
     capture, dbc = valid_asc_and_dbc
     log = can_source.CanLog(path=str(capture), dbc=str(dbc))

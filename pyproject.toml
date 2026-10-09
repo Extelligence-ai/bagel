@@ -1,9 +1,27 @@
 [project]
-name = "bagel"
-version = "2.4.3"
-description = "Bagel MCP Server"
-authors = []
+# Distribution name on PyPI (`bagel` is taken by an unrelated project, whose wheel
+# also installs a top-level `bagel/` package -- hence the `bagel_mcp` import name).
+name = "bagel-mcp"
+version = "2.5.1"
+description = "Plain-English analysis of robotics, drone, and IoT data over MCP, with edge data reduction"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Extelligence" }]
 requires-python = ">=3.10,<3.13"
+keywords = ["robotics", "rosbag", "mcap", "drone", "iot", "mcp", "duckdb", "data-analysis"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: System :: Monitoring",
+]
 dependencies = [
     "boto3 >=1.40.0, <2.0.0",
     "duckdb >=1.3.0,<2.0.0",
@@ -15,7 +33,7 @@ dependencies = [
     "mcap-protobuf-support >=0.5.0,<1.0.0",
     "mcap-ros1-support >=0.7.0,<1.0.0",
     "mcap-ros2-support >=0.5.0,<1.0.0",
-    # v2-ready via src/mcp_compat.py (verified against 2.0.0b1); raise the
+    # v2-ready via bagel_mcp/mcp_compat.py (verified against 2.0.0b1); raise the
     # ceiling once v2 stable (2026-07-28) is validated end to end.
     "mcp >=1.11.0,<2.0.0",
     "pandas >=2.2.0,<3.0.0",
@@ -27,6 +45,69 @@ dependencies = [
     "PyYAML >=6.0.0,<7.0.0",
     "zstandard>=0.23.0,<1.0.0",
 ]
+
+[project.urls]
+Homepage = "https://www.trybagel.com"
+Repository = "https://github.com/Extelligence-ai/bagel"
+Issues = "https://github.com/Extelligence-ai/bagel/issues"
+Changelog = "https://github.com/Extelligence-ai/bagel/releases"
+
+# Feature extras: `pip install "bagel-mcp[px4,automotive]"`, `uv sync --extra px4`.
+# `ros` reads and writes ROS 1 .bag and ROS 2 .db3/.mcap bags in pure Python
+# (rosbags); live rosbridge topics still need the ROS stack of a Docker image.
+# ROS 2 MCAP bags need no extra at all.
+[project.optional-dependencies]
+ros = ["rosbags >=0.11.5,<0.12", "lz4 >=4.0,<5"]
+px4 = ["pyulog >=1.2.0,<2.0.0", "GitPython >=3.1.0,<4.0.0"]
+ardupilot = ["pymavlink >=2.4.0,<3.0.0"]
+# orangebox 0.5.0 ships a wheel whose console-script entry is a file path
+# ("scripts/bb2csv"); installers that validate entry points (uv) reject it.
+betaflight = ["orangebox >=0.4.0,<0.5.0"]
+automotive = [
+    "asammdf>=7.4,<8",
+    "cantools>=42.0.3",
+    "python-can>=4.6.1",
+]
+iot = [
+    "influxdb3-python>=0.10.0",
+    "paho-mqtt>=2.1.0,<3.0.0",
+]
+viz = [
+    "rerun-sdk>=0.23.1",
+]
+upload = [
+    "azure-storage-blob>=12.24.0,<13.0.0",
+    "google-cloud-storage>=2.18.0,<4.0.0",
+]
+cloudini = ["wasmtime >=26.0.0", "numpy >=1.24.0,<3.0.0"]
+cv = [
+    "opencv-python >=4.0.0,<5.0.0",
+    "pillow >=11.3.0,<12.0.0",
+    "torch >=2.8.0,<3.0.0",
+    "transformers >=4.57.0,<5.0.0",
+]
+# On-robot decision model for the anomaly and decide gates' local backend. Only
+# images built with JEV_MODE=true include it; CPU-only robots use the hosted backend.
+jev = [
+    "torch >=2.8.0,<3.0.0",
+    "transformers >=4.57.0,<5.0.0",
+]
+
+[project.scripts]
+bagel-mcp = "bagel_mcp.server:main"
+bagel-run = "bagel_mcp.run:main"
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Everything under the package ships, including the files loaded at runtime:
+# POML capabilities, Lark grammars, ROS1 .msg definitions, frames.yaml.
+packages = ["bagel_mcp"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["bagel_mcp"]
 
 [dependency-groups]
 dev = [
@@ -42,18 +123,9 @@ dev = [
     "ruff ==0.12.4",
 ]
 quality = ["mypy >=1.17.0,<2.0.0", "pip-audit >=2.9.0,<3.0.0"]
-cv = [
-    "opencv-python >=4.0.0,<5.0.0",
-    "pillow >=11.3.0,<12.0.0",
-    "torch >=2.8.0,<3.0.0",
-    "transformers >=4.57.0,<5.0.0",
-]
-# On-robot decision model for the anomaly and decide gates' local backend. Only
-# images built with JEV_MODE=true include it; CPU-only robots use the hosted backend.
-jev = [
-    "torch >=2.8.0,<3.0.0",
-    "transformers >=4.57.0,<5.0.0",
-]
+# Companions to the native ROS stacks that only the service images have (the
+# roslibpy live sinks, ROS 1's rosbag helpers); not extras because nothing on
+# PyPI can satisfy the ROS half.
 ros1 = [
     "numpy <2.0.0",
     "pycryptodomex >=3.23.0,<4.0.0",
@@ -63,26 +135,6 @@ ros1 = [
 ]
 ros2 = [
     "roslibpy >=1.8.1,<2.0.0",
-]
-px4 = ["pyulog >=1.2.0,<2.0.0", "GitPython >=3.1.0,<4.0.0"]
-ardupilot = ["pymavlink >=2.4.0,<3.0.0"]
-betaflight = ["orangebox >=0.4.0,<1.0.0"]
-cloudini = ["wasmtime >=26.0.0", "numpy >=1.24.0,<3.0.0"]
-iot = [
-    "influxdb3-python>=0.10.0",
-    "paho-mqtt>=2.1.0,<3.0.0",
-]
-upload = [
-    "azure-storage-blob>=12.24.0,<13.0.0",
-    "google-cloud-storage>=2.18.0,<4.0.0",
-]
-viz = [
-    "rerun-sdk>=0.23.1",
-]
-automotive = [
-    "asammdf>=7.4,<8",
-    "cantools>=42.0.3",
-    "python-can>=4.6.1",
 ]
 
 [tool.pytest.ini_options]
@@ -104,7 +156,7 @@ filterwarnings = [
 ]
 
 [tool.mypy]
-files = ["src/query.py", "src/source/context.py", "src/pipeline/results.py"]
+files = ["bagel_mcp/query.py", "bagel_mcp/source/context.py", "bagel_mcp/pipeline/results.py"]
 python_version = "3.10"
 strict = true
 follow_imports = "skip"
@@ -112,7 +164,7 @@ ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
-extend-exclude = ["src/sink/sparkplug/sparkplug_b_minimal_pb2.py"]  # generated code
+extend-exclude = ["bagel_mcp/sink/sparkplug/sparkplug_b_minimal_pb2.py"]  # generated code
 
 [tool.ruff.lint]
 select = [
@@ -138,14 +190,14 @@ ignore = [
     "D213",    # conflicts with D212
     "PLC0415", # pylint (non top-level imports)
 ]
-exclude = ["**/*.ipynb", "src/pipeline/tasks/cloudini/vendor/**"]
+exclude = ["**/*.ipynb", "bagel_mcp/pipeline/tasks/cloudini/vendor/**"]
 
 [tool.ruff.lint.per-file-ignores]
 "./test/**/*.py" = ["S101", "S608", "D", "PLR2004"]  # S608: tests build SQL over their own tmp paths
 "./demo.py" = ["T20"]  # a CLI report card is meant to print
 
 [tool.coverage.run]
-source = ["src", "server", "run"]
+source = ["bagel_mcp"]
 branch = true
 relative_files = true
 omit = ["*/__pycache__/*", "*_pb2.py"]
@@ -155,4 +207,4 @@ show_missing = true
 skip_covered = false
 
 [tool.coverage.paths]
-source = ["src", "/home/ubuntu/runtime/src"]
+source = ["bagel_mcp", "/home/ubuntu/runtime/bagel_mcp"]

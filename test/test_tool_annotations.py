@@ -7,7 +7,7 @@ whether caller-selected external endpoints can be reached (open-world).
 A new tool fails here until it classifies itself.
 """
 
-import server
+from bagel_mcp import server
 
 # name: (read_only, idempotent, destructive, open_world)
 EXPECTED = {

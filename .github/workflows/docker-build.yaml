@@ -1,7 +1,7 @@
 name: docker-build
 
 # Build every container on PRs that could affect them. Each Dockerfile ends with
-# an `import server` smoke check, so "the image builds" means "the server boots" —
+# an `import bagel_mcp.server` smoke check, so "the image builds" means "the server boots" —
 # a missing-module regression (issue #151) fails here, in review, not in a
 # user's terminal. publish.yaml then rebuilds and pushes on merge to main.
 
@@ -9,10 +9,7 @@ on:
   pull_request:
     paths:
       - "docker/**"
-      - "src/**"
-      - "server.py"
-      - "run.py"
-      - "settings.py"
+      - "bagel_mcp/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".env"

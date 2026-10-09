@@ -1,5 +1,5 @@
-from src.source.px4.ulg import SourceFactory
-from src.topic.px4.ulg import TopicRegistry
+from bagel_mcp.source.px4.ulg import SourceFactory
+from bagel_mcp.topic.px4.ulg import TopicRegistry
 
 
 def test_topic_registry() -> None:

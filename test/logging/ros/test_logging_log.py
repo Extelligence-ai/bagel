@@ -1,6 +1,6 @@
-from src.logging.ros.log import LoggingDataset
-from src.source.ros.log import SourceFactory
-from src.topic.ros.log import TopicRegistry
+from bagel_mcp.logging.ros.log import LoggingDataset
+from bagel_mcp.source.ros.log import SourceFactory
+from bagel_mcp.topic.ros.log import TopicRegistry
 
 
 def test_logging_dataset_reads_directory_without_a_bag() -> None:

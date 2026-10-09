@@ -54,7 +54,7 @@ The reduce/snippet writers use `rosbag2`, so run them inside a ROS service from
 
 ```bash
 docker compose run --rm ros2-jazzy \
-  uv run python run.py pipelines/hard_decel_reduce.yaml --verbose
+  uv run bagel-run pipelines/hard_decel_reduce.yaml --verbose
 ```
 
 The reduced bag is written under the artifact directory
@@ -65,7 +65,7 @@ flat arguments shown above, but `run_pipeline` takes a full pipeline `config`
 dict (the same shape as the YAML: `name`, `path`, `cadence`, `tasks`), and
 `save_pipeline` persists a config as YAML for reuse. Your LLM assembles the
 config from the preview parameters; the reduce task module for MCAP output is
-`src.pipeline.tasks.reduce.mcap`.
+`bagel_mcp.pipeline.tasks.reduce.mcap`.
 
 ## Reduce an MCAP bag
 
@@ -77,7 +77,7 @@ no rosidl typesupport:
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.reduce.mcap
+  - module: bagel_mcp.pipeline.tasks.reduce.mcap
     args:
       event_topic: /imu
       predicate: "\"/imu\"['linear_acceleration']['x'] < -10"
@@ -85,7 +85,7 @@ tasks:
       post_seconds: 10
 ```
 
-(`src.pipeline.tasks.reduce.ros2.mcap` remains as a back-compat alias.)
+(`bagel_mcp.pipeline.tasks.reduce.ros2.mcap` remains as a back-compat alias.)
 
 For per-event clips instead of one reduced file, pair the snippet variant with an
 `on_event` cadence · same raw passthrough, one `.mcap` per event:
@@ -98,7 +98,7 @@ cadence:
       predicate: "\"/imu\"['linear_acceleration']['x'] < -10"
       debounce: {last: 2, unit: second}
 tasks:
-  - module: src.pipeline.tasks.snippet.mcap
+  - module: bagel_mcp.pipeline.tasks.snippet.mcap
     lookback: {last: 10, unit: second}
     args: {post_seconds: 10}
 ```
@@ -118,7 +118,7 @@ cadence:
       debounce: {last: 2, unit: second}
       forward: {last: 10, unit: second}   # buffer 10s past each event before firing
 tasks:
-  - module: src.pipeline.tasks.write_topics_to_file
+  - module: bagel_mcp.pipeline.tasks.write_topics_to_file
     lookback: {last: 10, unit: second}
     args: {topics: null, output_format: parquet, post_seconds: 10}
 ```
@@ -155,9 +155,9 @@ SHA-256 already matches the remote object are skipped, so re-runs are cheap:
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.reduce.mcap
+  - module: bagel_mcp.pipeline.tasks.reduce.mcap
     args: { event_topic: /imu, predicate: "...", pre_seconds: 10, post_seconds: 10 }
-  - module: src.pipeline.tasks.upload.s3
+  - module: bagel_mcp.pipeline.tasks.upload.s3
     args:
       bucket: drone-fleet-reduced
       source: ~/.bagel/artifacts        # file, directory, or glob
@@ -168,11 +168,11 @@ tasks:
 
 Credentials use the standard AWS resolution chain (env vars, `~/.aws`, instance role).
 
-GCS (`src.pipeline.tasks.upload.gcs`, standard Google credential chain) and Azure Blob
-(`src.pipeline.tasks.upload.azure`, connection string or
+GCS (`bagel_mcp.pipeline.tasks.upload.gcs`, standard Google credential chain) and Azure Blob
+(`bagel_mcp.pipeline.tasks.upload.azure`, connection string or
 `AZURE_STORAGE_CONNECTION_STRING`) uploaders mirror the same source/prefix/window/skip
 semantics. Every image ships their SDKs (since 2.4.2); outside Docker, install the `upload`
-dependency group: `uv sync --group upload`.
+extra: `pip install "bagel-mcp[upload]"` (`uv sync --extra upload` in a checkout).
 
 ## Verify the mechanism without ROS
 
@@ -182,7 +182,7 @@ the bundled CSV sample (pure Python, no ROS):
 
 ```bash
 uv run python - <<'PY'
-import server
+from bagel_mcp import server
 config = {
     "name": "csv_smoke",
     "site": "demo",
@@ -191,7 +191,7 @@ config = {
     "allow_failure": False,
     "cadence": {"topic": "message", "when": "once_at_end"},
     "tasks": [{
-        "module": "src.pipeline.tasks.write_topics_to_file",
+        "module": "bagel_mcp.pipeline.tasks.write_topics_to_file",
         "setup": {"timestamp_column": "t", "timestamp_format": "seconds"},
         "args": {"topics": ["message"], "output_format": "csv"},
     }],

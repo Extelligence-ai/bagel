@@ -1,11 +1,14 @@
-"""Tests for the anomaly dry run (`src.pipeline.decide.calibrate`, MCP `preview_anomalies`)."""
+"""Tests for the anomaly dry run (`bagel_mcp.pipeline.decide.calibrate`).
+
+The MCP tool is `preview_anomalies`.
+"""
 
 import pathlib
 
 import pytest
 
-import server
-from src.pipeline.decide import calibrate
+from bagel_mcp import server
+from bagel_mcp.pipeline.decide import calibrate
 from test._fixtures.fault_log import EPOCH, write_fault_log
 
 
@@ -79,7 +82,7 @@ def test_explicit_signals_are_honoured(log_path: pathlib.Path) -> None:
 def test_never_calls_a_decision_backend(
     log_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from src.pipeline.decide import backends
+    from bagel_mcp.pipeline.decide import backends
 
     monkeypatch.setattr(backends, "build", lambda *a, **k: pytest.fail("backend built"))
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)

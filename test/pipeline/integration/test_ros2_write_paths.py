@@ -18,8 +18,8 @@ import pytest
 
 rosbag2_py = pytest.importorskip("rosbag2_py")
 
-from settings import settings  # noqa: E402
-from src.pipeline import base  # noqa: E402
+from bagel_mcp.pipeline import base  # noqa: E402
+from bagel_mcp.settings import settings  # noqa: E402
 
 from . import synth  # noqa: E402
 
@@ -85,7 +85,7 @@ def _isolated_artifacts(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch)
 def test_reduce_db3_keeps_only_event_windows(tmp_path: pathlib.Path) -> None:
     bag = synth.write_imu_bag(tmp_path / "source_bag", "sqlite3")
 
-    pipeline = base.Pipeline.build(_reduce_config(bag, "src.pipeline.tasks.reduce.ros2.db3"))
+    pipeline = base.Pipeline.build(_reduce_config(bag, "bagel_mcp.pipeline.tasks.reduce.ros2.db3"))
     produced = pipeline.run_all()
 
     assert len(produced) == 1
@@ -121,7 +121,7 @@ def test_snippet_db3_writes_one_clip_per_event(tmp_path: pathlib.Path) -> None:
         },
         "tasks": [
             {
-                "module": "src.pipeline.tasks.snippet.ros2.db3",
+                "module": "bagel_mcp.pipeline.tasks.snippet.ros2.db3",
                 "lookback": {"last": 1, "unit": "second"},
                 "args": {"post_seconds": POST_SECONDS},
             }
@@ -142,7 +142,7 @@ def test_reduce_mcap_raw_passthrough(tmp_path: pathlib.Path) -> None:
 
     bag = synth.write_imu_bag(tmp_path / "source_bag", "mcap")
 
-    pipeline = base.Pipeline.build(_reduce_config(bag, "src.pipeline.tasks.reduce.mcap"))
+    pipeline = base.Pipeline.build(_reduce_config(bag, "bagel_mcp.pipeline.tasks.reduce.mcap"))
     produced = pipeline.run_all()
 
     assert len(produced) == 1
@@ -185,7 +185,7 @@ def test_snippet_mcap_writes_one_clip_per_event(tmp_path: pathlib.Path) -> None:
         },
         "tasks": [
             {
-                "module": "src.pipeline.tasks.snippet.mcap",
+                "module": "bagel_mcp.pipeline.tasks.snippet.mcap",
                 "lookback": {"last": 1, "unit": "second"},
                 "args": {"post_seconds": POST_SECONDS},
             }
@@ -206,7 +206,7 @@ def test_snippet_mcap_writes_one_clip_per_event(tmp_path: pathlib.Path) -> None:
 
 
 def test_preview_reports_ground_truth_events(tmp_path: pathlib.Path) -> None:
-    import server
+    from bagel_mcp import server
 
     bag = synth.write_imu_bag(tmp_path / "source_bag", "sqlite3")
     result = server.preview_pipeline(
@@ -225,8 +225,8 @@ def test_preview_reports_ground_truth_events(tmp_path: pathlib.Path) -> None:
 
 def test_ros2_db3_tasks_are_refused_on_live_subscriptions() -> None:
     # They serialize with rclpy from a bag; a live sink buffer holds decoded dicts.
-    from src.pipeline.tasks.reduce.ros2 import db3 as reduce_db3
-    from src.pipeline.tasks.snippet.ros2 import db3 as snippet_db3
+    from bagel_mcp.pipeline.tasks.reduce.ros2 import db3 as reduce_db3
+    from bagel_mcp.pipeline.tasks.snippet.ros2 import db3 as snippet_db3
 
     assert reduce_db3.ReduceRosbag.needs_recorded_log
     assert snippet_db3.SnipRosbag.needs_recorded_log

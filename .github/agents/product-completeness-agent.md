@@ -30,7 +30,7 @@ subscriptions as a product are complete *after* this PR — not only whether the
 changed lines are. A pre-existing missing inverse on a resource the PR touches
 is reported (as a Gap); touching it is the cheapest moment to close it. To do
 that, list the sibling tools for the same resource (e.g. every `*_pipeline`
-tool in `server.py`) and fill in the lifecycle matrix below from them.
+tool in `bagel_mcp/server.py`) and fill in the lifecycle matrix below from them.
 
 ## The completeness checklist
 

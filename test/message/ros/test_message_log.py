@@ -1,12 +1,12 @@
 import pytest
 
-from src.di import module
-from src.di.types.base_module import BaseModule
-from src.di.types.data_source import DataSource, resolve
-from src.message.ros.log import MessageDataset
-from src.source.ros.log import SourceFactory
-from src.topic import base
-from src.topic.ros.log import TopicRegistry
+from bagel_mcp.di import module
+from bagel_mcp.di.types.base_module import BaseModule
+from bagel_mcp.di.types.data_source import DataSource, resolve
+from bagel_mcp.message.ros.log import MessageDataset
+from bagel_mcp.source.ros.log import SourceFactory
+from bagel_mcp.topic import base
+from bagel_mcp.topic.ros.log import TopicRegistry
 
 
 def test_resolves_ros_log_paths() -> None:

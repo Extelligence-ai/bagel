@@ -1,0 +1,1652 @@
+"""Entry point for the Bagel MCP server."""
+
+import argparse
+import hashlib
+import logging
+import pathlib
+from dataclasses import asdict
+from datetime import datetime
+from typing import Any
+
+import duckdb
+import filelock
+import yaml
+from poml import poml
+
+from bagel_mcp import artifacts, mcp_compat, query
+from bagel_mcp.agent import capabilities as agent_capabilities
+from bagel_mcp.di import module
+from bagel_mcp.di.types.base_module import BaseModule
+from bagel_mcp.di.types.data_source import resolve
+from bagel_mcp.di.types.topic_sink import TopicSink, guess_host, guess_port
+from bagel_mcp.logging.base import NoLoggingTopicsFoundError
+from bagel_mcp.pipeline import (
+    base,
+    batch,
+    capabilities,
+    lerobot,
+    lichtblick,
+    plotjuggler,
+    rerun_export,
+    windows,
+)
+from bagel_mcp.pipeline.decide import calibrate
+from bagel_mcp.pipeline.tasks.waffle import snap as waffle_snap
+from bagel_mcp.settings import settings
+from bagel_mcp.sink import startup
+from bagel_mcp.source.context import SourceContext
+
+server = mcp_compat.create_server(
+    name="Bagel MCP Server",
+    host=settings.MCP_SERVER_HOST,
+    port=settings.MCP_SERVER_PORT,
+    instructions=(
+        "Bagel answers questions about robotics, drone, and IoT data (ROS 1/2 "
+        "bags, MCAP, PX4/ArduPilot/Betaflight logs, CAN/MF4, live MQTT) by "
+        "generating DuckDB SQL over the actual messages: never estimate a "
+        "numeric answer yourself, and show the user the query you ran. "
+        "Workflow: describe_data_source first for an overview; describe_topic before "
+        "writing any predicate (field paths and units differ per source). For "
+        "event detection and data reduction, always preview_pipeline and report "
+        "events/kept-seconds, then get user confirmation before run_pipeline writes anything. "
+        "Sample data "
+        "for smoke tests lives in ./data/sample/. Outputs land under the "
+        "artifacts directory and paths are returned by the tools."
+    ),
+)
+
+
+@server.tool(
+    title="Describe a data source",
+    description=(
+        "Inspect a robotics, drone, or IoT log first: returns source metadata, available "
+        "topics, and instructions for summarizing them. Use describe_topic next for field "
+        "schemas before SQL. Does not return message rows or detect anomalies. Paths are "
+        "resolved on the Bagel server; runtime and schema support depend on the selected "
+        "service."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def describe_data_source(path: str, args: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Generate a structured summary of a data source.
+
+    Provides high-level metadata and a list of topics available in the data source.
+    This tool is useful for initial inspection before exploring specific topics.
+    It does **not** include detailed topic definitions or actual messages.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        args (dict[str, Any] | None, optional): Additional constructor arguments
+            used to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        list[dict[str, Any]]: A structured description of the data source with keys:
+            - `Summary`: Short overview of the data source
+            - `Metadata`: Basic metadata (e.g., start time, message count, configuration parameters)
+            - `Topics`: List of available topic names grouped by their semantic meaning
+
+    Examples:
+        As an LLM prompt:
+            Describe the data source at "./data/sample/ros2/mcap".
+
+        As a Python call:
+            >>> describe_data_source("./data/sample/ros2/mcap")
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    # Build BEFORE reading metadata: _build() populates excluded_file_count,
+    # and dict values evaluate in order (Codex review on #156).
+    data_source = factory.build()
+    return poml(
+        agent_capabilities.builtin_path("describe/data_source.poml"),
+        context={
+            "metadata": factory.metadata,
+            "topics": registry.available_topics(data_source),
+        },
+    )
+
+
+@server.tool(
+    title="Describe a topic in a data source",
+    description=(
+        "Inspect one known topic before writing SQL or event predicates. Returns its DuckDB "
+        "schema, original message definition, and query instructions, without message rows. "
+        "Discover topic names with describe_data_source. Confirm units from the definition or "
+        "user; do not infer units from field names."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def describe_topic(
+    path: str, topic: str, args: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """Summarize a topic's structure and schema.
+
+    Provides metadata about a topic in the data source to help the LLM
+    understand how to query it. This includes a textual summary, schema,
+    IDL definition, and SQL query guidelines. It does **not** return
+    actual topic messages.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topic (str): The name of the topic to describe.
+        args (dict[str, Any] | None, optional): Additional constructor arguments
+            used to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        list[dict[str, Any]]: A structured description of the topic, including:
+            - `Summary`: Short description of the topic
+            - `DuckDB Schema`: Column names and types
+            - `Topic Definition`: Original IDL (Interface Definition Language)
+            - `Guidelines for DuckDB SQL Generation`: Hints for writing DuckDB SQL queries
+
+    Examples:
+        As an LLM prompt:
+            Describe the topic `/odom` in "./data/sample/ros2/mcap".
+
+        As a Python call:
+            >>> describe_topic("./data/sample/ros2/mcap", topic="/odom")
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+    data_source = factory.build()
+    relation = dataset.to_duckdb(factory, registry, [topic], empty=True)
+
+    return poml(
+        agent_capabilities.builtin_path("describe/topic.poml"),
+        context={
+            "topic_name": topic,
+            "type_name": registry.native_type_name(topic, data_source),
+            "message_count": registry.message_count(topic, data_source),
+            "duckdb_schema": {
+                name: str(type_)
+                for name, type_ in zip(relation.columns, relation.dtypes, strict=True)
+            },
+            "topic_definition": registry.describe(topic, data_source),
+        },
+    )
+
+
+@server.tool(
+    title="Query topic messages with SQL",
+    description=(
+        "Answer quantitative questions with read-only DuckDB SQL over one topic: filtering, "
+        "aggregates, downsampling, and event evidence. Call describe_data_source and "
+        "describe_topic first; use the returned schema and show the SQL to the user. Returns "
+        "rows as dictionaries. Use read_loggings for textual diagnostics. Time bounds are "
+        "inclusive source timestamps in seconds, not offsets from the first message."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def query_messages(  # noqa: PLR0913
+    path: str,
+    sql_statement: str,
+    topic: str,
+    start_seconds: float | None = None,
+    end_seconds: float | None = None,
+    args: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Query messages from a topic using DuckDB SQL.
+
+    Loads the specified topic into DuckDB as a table, executes the SQL statement,
+    and returns the result as a list of dictionaries.
+
+    To manage large datasets:
+    - Use `start_seconds` and `end_seconds` to select a time window.
+    - Use downsampling techniques such as time-binning or selecting every N-th record.
+    - Prefer SQL **aggregations** (e.g., AVG, MIN, MAX, COUNT) to summarize data.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        sql_statement (str): SQL query to execute against the topic table.
+        topic (str): The topic name (also used as the DuckDB table name and the column name).
+        start_seconds (float | None, optional): Start time seconds (inclusive).
+            If None, starts from the beginning. Defaults to None.
+        end_seconds (float | None, optional): End time seconds (inclusive).
+            If None, reads until the end. Defaults to None.
+        args (dict[str, Any] | None, optional): Additional constructor arguments
+            used to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        list[dict[str, Any]]: Query results as a list of dictionaries with column-value pairs.
+
+    Examples:
+        As an LLM prompt:
+            What is the average linear velocity from `/turtle1/pose` in "./data/sample/ros2/mcap".
+
+        As a Python call:
+            >>> query_messages(
+            ...     "./data/sample/ros2/mcap",
+            ...     "SELECT AVG("/turtle1/pose".linear_velocity) as avg_lv FROM "/turtle1/pose"",
+            ...     "/turtle1/pose",
+            ... )
+
+    """
+    source = SourceContext.build(path, args)
+    relation = source.dataset.to_duckdb(
+        source.factory, source.registry, [topic], start_seconds, end_seconds
+    )
+    result = query.sql(relation, topic, sql_statement)
+    return result.to_df().to_dict(orient="records")
+
+
+@server.tool(
+    title="Read logging messages from a data source",
+    description=(
+        "Read textual INFO/WARN/ERROR diagnostics from a recorded source, optionally within "
+        "inclusive source-time bounds in seconds. Returns logging records, or an empty list "
+        "when no logging topics exist. Use query_messages for numerical signals, statistics, "
+        "and threshold detection; empty diagnostics do not prove a healthy log."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def read_loggings(
+    path: str,
+    start_seconds: float | None = None,
+    end_seconds: float | None = None,
+    args: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Read system log messages from a data source.
+
+    Retrieves log entries (INFO, WARN, ERROR) from the given data source. An
+    optional time window can be specified. Not all sources provide logs—if no
+    logging dataset exists, check if logs are available as a topic and use
+    `query_messages` instead.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        start_seconds (float | None, optional): Start time seconds (inclusive).
+            If None, starts from the beginning. Defaults to None.
+        end_seconds (float | None, optional): End time seconds (inclusive).
+            If None, reads until the end. Defaults to None.
+        args (dict[str, Any] | None, optional): Additional constructor arguments
+            used to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        list[dict[str, Any]]: A list of logging messages, where each dictionary
+            typically contains timestamp, severity (e.g., INFO, WARN, ERROR), and
+            message content fields.
+
+    Examples:
+        As an LLM prompt:
+            Read all ERROR messages from the PX4 ULog at "./data/sample/px4/sample.ulg".
+
+        As a Python call:
+            >>> read_loggings("./data/sample/px4/sample.ulg")
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {**(args or {}), "path": path}
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.LOGGING_DATASET.value}.{ds_type.value}", {})
+    try:
+        relation = dataset.to_duckdb(factory, registry, start_seconds, end_seconds)
+    except NoLoggingTopicsFoundError:
+        return []
+    return relation.to_df().to_dict(orient="records")
+
+
+@server.tool(
+    title="List available live topics",
+    description=(
+        "Discover topic names from a live broker or ROS bridge before subscribing. Supported "
+        "type_ values: mqtt, ros1.bridge, ros2.bridge. Requires a reachable service; specify "
+        "host and port when defaults do not fit. Returns topic names without starting a "
+        "persistent recording. Use describe_data_source for an existing recorded log."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, open_world=True),
+)
+def list_live_topics(
+    type_: str,
+    host: str | None = None,
+    port: int | None = None,
+    args: dict[str, Any] | None = None,
+) -> list[str]:
+    """List available topics from a live data stream.
+
+    Connects to a live streaming service (e.g., ROS bridge, MQTT)
+    and retrieves the list of topics that are currently available for
+    subscription. This is typically used to discover which topics exist
+    before calling `subscribe_live_topics`.
+
+    Args:
+        type_ (str): The type of `TopicSink` to use (ros1.bridge, ros2.bridge, mqtt). For the full
+            list of supported types, see `TopicSink` in `bagel_mcp/di/types/topic_sink.py`.
+        host (str | None, optional): Hostname of the live data stream service. If None,
+            the default host is inferred.
+        port (int | None, optional): Port number of the live data stream service. If None,
+            the default port is inferred.
+        args (dict[str, Any] | None, optional): Additional constructor arguments for
+            creating the `TopicSink`.
+
+    Returns:
+        list[str]: A list of available topic names that can be subscribed to.
+
+    Examples:
+        As an LLM prompt:
+            List the available topics in a ROS2 bridge on host `127.0.0.1`.
+
+        As a Python call:
+            >>> list_live_topics("ros2.bridge", host="127.0.0.1")
+
+    """
+    ts_type = TopicSink(type_)
+    sink = module.provide(
+        f"{BaseModule.TOPIC_SINK.value}.{ts_type.value}",
+        {
+            "host": host or guess_host(ts_type),
+            "port": port or guess_port(ts_type),
+            **(args or {}),
+        },
+    )
+    return sink.available_topics
+
+
+@server.tool(
+    title="Subscribe to live topic messages",
+    description=(
+        "Start a background subscription to mqtt, ros1.bridge, or ros2.bridge and persist "
+        "messages locally; returns the sink directory for subsequent analysis. Use "
+        "list_live_topics first. An optional pipeline runs continuously on incoming messages "
+        "and may write or upload artifacts. overwrite=True clears existing topic buffers. Stop "
+        "it with unsubscribe_live_topics. Not for inspecting an existing file."
+    ),
+    annotations=mcp_compat.tool_annotations(
+        read_only=False, idempotent=False, destructive=True, open_world=True
+    ),
+)
+def subscribe_live_topics(  # noqa: PLR0913
+    type_: str,
+    topics: list[str] | None = None,
+    host: str | None = None,
+    port: int | None = None,
+    overwrite: bool = False,
+    args: dict[str, Any] | None = None,
+    pipeline: dict[str, Any] | None = None,
+) -> str:
+    """Subscribe to real-time messages from a live data stream.
+
+    Establishes a connection to a live streaming service (e.g., ROS bridge, telemetry server)
+    and subscribes to the specified topics. The subscribed messages are persisted to a local
+    sink directory for subsequent analysis or playback.
+
+    Args:
+        type_ (str): The type of `TopicSink` to use (e.g., ROS1, ROS2, MQTT). For the full
+            list of supported types, see `TopicSink` in `bagel_mcp/di/types/topic_sink.py`.
+        topics (list[str] | None, optional): The topics to subscribe to. If None, subscribes
+            to all available topics.
+        host (str | None, optional): Hostname of the live data stream service. If None,
+            the default host is inferred.
+        port (int | None, optional): Port number of the live data stream service. If None,
+            the default port is inferred.
+        overwrite (bool, optional): If True, overwrite any existing topic buffer directory,
+            i.e., clear out the disk buffer of the selected topics. Defaults to False.
+        args (dict[str, Any] | None, optional): Additional constructor arguments for
+            creating the `TopicSink`.
+        pipeline (dict[str, Any] | None, optional): A pipeline configuration (the same
+            structure `run_pipeline` accepts) to run as a STANDING pipeline on incoming
+            messages for the life of the subscription. Its `cadence.topic` must be among
+            the subscribed topics; its `path` defaults to the sink directory so tasks read
+            the live buffer. Use an `on_event` cadence (with `debounce`/`forward`) for
+            edge recording. Defaults to None.
+
+    Returns:
+        str: Filesystem path to the sink directory where subscribed messages are stored.
+            This path can later be passed as the `path` argument to the `SourceFactory` when
+            using other tools.
+
+    Examples:
+        As an LLM prompt:
+            Subscribe to `freezer/1/status` from the MQTT broker, and every time temp rises
+            above -15 for 2 minutes, snapshot the last 30 seconds to a CSV.
+
+        As a Python call:
+            >>> subscribe_live_topics("mqtt", topics=["freezer/1/status"], pipeline={...})
+
+    """
+    ts_type = TopicSink(type_)
+    sink = module.provide(
+        f"{BaseModule.TOPIC_SINK.value}.{ts_type.value}",
+        {
+            "host": host or guess_host(ts_type),
+            "port": port or guess_port(ts_type),
+            **(args or {}),
+        },
+    )
+    startup.subscribe_with_pipeline(sink, topics, pipeline, overwrite=overwrite)
+    return str(sink.directory)
+
+
+def _sink_class(ts_type: TopicSink) -> type:
+    """Return the TopicSink class for a sink type, without constructing (connecting) one."""
+    import_path = f"{BaseModule.TOPIC_SINK.value}.{ts_type.value}"
+    module.import_module(import_path).register()
+    return module.global_registry[import_path]
+
+
+@server.tool(
+    title="Stop live topic subscriptions",
+    description=(
+        "Stop topics started by subscribe_live_topics on a running mqtt, ros1.bridge, or "
+        "ros2.bridge subscription (same type_, host and port). Omit topics to stop all of "
+        "them. A standing pipeline finishes its queued runs and its end-of-stream run first, "
+        "which may write or upload artifacts. Recorded messages stay in the returned sink "
+        "directory for analysis. Once nothing is subscribed the connection is closed. Never "
+        "opens a connection: errors if there is no running subscription there."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, open_world=True),
+)
+def unsubscribe_live_topics(
+    type_: str,
+    topics: list[str] | None = None,
+    host: str | None = None,
+    port: int | None = None,
+) -> dict[str, Any]:
+    """Stop live topic subscriptions started by `subscribe_live_topics`.
+
+    Args:
+        type_ (str): The type of `TopicSink` (ros1.bridge, ros2.bridge, mqtt); used to
+            infer the default host and port, as in `subscribe_live_topics`.
+        topics (list[str] | None, optional): Topics to stop. If None, all subscribed topics.
+        host (str | None, optional): Hostname of the subscription. If None, the default.
+        port (int | None, optional): Port of the subscription. If None, the default.
+
+    Returns:
+        dict[str, Any]: `directory` (the sink directory, still readable), `unsubscribed`
+            and `still_subscribed` (topic lists).
+
+    Raises:
+        ValueError: If there is no running subscription on that host and port, or a
+            requested topic is not subscribed there (nothing is stopped).
+
+    Examples:
+        As an LLM prompt:
+            Stop recording `freezer/1/status` from the MQTT broker.
+
+        As a Python call:
+            >>> unsubscribe_live_topics("mqtt", topics=["freezer/1/status"])
+
+    """
+    from bagel_mcp.sink.base import TopicNotFoundError, live_sinks
+
+    ts_type = TopicSink(type_)
+    host = host or guess_host(ts_type)
+    port = port or guess_port(ts_type)
+    try:
+        sink_class = _sink_class(ts_type)
+    except ImportError as error:  # its client library is missing, so none can be running
+        raise ValueError(f"No live {type_} subscription on {host}:{port}: {error}") from error
+    sink = next(
+        (
+            s
+            for s in live_sinks()
+            if isinstance(s, sink_class) and s.host == host and str(s.port) == str(port)
+        ),
+        None,
+    )
+    if sink is None:
+        raise ValueError(f"No live {type_} subscription on {host}:{port}; nothing to stop.")
+    try:
+        stopped = sink.unsubscribe(topics)
+    except TopicNotFoundError as error:
+        raise ValueError(
+            f"Not subscribed on {host}:{port}: {error}. Subscribed: {sink.subscribed_topics}"
+        ) from error
+    remaining = sink.subscribed_topics
+    directory = str(sink.directory)
+    if not remaining:
+        sink.close()
+    return {"directory": directory, "unsubscribed": stopped, "still_subscribed": remaining}
+
+
+@server.tool(
+    title="Run a capability defined in a POML file",
+    description=(
+        "Load reusable agent instructions from a POML or Markdown file; returns a prompt for "
+        "the calling agent to follow. Discover paths with list_agent_capabilities. POML accepts "
+        "template context; Markdown rejects nonempty context. Loading the prompt does not "
+        "itself analyze data, execute a pipeline, or write reduction artifacts. Use "
+        "run_pipeline for an approved executable pipeline config."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def run_poml_capability(
+    poml_path: str,
+    poml_context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Execute a structured capability from a POML or markdown file.
+
+    Loads a `.poml` file containing instructions written in the POML
+    (Prompt-Oriented Markup Language) format, or a `.md` file containing
+    static markdown instructions. The file defines the task the LLM should
+    perform and how the output should be structured. This tool produces a
+    ready-to-use prompt for LLM execution.
+
+    Optionally, a context dictionary can be passed to substitute values in
+    the POML template, enabling dynamic parameterization. Markdown
+    capabilities have no template engine, so `poml_context` is rejected for
+    them rather than silently ignored.
+
+    Args:
+        poml_path (str): Filesystem path to the `.poml` or `.md` file
+            containing the capability definition.
+        poml_context (dict[str, Any] | None, optional): Key-value pairs injected
+            into the POML file to customize behavior. Defaults to None.
+
+    Raises:
+        FileNotFoundError: If the file cannot be found.
+        InvalidCapabilityError: If `poml_context` is passed for a markdown
+            (`.md`) capability, which has no template engine to apply it to.
+
+    Returns:
+        list[dict[str, Any]]: A structured prompt representation, typically in the format:
+            [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
+
+    Examples:
+        As an LLM prompt:
+            Run the capability './bagel_mcp/agent/examples/woof.poml' on the ROS2 bag
+            './data/sample/ros2/mcap'.
+
+        As a Python call:
+            >>> run_poml_capability("./bagel_mcp/agent/examples/woof.poml", {"foo": "bar"})
+
+    """
+    poml_file = agent_capabilities.resolve_path(poml_path)
+    if not poml_file.exists():
+        raise FileNotFoundError(poml_file)
+    if poml_file.suffix == ".md":
+        # Markdown capabilities are static instructions: no template engine,
+        # so parameterization is impossible rather than silently ignored.
+        if poml_context:
+            raise agent_capabilities.InvalidCapabilityError(
+                f"{poml_file} is a markdown capability; poml_context requires a POML file."
+            )
+        return [{"speaker": "human", "content": poml_file.read_text(encoding="utf-8")}]
+    return poml(poml_file, context=poml_context)
+
+
+@server.tool(
+    title="List agent capabilities",
+    description=(
+        "List every capability available to run: the predefined `.poml` capabilities "
+        "shipped with Bagel, plus any user-saved capabilities (`.poml` or `.md`, "
+        "named with a `user/` prefix) discovered under the user-capabilities "
+        "directory. Each entry has a `name`, a `path` to pass to "
+        "`run_poml_capability`, and a one-line `summary`. Use this to discover "
+        "available capabilities instead of guessing file paths."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def list_agent_capabilities() -> list[dict[str, str]]:
+    """List the POML capability files shipped under ``bagel_mcp/agent``.
+
+    Each capability is a predefined, structured workflow (e.g. composing a
+    data-reduction pipeline, triaging a log). Run one by passing its ``path``
+    to ``run_poml_capability``.
+
+    Returns:
+        list[dict[str, str]]: Capability entries with ``name``, ``path``, and
+            ``summary``, sorted by name.
+
+    Examples:
+        As an LLM prompt:
+            List the agent capabilities available on this server.
+
+        As a Python call:
+            >>> list_agent_capabilities()
+
+    """
+    return agent_capabilities.list_capabilities()
+
+
+@server.tool(
+    title="Save a user capability",
+    description=(
+        "Save a reusable workflow as a named capability so it can be discovered "
+        "with `list_agent_capabilities` and run with `run_poml_capability` in any "
+        "future session. Content may be POML (validated before saving; supports "
+        "context parameterization) or plain markdown instructions. Writes only to "
+        "the user-capabilities directory; builtin capabilities cannot be modified."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
+)
+def save_agent_capability(name: str, content: str, overwrite: bool = False) -> dict[str, str]:
+    r"""Save a user-authored capability into the user-capabilities directory.
+
+    Args:
+        name (str): Capability slug (lowercase letters, digits, ``-``/``_``,
+            at most one ``/`` subdirectory level), e.g. ``fleet/battery-triage``.
+            The server chooses the file extension from the content.
+        content (str): The capability body — POML markup (starts with
+            ``<poml``) or markdown instructions.
+        overwrite (bool, optional): Replace an existing capability of the same
+            name. Defaults to False.
+
+    Returns:
+        dict[str, str]: The saved capability's ``name`` (``user/``-prefixed),
+            ``path``, and one-line ``summary`` — the same shape
+            ``list_agent_capabilities`` reports.
+
+    Raises:
+        InvalidCapabilityError: On an invalid name, empty content,
+            non-rendering POML, or a name collision without ``overwrite=True``.
+
+    Examples:
+        As an LLM prompt:
+            Save that workflow as a capability called battery-triage.
+
+        As a Python call:
+            >>> save_agent_capability("battery-triage", "# Battery triage\n\nSteps...")
+
+    """
+    return agent_capabilities.save_capability(name=name, content=content, overwrite=overwrite)
+
+
+@server.tool(
+    title="Delete a user capability",
+    description=(
+        "Delete a capability previously saved with `save_agent_capability`, by the "
+        "exact, full `name` `list_agent_capabilities` reports (`user/`-prefixed) -- "
+        "a bare slug is rejected, since a user capability's name can shadow a builtin "
+        "of the same stem. Only user-saved capabilities can be deleted -- builtins "
+        "shipped with Bagel refuse with a clear message. An unknown name raises "
+        "rather than silently no-op-ing, listing the user capabilities that do exist."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
+)
+def delete_capability(name: str) -> dict[str, str]:
+    """Delete one user-authored capability by its full name.
+
+    Args:
+        name (str): The capability to delete, exactly as `list_agent_capabilities`
+            reports it (`user/`-prefixed, e.g. `user/battery-triage`). A bare slug
+            (`battery-triage`) is rejected -- see Raises.
+
+    Returns:
+        dict[str, str]: The deleted capability's `name` (`user/`-prefixed) and `path`.
+
+    Raises:
+        InvalidCapabilityError: If `name` lacks the `user/` prefix (whether or
+            not it names a builtin -- only the full `user/`-prefixed name is
+            accepted, since a user capability can shadow a builtin of the same
+            stem), is not a valid capability slug, would resolve outside the
+            user-capabilities directory, or does not exist -- validated before
+            any file is touched, so a rejected call deletes nothing.
+
+    Examples:
+        As an LLM prompt:
+            Delete the capability I saved as "battery-triage".
+
+        As a Python call:
+            >>> delete_capability("user/battery-triage")
+
+    """
+    return agent_capabilities.delete_capability(name)
+
+
+@server.tool(
+    title="List pipeline capabilities",
+    description=(
+        "Discover available task and gate modules before authoring pipeline YAML. Returns "
+        "module paths, constructor parameters, summaries, and availability. These are "
+        "executable building blocks, not saved workflows: use list_pipelines for saved configs "
+        "and list_agent_capabilities for reusable agent instructions."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def list_pipeline_capabilities(include_unavailable: bool = False) -> list[dict[str, Any]]:
+    """List the tasks and gates that can be composed into a pipeline.
+
+    Each capability is a building block referenced by its `module` path in a pipeline
+    YAML. Tasks perform actions (e.g. snippet or reduce a bag); gates decide whether
+    downstream tasks run. The reported `parameters` map directly to a task/gate's
+    `args` in the pipeline config.
+
+    Args:
+        include_unavailable (bool, optional): If True, also list modules that cannot be
+            imported in this environment (e.g. ROS tasks without ROS installed), marked
+            with `available: False`. Defaults to False.
+
+    Returns:
+        list[dict[str, Any]]: Capability descriptions, each with `module`, `kind`,
+            `class`, `summary`, `parameters`, and `available`.
+
+    Examples:
+        As an LLM prompt:
+            What pipeline tasks can I use?
+
+        As a Python call:
+            >>> list_pipeline_capabilities()
+
+    """
+    return capabilities.list_capabilities(include_unavailable=include_unavailable)
+
+
+@server.tool(
+    title="Preview an event-driven data reduction",
+    description=(
+        "Preview an event-window reduction without writing artifacts. Inspect source and topic "
+        "schemas first, then provide a SQL boolean predicate and nonnegative pre/post seconds. "
+        "Detects false-to-true transitions, debounces nearby events, merges overlapping "
+        "windows, and returns event timestamps, intervals, total seconds, and kept "
+        "seconds/fraction. Report these results and obtain user confirmation before executing "
+        "the reduction with run_pipeline or run_pipeline_batch. Does not predict output byte "
+        "size."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def preview_pipeline(  # noqa: PLR0913
+    path: str,
+    event_topic: str,
+    predicate: str,
+    pre_seconds: float,
+    post_seconds: float = 0.0,
+    debounce_seconds: float = 0.0,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Preview the reduction that a pipeline would perform, without writing anything.
+
+    Evaluates `predicate` against every message of `event_topic`, finds the rising-edge
+    events (False -> True transitions), builds `[event - pre_seconds, event + post_seconds]`
+    windows, merges overlapping windows, and returns the resulting event count, kept
+    windows, and kept fraction of the source. Nothing is written to disk.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        event_topic (str): The topic to evaluate the predicate against.
+        predicate (str): A SQL boolean expression over `event_topic` columns, e.g.
+            "linear_acceleration_x < -10".
+        pre_seconds (float): Seconds to keep before each event.
+        post_seconds (float, optional): Seconds to keep after each event. Defaults to 0.0.
+        debounce_seconds (float, optional): Minimum seconds between consecutive events;
+            closer events are coalesced. Defaults to 0.0.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used to
+            create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: A summary with `event_count`, `events` (timestamps), `intervals`
+            (kept windows as start/end seconds), `kept_seconds`, `total_seconds`, and
+            `kept_fraction`.
+
+    Examples:
+        As an LLM prompt:
+            Preview keeping 10s before and after every deceleration below -10 on `/imu`.
+
+        As a Python call:
+            >>> preview_pipeline("./data/sample/ros2/mcap", "/imu",
+            ...                  "linear_acceleration_x < -10", pre_seconds=10, post_seconds=10)
+
+    """
+    source = SourceContext.build(path, args)
+    bounds = source.bounds()
+    relation = source.dataset.to_duckdb(source.factory, source.registry, [event_topic])
+    ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
+    rows = windows.relation_rows(
+        relation.project(f"{ts_column} AS ts, ({predicate}) AS hit").order("ts")
+    )
+    span_seconds = bounds[1] - bounds[0]
+
+    plan = windows.plan_reduction(
+        rows,
+        pre_seconds,
+        post_seconds,
+        span_seconds,
+        min_gap_seconds=debounce_seconds,
+        bounds=bounds,
+        ordered=True,
+    )
+    return {
+        "event_count": len(plan["events"]),
+        "events": plan["events"],
+        "intervals": [
+            {"start_seconds": start, "end_seconds": end} for start, end in plan["intervals"]
+        ],
+        "kept_seconds": plan["kept_seconds"],
+        "total_seconds": plan["total_seconds"],
+        "kept_fraction": plan["kept_fraction"],
+    }
+
+
+@server.tool(
+    title="Preview what the anomaly gate would flag (beta)",
+    description=(
+        "Dry-run the on-robot anomaly screen over a recorded log without calling any "
+        "decision model or writing artifacts. Learns a rolling baseline the way the "
+        "`bagel_mcp.pipeline.gates.anomaly` gate does, then reports every window the screen would "
+        "flag (mean shift, extreme sample, topic dropout) with the signal, value and z-score, "
+        "flag counts per signal, and plain-language advice (signals that drift by design, "
+        "warm-up longer than the log). Inspect topics first and pass `signals` as rates and "
+        "errors (accelerations, angular rates, currents), never positions or orientations. "
+        "Use it to choose signals and thresholds before saving an anomaly pipeline. It models "
+        "screen mode with the decision model confirming every flag, `every: N seconds` "
+        "cadences, and a gate that sees every fire (list the anomaly gate first)."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def preview_anomalies(  # noqa: PLR0913
+    path: str,
+    window_seconds: float,
+    topics: list[str] | None = None,
+    signals: list[str] | None = None,
+    max_signals: int = 64,
+    z_threshold: float = 3.0,
+    dropout_seconds: float = 2.0,
+    baseline_window_minutes: float = 30.0,
+    warmup_minutes: float = 5.0,
+    cadence_topic: str | None = None,
+    cadence_seconds: float | None = None,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Report what the anomaly gate's screen would flag on a recorded log. BETA.
+
+    Args:
+        path (str): Filesystem path or URL to the recorded data source.
+        window_seconds (float): Window length in whole seconds; matches the gate's `lookback`.
+        topics (list[str] | None, optional): Topics to watch. If None, all topics.
+        signals (list[str] | None, optional): Dotted numeric signals to watch, e.g.
+            "/imu.linear_acceleration.x". Prefer rates and errors over states.
+        max_signals (int, optional): Refuse to watch more signals than this. Defaults to 64.
+        z_threshold (float, optional): Baseline standard deviations for a mean shift.
+        dropout_seconds (float, optional): Silence that counts as a dropout.
+        baseline_window_minutes (float, optional): Span of the rolling baseline.
+        warmup_minutes (float, optional): History needed before screening starts.
+        cadence_topic (str | None, optional): The topic the saved pipeline's cadence will
+            follow; windows then end where that pipeline would fire. Default: a fixed grid.
+        cadence_seconds (float | None, optional): The pipeline's cadence interval, when it
+            differs from the window (e.g. a 10 s lookback evaluated every 60 s). Defaults
+            to `window_seconds`.
+        args (dict[str, Any] | None, optional): Additional source options.
+
+    Returns:
+        dict[str, Any]: `windows`, `warmup_windows`, `screened_windows`, `flagged`
+            (with `offset_seconds` and `reasons`), `flagged_fraction`, `by_signal`,
+            `by_topic`, `signals`, and `advice`.
+
+    Examples:
+        As an LLM prompt:
+            What would the anomaly gate flag on ./flight_042 with 10 s windows, watching
+            IMU accelerations and motor current?
+
+        As a Python call:
+            >>> preview_anomalies("./flight_042", window_seconds=10,
+            ...                   signals=["/imu.linear_acceleration.x", "/motor.current"])
+
+    """
+    return calibrate.calibrate(
+        path,
+        window_seconds=window_seconds,
+        topics=topics,
+        signals=signals,
+        max_signals=max_signals,
+        z_threshold=z_threshold,
+        dropout_seconds=dropout_seconds,
+        baseline_window_minutes=baseline_window_minutes,
+        warmup_minutes=warmup_minutes,
+        cadence_topic=cadence_topic,
+        cadence_seconds=cadence_seconds,
+        source_args=args,
+    )
+
+
+def _pipeline_summary(text: str, yaml_file: pathlib.Path) -> str:
+    """One-line summary of a saved pipeline: task count, site/asset, cadence.
+
+    Cheap: reuses the YAML already read for the file's `name`/`path` entry --
+    no second pass over the pipeline. Falls back to the file's last-modified
+    time when the content doesn't parse as a pipeline config (e.g. a
+    hand-edited or unrelated file dropped into the directory), the same
+    fallback the tool-design review called out for anything non-trivial to
+    summarize.
+    """
+
+    def _fallback() -> str:
+        modified = datetime.fromtimestamp(yaml_file.stat().st_mtime).isoformat(timespec="seconds")
+        return f"(unrecognized pipeline file; modified {modified})"
+
+    try:
+        config = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return _fallback()
+    if not isinstance(config, dict):
+        return _fallback()
+
+    try:
+        tasks = config.get("tasks")
+        task_count = len(tasks) if isinstance(tasks, list) else 0
+        site, asset = config.get("site"), config.get("asset")
+        cadence = config.get("cadence") if isinstance(config.get("cadence"), dict) else {}
+        when = cadence.get("when")
+
+        pieces = [f"{task_count} task{'s' if task_count != 1 else ''}"]
+        # str()-coerce: a hand-edited pipeline can give site/asset a non-string
+        # value (e.g. `site: 123`), which would otherwise raise TypeError from
+        # str.join and crash listing (review #224).
+        target = "/".join(str(part) for part in (site, asset) if part)
+        if target:
+            pieces.append(f"for {target}")
+        if when:
+            pieces.append(f"({when})")
+        return " ".join(pieces) + "."
+    except (TypeError, AttributeError):
+        return _fallback()
+
+
+def _pipeline_lock(directory: pathlib.Path) -> filelock.FileLock:
+    """Return the cross-process lock serializing save/delete for `directory`.
+
+    Mirrors ``agent_capabilities._save_lock``: the lock file lives under
+    ``CACHE_DIRECTORY``, never inside `directory` itself (which `save_pipeline`
+    can point at a caller-chosen location), so a planted lock-named symlink
+    there can't be followed by the lock implementation before any path check
+    runs. Keyed by the resolved directory so concurrent `save_pipeline` and
+    `delete_pipeline` calls against the same directory (in practice, the
+    trusted `settings.PIPELINES_DIRECTORY` default) serialize against each
+    other -- otherwise a delete can unlink a file after `save_pipeline` opens
+    it but before the write completes, or two deletes can both pass the
+    existence check and one raise an unexpected `FileNotFoundError` (review
+    #224).
+    """
+    locks = pathlib.Path(settings.CACHE_DIRECTORY) / "locks"
+    locks.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(str(directory.resolve()).encode("utf-8")).hexdigest()[:16]
+    return filelock.FileLock(str(locks / f"pipelines-{digest}.lock"))
+
+
+@server.tool(
+    title="Save a pipeline to a YAML file",
+    description=(
+        "Persist a pipeline configuration to a YAML file so it can be reused, edited, or "
+        "run later with `bagel-run`. Returns the path to the written file."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
+)
+def save_pipeline(config: dict[str, Any], name: str, directory: str | None = None) -> str:
+    """Write a pipeline configuration to a YAML file.
+
+    Args:
+        config (dict[str, Any]): The pipeline configuration (the same structure `run_pipeline`
+            accepts and `bagel-run` loads): `name`, `site`, `asset`, `path`, `allow_failure`,
+            `cadence`, and `tasks`.
+        name (str): The pipeline file name (without extension), in lower_snake_case.
+        directory (str | None, optional): Directory to write the file into. Created if
+            missing. Defaults to `settings.PIPELINES_DIRECTORY` -- the same directory
+            `list_pipelines` and `delete_pipeline` operate on -- read live so a caller
+            explicitly wanting a different directory can still pass one for this write,
+            though only the trusted default is ever discoverable or deletable by name.
+
+    Returns:
+        str: The path to the written YAML file.
+
+    Raises:
+        ValueError: If `name` is not a valid lower_snake_case identifier.
+
+    Examples:
+        As an LLM prompt:
+            Save this pipeline as "hard_decel_reduce".
+
+    """
+    from bagel_mcp import artifacts
+
+    if not artifacts.is_lower_snake_case(name):
+        raise ValueError(f"Pipeline name '{name}' must be lower_snake_case.")
+
+    output_directory = pathlib.Path(
+        directory if directory is not None else settings.PIPELINES_DIRECTORY
+    )
+    output_directory.mkdir(parents=True, exist_ok=True)
+    output_file = output_directory / f"{name}.yaml"
+    # Serialized with delete_pipeline's existence-check + unlink under the same
+    # lock, so a concurrent save and delete of the same name cannot race.
+    with _pipeline_lock(output_directory):
+        with open(output_file, "w") as stream:
+            yaml.safe_dump(config, stream, sort_keys=False)
+    return str(output_file)
+
+
+@server.tool(
+    title="List saved pipelines",
+    description=(
+        "List the pipeline YAML files saved by `save_pipeline` in the trusted pipelines "
+        "directory (`settings.PIPELINES_DIRECTORY`): each entry's `name`, `path`, and a "
+        "one-line `summary` (task count, site/asset, and cadence). Use this to discover "
+        "what has already been saved before reusing, editing, or deleting it -- instead "
+        "of guessing file names."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def list_pipelines() -> list[dict[str, str]]:
+    """List the pipeline YAML files saved directly under the trusted pipelines directory.
+
+    Reads `settings.PIPELINES_DIRECTORY` -- the same directory `save_pipeline`
+    defaults to and `delete_pipeline` is confined to -- so a name reported
+    here is always one `delete_pipeline` can act on. There is no `directory`
+    argument: an MCP caller cannot point this at an arbitrary path.
+
+    Returns:
+        list[dict[str, str]]: One entry per `*.yaml` file directly inside the
+            directory (not recursive), sorted by `name`: `name` (the file
+            stem, the same value `delete_pipeline` accepts), `path`, and a
+            one-line `summary`.
+
+    Examples:
+        As an LLM prompt:
+            What pipelines have I saved?
+
+        As a Python call:
+            >>> list_pipelines()
+
+    """
+    root = pathlib.Path(settings.PIPELINES_DIRECTORY)
+    if not root.is_dir():
+        return []
+    entries = [
+        {
+            "name": yaml_file.stem,
+            "path": str(yaml_file),
+            "summary": _pipeline_summary(
+                yaml_file.read_text(encoding="utf-8", errors="replace"), yaml_file
+            ),
+        }
+        for yaml_file in root.glob("*.yaml")
+        # is_symlink() excludes a *.yaml symlink whose target is outside the
+        # trusted root: is_file() alone follows it, so read_text() would read
+        # and summarize a file this listing has no business exposing -- and
+        # one delete_pipeline refuses anyway, since its containment check
+        # resolves the same symlink (review #224).
+        if yaml_file.is_file() and not yaml_file.is_symlink()
+    ]
+    entries.sort(key=lambda entry: entry["name"])
+    return entries
+
+
+@server.tool(
+    title="Read a saved pipeline",
+    description=(
+        "Return the full configuration of one pipeline saved by `save_pipeline`, by the "
+        "`name` `list_pipelines` reports, so it can be inspected, edited and saved again or "
+        "passed to run_pipeline. Confined to the trusted pipelines directory "
+        "(`settings.PIPELINES_DIRECTORY`); a name resolving outside it is refused."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def get_pipeline(name: str) -> dict[str, Any]:
+    """Read one saved pipeline's full configuration by name.
+
+    Args:
+        name (str): The pipeline's name (file stem), as `list_pipelines` reports it.
+
+    Returns:
+        dict[str, Any]: `name`, `path`, and `config` (the parsed pipeline configuration).
+
+    Raises:
+        ValueError: If `name` is not a plain file name or resolves outside the pipelines
+            directory, if no such pipeline exists (the error lists those that do), or if
+            the file is not a valid pipeline YAML mapping.
+
+    Examples:
+        As an LLM prompt:
+            Show me the saved pipeline "hard_decel_reduce".
+
+        As a Python call:
+            >>> get_pipeline("hard_decel_reduce")
+
+    """
+    root = pathlib.Path(settings.PIPELINES_DIRECTORY)
+    if "/" in name or "\\" in name or name in (".", ".."):
+        raise ValueError(f"Invalid pipeline name {name!r}: must be a plain file name, not a path.")
+    target = root / f"{name}.yaml"
+    if target.is_symlink() or not target.resolve().is_relative_to(root.resolve()):
+        raise ValueError(f"Refusing to read {name!r}: it resolves outside {root.resolve()}.")
+    # Same lock as save_pipeline's write and delete_pipeline's unlink, so the read never
+    # sees a half-written file or loses it between the check and the read.
+    with _pipeline_lock(root):
+        text = target.read_text(encoding="utf-8") if target.is_file() else None
+    if text is None:
+        available = sorted(entry["name"] for entry in list_pipelines())
+        detail = f"Available: {available}" if available else "No pipelines are saved there."
+        raise ValueError(f"No saved pipeline named {name!r}. {detail}")
+    try:
+        config = yaml.safe_load(text)
+    except yaml.YAMLError as error:
+        raise ValueError(f"Saved pipeline {name!r} is not valid YAML: {error}") from error
+    if not isinstance(config, dict):
+        raise ValueError(f"Saved pipeline {name!r} is not a pipeline configuration mapping.")
+    return {"name": name, "path": str(target), "config": config}
+
+
+@server.tool(
+    title="Delete a saved pipeline",
+    description=(
+        "Delete exactly one pipeline YAML file previously written by `save_pipeline`, "
+        "by the same `name` `list_pipelines` reports. Confined to the trusted pipelines "
+        "directory (`settings.PIPELINES_DIRECTORY`) -- there is no `directory` argument, "
+        "so this can never be pointed at an arbitrary path -- and a name that would "
+        "resolve outside it is refused before anything is touched. Deleting an unknown "
+        "name raises rather than silently no-op-ing, listing the names that do exist -- "
+        "so a second delete of the same name also raises."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True, destructive=True),
+)
+def delete_pipeline(name: str) -> dict[str, str]:
+    """Delete one saved pipeline YAML file by name, from the trusted pipelines directory.
+
+    Only `settings.PIPELINES_DIRECTORY` -- the same directory `save_pipeline`
+    defaults to and `list_pipelines` reads from -- is ever touched; there is
+    no `directory` argument an MCP caller could aim elsewhere. Identity is
+    fully validated -- name syntax, then containment within that directory --
+    before anything is unlinked, so a rejected call deletes nothing.
+
+    Args:
+        name (str): The pipeline's name, i.e. its file stem (without `.yaml`),
+            exactly as `list_pipelines` reports it. Must be a plain file name:
+            no path separators.
+
+    Returns:
+        dict[str, str]: The deleted pipeline's `name` and `path`.
+
+    Raises:
+        ValueError: If `name` contains a path separator or would otherwise
+            resolve outside the pipelines directory (path traversal, e.g.
+            "../x", or a symlink escaping it) -- checked before any file is
+            touched -- or if no pipeline named `name` exists, in which case
+            the error lists the names that do.
+
+    Examples:
+        As an LLM prompt:
+            Delete the saved pipeline "csv_smoke".
+
+        As a Python call:
+            >>> delete_pipeline("csv_smoke")
+
+    """
+    root = pathlib.Path(settings.PIPELINES_DIRECTORY)
+    if "/" in name or "\\" in name or name in (".", ".."):
+        raise ValueError(f"Invalid pipeline name {name!r}: must be a plain file name, not a path.")
+
+    target = root / f"{name}.yaml"
+    if not target.resolve().is_relative_to(root.resolve()):
+        raise ValueError(
+            f"Refusing to delete {name!r}: it resolves to {target.resolve()}, "
+            f"outside the pipelines directory {root.resolve()}."
+        )
+
+    # Serialized with save_pipeline's write under the same lock, so a
+    # concurrent save and delete of the same name cannot race.
+    with _pipeline_lock(root):
+        if not target.is_file():
+            available = sorted(entry["name"] for entry in list_pipelines())
+            detail = f"Available: {available}" if available else "No pipelines are saved there."
+            raise ValueError(f"No saved pipeline named {name!r}. {detail}")
+
+        target.unlink()
+
+    return {"name": name, "path": str(target)}
+
+
+@server.tool(
+    title="Run a pipeline",
+    description=(
+        "Execute one pipeline config against its single config.path after configuration and "
+        "input validation. For event reductions, first call preview_pipeline, report events and "
+        "kept seconds, and obtain user confirmation. Returns pipeline status, run counts, and "
+        "artifact paths; inspect status for failures. Tasks may write files or contact external "
+        "services. Use save_pipeline to store without executing, or run_pipeline_batch for "
+        "multiple sources."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False, open_world=True),
+)
+def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
+    """Build and run a pipeline, returning the artifacts it produced.
+
+    Args:
+        config (dict[str, Any]): The pipeline configuration with `name`, `site`, `asset`,
+            `path`, `allow_failure`, `cadence`, and `tasks` (and optional `gates`). This is
+            the same structure accepted by `save_pipeline` and loaded by `bagel-run`.
+
+    Returns:
+        dict[str, Any]: A summary with `pipeline` (name), `status` ("completed"), and
+            `artifacts` (the paths produced by the pipeline's tasks).
+
+    Examples:
+        As an LLM prompt:
+            Run the reduce pipeline I just previewed.
+
+    """
+    pipeline = base.Pipeline.build(config)
+    produced = pipeline.run_all()
+    return {
+        "pipeline": pipeline.name,
+        "status": pipeline.summary.status,
+        "runs": asdict(pipeline.summary),
+        "artifacts": [str(path) for path in produced],
+    }
+
+
+@server.tool(
+    title="Run a pipeline across many data sources (batch)",
+    description=(
+        "Execute one pipeline config for multiple explicit source paths or globs, overriding "
+        "config.path for each source. Each source runs independently; returns per-source "
+        "statuses/errors and totals. For event reductions, preview each source to be reduced "
+        "and obtain confirmation of the batch scope before executing. Tasks may write files or "
+        "contact external services. Use run_pipeline for a single source. A glob matching "
+        "nothing is treated as a literal path."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False, open_world=True),
+)
+def run_pipeline_batch(config: dict[str, Any], paths: list[str]) -> dict[str, Any]:
+    """Run a pipeline config against every matching data source.
+
+    Args:
+        config (dict[str, Any]): The base pipeline config (same structure as `run_pipeline`).
+            Its `path` is overridden for each source, so it need not be set.
+        paths (list[str]): Data source paths or glob patterns (e.g. ["logs/*.mcap"]). Globs
+            are expanded; patterns that match nothing are treated as literal paths.
+
+    Returns:
+        dict[str, Any]: A summary with `sources`, `completed`, `failed`, `artifacts` (total
+            produced), and `results` (a per-source list with `path`, `status`, and either
+            `artifacts` or `error`).
+
+    Examples:
+        As an LLM prompt:
+            Reduce every bag under "./logs" with this pipeline.
+
+        As a Python call:
+            >>> run_pipeline_batch(config, ["./logs/*"])
+
+    """
+    expanded = batch.expand_paths(paths)
+    results = batch.run_batch(config, expanded)
+    return batch.summarize(results)
+
+
+@server.tool(
+    title="Export an event window for PlotJuggler",
+    description=(
+        "Write a selected time window as flattened scalar CSV plus a PlotJuggler XML layout; "
+        "returns paths, plotted curves, and an opening command. Choose this for scalar plotting "
+        "in PlotJuggler, not native bag preservation. Inspect topic schemas and use inclusive "
+        "source timestamps in seconds. Automatically selects up to eight numeric curves unless "
+        "signals are specified. Requires the separate viewer to open; does not launch it."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
+)
+def export_for_plotjuggler(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    start_seconds: float,
+    end_seconds: float,
+    name: str = "event",
+    signals: list[str] | None = None,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export a time window as a ready-to-open PlotJuggler session.
+
+    Writes a flattened CSV of the window (columns named `topic/field/subfield`, the
+    naming PlotJuggler users expect) and a layout `.xml` that references the CSV,
+    pre-adds the signal curves, and frames the time range -- so PlotJuggler opens the
+    event already plotted and zoomed.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics to include in the export.
+        start_seconds (float): Window start (also the plot's framed x range start).
+        end_seconds (float): Window end.
+        name (str, optional): Session name, used for the output files and the tab
+            title. Defaults to "event".
+        signals (list[str] | None, optional): Flattened signal names to plot (e.g.
+            "/imu/linear_acceleration/x"). If None, all numeric signals are plotted,
+            capped at 8. Defaults to None.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: `csv` and `layout` paths, the plotted `curves`, and `command`
+            -- run it (or double-click the layout) to open the session in PlotJuggler.
+
+    Examples:
+        As an LLM prompt:
+            Show me the second brake event in PlotJuggler.
+
+        As a Python call:
+            >>> export_for_plotjuggler("./flight.mcap", ["/imu"], 118.9, 138.9)
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    relation = dataset.to_duckdb(
+        factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+    )
+    return plotjuggler.export_window(
+        relation,
+        name=name,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        signals=signals,
+    )
+
+
+@server.tool(
+    title="Export an event window for the Rerun viewer",
+    description=(
+        "Write a selected time window as scalar time series in a Rerun .rrd recording; returns "
+        "its path, signals, and an opening command. Choose this when the user requests Rerun. "
+        "Needs the Rerun viewer on the host (the SDK ships in every image). Inspect topic schemas "
+        "and use source timestamps in seconds. This exporter does not produce camera or 3D "
+        "scene replay and does not launch the viewer."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
+)
+def export_for_rerun(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    start_seconds: float,
+    end_seconds: float,
+    name: str = "event",
+    signals: list[str] | None = None,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export a time window as a Rerun recording.
+
+    Writes an `.rrd` file where every scalar signal in the window is a Rerun time
+    series (entity paths named `topic/field/subfield`, matching the PlotJuggler
+    export's naming).
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics to include in the export.
+        start_seconds (float): Window start.
+        end_seconds (float): Window end.
+        name (str, optional): Recording name, used for the output files. Defaults to
+            "event".
+        signals (list[str] | None, optional): Flattened signal names to include (e.g.
+            "/imu/linear_acceleration/x"). If None, all numeric signals are included.
+            Defaults to None.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: The `rrd` path, included `signals`, and `command` -- run it to
+            open the recording in the Rerun viewer.
+
+    Examples:
+        As an LLM prompt:
+            Show me the second brake event in Rerun.
+
+        As a Python call:
+            >>> export_for_rerun("./flight.mcap", ["/imu"], 118.9, 138.9)
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    relation = dataset.to_duckdb(
+        factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+    )
+    return rerun_export.export_window(
+        relation,
+        name=name,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        signals=signals,
+    )
+
+
+@server.tool(
+    title="Export an event window for Lichtblick / Foxglove",
+    description=(
+        "Write a selected time window as JSON-encoded MCAP plus a plot layout for Lichtblick or "
+        "Foxglove; returns paths, curves, and opening instructions. Choose this for those "
+        "viewers, not byte-preserving native ROS/CDR export. Inspect topic schemas and use "
+        "source timestamps in seconds. Automatically selects up to eight numeric plot curves "
+        "unless signals are specified. Requires a separate viewer; does not launch it."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
+)
+def export_for_lichtblick(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    start_seconds: float,
+    end_seconds: float,
+    name: str = "event",
+    signals: list[str] | None = None,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export a time window as a ready-to-open Lichtblick session.
+
+    Writes an MCAP of the window (JSON-encoded channels, readable by Lichtblick,
+    Foxglove, and Bagel itself) and a layout `.json` with a Plot panel whose series
+    and x/y ranges are pre-set to the event.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics to include in the export.
+        start_seconds (float): Window start (also the plot's framed x range start).
+        end_seconds (float): Window end.
+        name (str, optional): Session name, used for the output files and the plot
+            title. Defaults to "event".
+        signals (list[str] | None, optional): Flattened signal names to plot (e.g.
+            "/imu/linear_acceleration/x"). If None, all numeric signals are plotted,
+            capped at 8. Defaults to None.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: `mcap` and `layout` paths, the plotted `curves` (as Lichtblick
+            message paths), and `instructions` for opening the session.
+
+    Examples:
+        As an LLM prompt:
+            Show me the second brake event in Lichtblick.
+
+        As a Python call:
+            >>> export_for_lichtblick("./flight.mcap", ["/imu"], 118.9, 138.9)
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    relation = dataset.to_duckdb(
+        factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+    )
+    return lichtblick.export_window(
+        relation,
+        name=name,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        signals=signals,
+    )
+
+
+@server.tool(
+    title="Export event windows as a LeRobot training dataset (beta)",
+    description=(
+        "Write selected event windows as a LeRobotDataset v3.0: one episode per window, scalar "
+        "signals grouped into feature vectors and resampled to a uniform fps using last "
+        "observation carried forward. Returns the dataset directory, episode/frame counts, and "
+        "loading instructions. Choose this for robot-learning dataset preparation, not "
+        "interactive viewing or model training. Beta: load compatibility tested; actual "
+        "training-run validation remains outstanding."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=True),
+)
+def export_for_lerobot(  # noqa: PLR0913
+    path: str,
+    topics: list[str],
+    episodes: list[dict[str, float]],
+    features: dict[str, list[str]],
+    fps: int,
+    task: str,
+    name: str = "dataset",
+    robot_type: str = "unknown",
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Export event windows as a LeRobotDataset v3.0.
+
+    Data reduction's endgame is training-data curation: the windows preview_pipeline
+    found become episodes. Signals are resampled onto a uniform fps grid (last
+    observation carried forward) and grouped into feature vectors.
+
+    Args:
+        path (str): Filesystem path or URL to the data source.
+        topics (list[str]): The topics the features draw from.
+        episodes (list[dict[str, float]]): Episode windows, each with
+            "start_seconds" and "end_seconds" (e.g. preview_pipeline's intervals).
+        features (dict[str, list[str]]): Maps LeRobot feature names (e.g.
+            "observation.state", "action") to lists of flattened signal names
+            (e.g. "/imu/linear_acceleration/x") composing that feature vector.
+        fps (int): Frame rate episodes are resampled to.
+        task (str): Natural-language task description recorded for all episodes.
+        name (str, optional): Dataset name, used for the output directory.
+        robot_type (str, optional): Recorded into meta/info.json.
+        args (dict[str, Any] | None, optional): Additional constructor arguments used
+            to create the `SourceFactory` and `TopicRegistry`.
+
+    Returns:
+        dict[str, Any]: The `dataset` directory, episode/frame counts, feature
+            sizes, and loading `instructions`.
+
+    Examples:
+        As an LLM prompt:
+            Turn every hard-brake window into a LeRobot episode with the IMU as
+            observation.state at 10 fps.
+
+    """
+    ds_type = resolve(path)
+    factory = module.provide(
+        # args first: the explicit `path` parameter must always win.
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}",
+        {**(args or {}), "path": path},
+    )
+    registry = module.provide(f"{BaseModule.TOPIC_REGISTRY.value}.{ds_type.value}", args or {})
+    dataset = module.provide(f"{BaseModule.MESSAGE_DATASET.value}.{ds_type.value}", {})
+
+    def relation_for_window(start_seconds: float, end_seconds: float) -> duckdb.DuckDBPyRelation:
+        return dataset.to_duckdb(
+            factory, registry, topics, start_seconds=start_seconds, end_seconds=end_seconds
+        )
+
+    return lerobot.export_episodes(
+        relation_for_window,
+        episodes=episodes,
+        features=features,
+        fps=fps,
+        task=task,
+        name=name,
+        robot_type=robot_type,
+    )
+
+
+@server.tool(
+    title="Snapshot robot hardware into a WaffleForm (experimental beta)",
+    description=(
+        "Auto-detect the robot's current hardware, firmware, and software using "
+        "waffle-iron and return the resulting hardware state. Requires the waffle "
+        "CLI on PATH (cargo install waffle-iron). The WaffleForm it writes is "
+        "immediately queryable as a data source."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=False, idempotent=False),
+)
+def snap_hardware(directory: str = ".") -> dict[str, Any]:
+    """Snapshot live hardware state via waffle-iron.
+
+    Runs `waffle snap` in the given directory (or `waffle init` on first contact,
+    scanning connected hardware and scaffolding the form), then parses the
+    resulting `robot.waffleform.yaml` and returns its summary. Use
+    `describe_data_source` and `query_messages` on the returned form path for
+    deeper questions.
+
+    Args:
+        directory (str, optional): Directory holding (or receiving) the robot's
+            `robot.waffleform.yaml`. Defaults to the current directory.
+
+    Returns:
+        dict[str, Any]: The `form` path, robot identity, component `categories`
+            with counts, and the snap timestamp.
+
+    Examples:
+        As an LLM prompt:
+            What hardware is this robot actually running right now?
+
+    """
+    form = waffle_snap.run_waffle(directory)
+    ds_type = resolve(str(form))
+    factory = module.provide(
+        f"{BaseModule.SOURCE_FACTORY.value}.{ds_type.value}", {"path": str(form)}
+    )
+    return {"form": str(form), **factory.metadata}
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Start the MCP server: the `bagel-mcp` console script and `python -m bagel_mcp.server`.
+
+    Flags override the `MCP_TRANSPORT`, `MCP_SERVER_HOST` and `MCP_SERVER_PORT`
+    settings; `--transport stdio` is what an MCP client config that launches
+    `uvx bagel-mcp` needs.
+    """
+    parser = argparse.ArgumentParser(
+        prog="bagel-mcp",
+        description="Bagel MCP server: plain-English analysis of robotics, drone and IoT data.",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["both", "sse", "streamable-http", "stdio"],
+        default=settings.MCP_TRANSPORT,
+        help="MCP transport (default: %(default)s; stdio for clients that spawn the server)",
+    )
+    parser.add_argument("--host", default=settings.MCP_SERVER_HOST, help="bind address for HTTP")
+    parser.add_argument(
+        "--port", type=int, default=settings.MCP_SERVER_PORT, help="bind port for HTTP"
+    )
+    args = parser.parse_args(argv)
+
+    if settings.STARTUP_PIPELINES_FILE and pathlib.Path(settings.STARTUP_PIPELINES_FILE).exists():
+        # Standing pipelines: re-establish subscriptions (and their attached pipelines)
+        # on boot, so they survive container restarts.
+        startup.start(settings.STARTUP_PIPELINES_FILE)
+    # Disk-usage visibility for unattended deployments (#134): the arrow query
+    # cache self-evicts (CACHE_MAX_BYTES), but ARTIFACT_DIRECTORY holds user
+    # deliverables and is never auto-deleted -- its datestr= partition layout
+    # supports external rotation (e.g. find -mtime +N).
+    logging.warning(
+        "Disk usage: cache %s = %d bytes, artifacts %s = %d bytes",
+        settings.CACHE_DIRECTORY,
+        artifacts.directory_size_bytes(settings.CACHE_DIRECTORY),
+        settings.ARTIFACT_DIRECTORY,
+        artifacts.directory_size_bytes(settings.ARTIFACT_DIRECTORY),
+    )
+    mcp_compat.run_server(server, transport=args.transport, host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()

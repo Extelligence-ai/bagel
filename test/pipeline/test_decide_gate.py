@@ -1,4 +1,4 @@
-"""Tests for the typed-decision gate (`src.pipeline.gates.decide`)."""
+"""Tests for the typed-decision gate (`bagel_mcp.pipeline.gates.decide`)."""
 
 import http.server
 import json
@@ -8,10 +8,10 @@ from collections.abc import Iterator
 import duckdb
 import pytest
 
-from settings import settings
-from src.pipeline import base
-from src.pipeline.decide import backends
-from src.pipeline.gates import decide
+from bagel_mcp.pipeline import base
+from bagel_mcp.pipeline.decide import backends
+from bagel_mcp.pipeline.gates import decide
+from bagel_mcp.settings import settings
 
 TS = settings.TIMESTAMP_SECONDS_COLUMN_NAME
 CHOICES = ["upload", "keep_local", "discard"]
@@ -142,10 +142,10 @@ def test_unknown_backend_is_rejected() -> None:
 
 
 def test_gate_is_registered_and_importable_without_heavy_dependencies() -> None:
-    from src.di import module
+    from bagel_mcp.di import module
 
     decide.register()
-    assert module.global_registry["src.pipeline.gates.decide"] is decide.Decide
+    assert module.global_registry["bagel_mcp.pipeline.gates.decide"] is decide.Decide
 
 
 # --- remote backend end to end -----------------------------------------------------------
@@ -191,7 +191,7 @@ def test_remote_gate_decides_over_a_real_source(
         asset="a",
         path="./data/sample/pyarrow/csv",
         config={
-            "module": "src.pipeline.gates.decide",
+            "module": "bagel_mcp.pipeline.gates.decide",
             "args": {
                 "question": "Should this window leave the robot?",
                 "choices": CHOICES,

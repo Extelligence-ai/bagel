@@ -28,8 +28,8 @@ import pytest
 
 pytest.importorskip("asammdf")
 
-from src.source import errors
-from src.source.automotive import mf4
+from bagel_mcp.source import errors
+from bagel_mcp.source.automotive import mf4
 
 MDF_MAGIC = b"MDF     "
 

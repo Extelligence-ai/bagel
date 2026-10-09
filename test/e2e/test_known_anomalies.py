@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-import server
+from bagel_mcp import server
 from test._fixtures import external
 
 

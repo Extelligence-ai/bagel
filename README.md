@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./doc/assets/bagel_logo_light_mode.png" width="560">
+  <img src="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/bagel_logo_light_mode.png" width="560">
 </p>
 
 <p align="center">
@@ -30,8 +30,8 @@
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/hero_dark_mode.png">
-    <img src="./doc/assets/hero_light_mode.png" width="100%">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/hero_dark_mode.png">
+    <img src="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/hero_light_mode.png" width="100%">
   </picture>
 </p>
 
@@ -89,6 +89,69 @@ own log with `demo /path/to/log` (mount it with `-v` first), or keep reading
 for the full MCP setup below.
 
 ## ⚡️ Quickstart
+
+Two ways to run Bagel. Pick by data:
+
+| You have | Run Bagel with |
+| --- | --- |
+| Recorded data: ROS 1 `.bag` and ROS 2 `.db3` / `.mcap` bags, flight logs (PX4, ArduPilot, Betaflight), CAN / MDF4, CSV / JSON / Parquet, ROS text logs | **`uvx`**, below: no Docker, no ROS install |
+| Live rosbridge / MQTT robots, fleet and edge deployments | **Docker**, further down: the images carry the ROS stacks and the standing-pipeline runtime |
+
+### 🐍 Install with uvx (no Docker)
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then
+register Bagel with your MCP client. The client launches the server itself
+over stdio, so there is nothing to start or keep running.
+
+Claude Code:
+
+```bash
+claude mcp add bagel -- uvx bagel-mcp --transport stdio
+```
+
+Any client that takes a JSON MCP config (Claude Desktop, Cursor, Codex, ...):
+
+```json
+{
+  "mcpServers": {
+    "bagel": {
+      "command": "uvx",
+      "args": ["bagel-mcp", "--transport", "stdio"]
+    }
+  }
+}
+```
+
+Format support comes as extras, so that a PX4 user never downloads the
+automotive parsers: `uvx --from "bagel-mcp[px4,automotive]" bagel-mcp
+--transport stdio`, or in the JSON above `"args": ["--from",
+"bagel-mcp[px4,automotive]", "bagel-mcp", "--transport", "stdio"]`.
+
+| Extra | Adds |
+| --- | --- |
+| `ros` | ROS 1 `.bag` and ROS 2 `.db3` bags (reading, and the reduce / snippet writers), in pure Python |
+| `px4` | PX4 `.ulg` |
+| `ardupilot` | ArduPilot `.bin` |
+| `betaflight` | Betaflight `.bbl` / `.bfl` |
+| `automotive` | CAN captures (`.blf`, `.asc` + DBC) and ASAM MDF4 |
+| `iot` | Live MQTT (incl. Sparkplug B) and InfluxDB sources |
+| `viz` | Rerun export |
+| `upload` | GCS and Azure Blob upload tasks |
+| `cloudini` | Cloudini point-cloud tasks |
+
+MCAP, CSV / JSON / Parquet, ROS text logs, PlotJuggler / Lichtblick / LeRobot
+exports and S3 upload need no extra. Then prompt, pointing at your own file:
+
+> Summarize the metadata of the MCAP bag "~/logs/run_42.mcap".
+
+> [!NOTE]
+> No ROS installation is needed for bag files: the `ros` extra reads and writes
+> them with the pure-Python [rosbags](https://pypi.org/project/rosbags/) library
+> (sqlite3 and MCAP storage, zstd / bz2 / lz4 compression, message types from the
+> bag itself or from the bundled interface definitions of every distro from Humble
+> on). Live ROS topics (rosbridge) and the fleet/edge runtime stay with Docker.
+
+### 🐳 Run with Docker (live robots, fleet and edge, distro-specific ROS)
 
 > [!TIP]
 > **Already have Claude Code?** Just paste the link to this repo and tell Claude
@@ -252,8 +315,8 @@ real events.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/edge_reduce_dark_mode.svg">
-    <img src="./doc/assets/edge_reduce_light_mode.svg" width="80%">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/edge_reduce_dark_mode.svg">
+    <img src="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/edge_reduce_light_mode.svg" width="80%">
   </picture>
 </p>
 
@@ -261,8 +324,8 @@ Here it is in one conversation:
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/nl_reduction_dark_mode.gif">
-    <img src="./doc/assets/nl_reduction_light_mode.gif" width="80%">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/nl_reduction_dark_mode.gif">
+    <img src="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/nl_reduction_light_mode.gif" width="80%">
   </picture>
 </p>
 
@@ -326,7 +389,7 @@ Time to put Bagel to the test: can it catch a drone doing barrel rolls? Spoiler:
 
 <p align="center">
   <picture>
-    <img src="./doc/assets/drone_rolls.gif" width="80%">
+    <img src="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/drone_rolls.gif" width="80%">
   </picture>
 </p>
 
@@ -337,8 +400,8 @@ build a high-level understanding.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/high_level_dark_mode.png">
-    <img src="./doc/assets/high_level_light_mode.png" width="80%">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/high_level_dark_mode.png">
+    <img src="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/high_level_light_mode.png" width="80%">
   </picture>
 </p>
 
@@ -348,8 +411,8 @@ to an **Apache Arrow file** and uses **DuckDB** to generate and execute queries 
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./doc/assets/llm_math_dark_mode.png">
-    <img src="./doc/assets/llm_math_light_mode.png" width="80%">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/llm_math_dark_mode.png">
+    <img src="https://raw.githubusercontent.com/Extelligence-ai/bagel/main/doc/assets/llm_math_light_mode.png" width="80%">
   </picture>
 </p>
 
@@ -364,11 +427,11 @@ correct any errors.
 
 Bagel learns new capabilities through [POML](https://microsoft.github.io/poml/latest/)
 files: a structured set of instructions that describe a “trick,”
-such as [computing latency statistics](./src/agent/diagnose/latency.poml).
+such as [computing latency statistics](./bagel_mcp/agent/diagnose/latency.poml).
 
 #### ✍️ Create a .poml file
 
-For example, let’s define `./src/agent/examples/woof.poml`.
+For example, let’s define `./bagel_mcp/agent/examples/woof.poml`.
 
 ```poml
 <poml>
@@ -387,7 +450,7 @@ For example, let’s define `./src/agent/examples/woof.poml`.
 
 Prompt Bagel:
 
-> Run the POML capability "./src/agent/examples/woof.poml" on the ROS2 bag "./data/sample/ros2/mcap".
+> Run the POML capability "./bagel_mcp/agent/examples/woof.poml" on the ROS2 bag "./data/sample/ros2/mcap".
 
 Result:
 
@@ -404,7 +467,7 @@ Bagel discovers your own capabilities from `~/.bagel/capabilities/`:
   and it's reusable in any future session.
 - **As a file:** drop a markdown file with your steps (or a
   [POML](https://github.com/microsoft/poml) file, if you want parameterized
-  templates — see `src/agent/compose/pipeline.poml` for the house style)
+  templates — see `bagel_mcp/agent/compose/pipeline.poml` for the house style)
   into `~/.bagel/capabilities/`.
 
 Either way it shows up in `list_agent_capabilities` as `user/<name>` and runs

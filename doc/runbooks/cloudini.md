@@ -14,7 +14,7 @@ Every Bagel image ships the cloudini Python dependencies, `wasmtime` (WebAssembl
 runtime) and `numpy` (since 2.4.2). Running the server outside Docker? Install them with:
 
 ```bash
-uv sync --group cloudini
+uv sync --extra cloudini
 ```
 
 You also need the **cloudini WASM binary** (`cloudini_wasm.wasm`). Build it from the
@@ -41,7 +41,7 @@ cadence:
   when: once_at_end
 
 tasks:
-  - module: src.pipeline.tasks.cloudini.decode_pointcloud
+  - module: bagel_mcp.pipeline.tasks.cloudini.decode_pointcloud
     args:
       topics:
         - /lidar/points
@@ -75,7 +75,7 @@ Set `cloudini: false` in the task args:
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.cloudini.decode_pointcloud
+  - module: bagel_mcp.pipeline.tasks.cloudini.decode_pointcloud
     args:
       topics: [/lidar/points]
       output_directory: /output/pointclouds
@@ -136,7 +136,7 @@ failing the pipeline.
 
 ```yaml
 tasks:
-  - module: src.pipeline.tasks.cloudini.compress_pointcloud
+  - module: bagel_mcp.pipeline.tasks.cloudini.compress_pointcloud
     args:
       cloudini: true # per-task opt-out; set false to skip this pipeline
 ```

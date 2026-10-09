@@ -3,8 +3,8 @@
 import pathlib
 import tracemalloc
 
-from src.message.pyarrow.csv import MessageDataset
-from src.source.pyarrow.csv import SourceFactory
+from bagel_mcp.message.pyarrow.csv import MessageDataset
+from bagel_mcp.source.pyarrow.csv import SourceFactory
 
 
 def test_csv_reader_memory_does_not_scale_with_decoded_file(tmp_path: pathlib.Path) -> None:

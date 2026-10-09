@@ -12,12 +12,12 @@ import os
 
 import pytest
 
-from src.di.types import data_source
-from src.message import postgres as message_postgres
-from src.query import connection
-from src.source import postgres
-from src.source.context import SourceContext
-from src.topic.postgres import TopicRegistry
+from bagel_mcp.di.types import data_source
+from bagel_mcp.message import postgres as message_postgres
+from bagel_mcp.query import connection
+from bagel_mcp.source import postgres
+from bagel_mcp.source.context import SourceContext
+from bagel_mcp.topic.postgres import TopicRegistry
 
 PG_URL = os.environ.get("BAGEL_POSTGRES_TEST_URL")
 
@@ -88,7 +88,7 @@ def test_bounds_skips_tables_without_a_detectable_timestamp_column(
 ) -> None:
     """A table lacking a timestamp column must not block bounds() on the others.
 
-    Regression for PR #237 review (src/source/context.py:50): `SourceContext.bounds()`
+    Regression for PR #237 review (bagel_mcp/source/context.py:50): `SourceContext.bounds()`
     called `to_duckdb()` with no `topics`, so it expanded to every table via
     `_topic_select`, which calls `timestamp_column()` unconditionally -- raising
     for any unrelated table lacking a detectable timestamp column even though only
@@ -130,11 +130,11 @@ def test_bounds_skips_tables_without_a_detectable_timestamp_column(
 @pytest.mark.integration
 @requires_db
 def test_end_to_end_over_live_database() -> None:
-    import server
-    from src.di import module
+    from bagel_mcp import server
+    from bagel_mcp.di import module
 
-    factory = module.provide("src.source.postgres", {"path": PG_URL})
-    registry = module.provide("src.topic.postgres", {})
+    factory = module.provide("bagel_mcp.source.postgres", {"path": PG_URL})
+    registry = module.provide("bagel_mcp.topic.postgres", {})
     database = factory.build()
 
     topics = registry.available_topics(database)
@@ -159,7 +159,7 @@ def test_end_to_end_over_live_database() -> None:
 @pytest.mark.integration
 @requires_db
 def test_preview_pipeline_detects_events_in_database() -> None:
-    import server
+    from bagel_mcp import server
 
     result = server.preview_pipeline(
         path=PG_URL,
@@ -185,7 +185,7 @@ def test_bounds_ignore_tables_without_a_timestamp_column() -> None:
     evaluating the event topic, because bounds required every table -- including
     unrelated ones -- to have a resolvable timestamp column.
     """
-    import server
+    from bagel_mcp import server
 
     result = server.preview_pipeline(
         path=PG_URL,

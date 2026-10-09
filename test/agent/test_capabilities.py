@@ -2,7 +2,9 @@
 
 import pathlib
 
-from src.agent.capabilities import list_capabilities
+import pytest
+
+from bagel_mcp.agent.capabilities import list_capabilities
 
 
 def test_lists_every_poml_under_src_agent() -> None:
@@ -12,8 +14,8 @@ def test_lists_every_poml_under_src_agent() -> None:
         if not capability["name"].startswith("user/")
     }
     on_disk = {
-        str(file.relative_to("src/agent").with_suffix(""))
-        for file in pathlib.Path("src/agent").rglob("*.poml")
+        str(file.relative_to("bagel_mcp/agent").with_suffix(""))
+        for file in pathlib.Path("bagel_mcp/agent").rglob("*.poml")
     }
     assert found == on_disk
     assert len(found) >= 6  # compose/pipeline, diagnose/{latency,robot_health},
@@ -39,7 +41,7 @@ def test_results_sorted_by_name() -> None:
 
 
 def test_mcp_tool_returns_discovery_results() -> None:
-    import server
+    from bagel_mcp import server
 
     result = server.list_agent_capabilities()
     assert result == list_capabilities()
@@ -53,7 +55,7 @@ def test_triage_capability_is_discovered() -> None:
 def test_triage_capability_renders() -> None:
     from poml import poml
 
-    rendered = poml("./src/agent/triage/investigate.poml")
+    rendered = poml("./bagel_mcp/agent/triage/investigate.poml")
     assert isinstance(rendered, list)
     assert all(isinstance(message, dict) for message in rendered)
     # poml() silently echoes a missing path back as prompt text, so assert on
@@ -71,10 +73,29 @@ def test_robot_health_capability_is_discovered() -> None:
 def test_robot_health_capability_renders() -> None:
     from poml import poml
 
-    rendered = poml("./src/agent/diagnose/robot_health.poml")
+    rendered = poml("./bagel_mcp/agent/diagnose/robot_health.poml")
     assert isinstance(rendered, list)
     assert all(isinstance(message, dict) for message in rendered)
     joined = " ".join(str(message.get("content", "")) for message in rendered)
     assert "describe_data_source" in joined
     assert "query_messages" in joined
     assert "VERDICT" in joined
+
+
+def test_builtin_paths_resolve_from_any_working_directory(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pip install runs the server outside the checkout: reported paths must still open."""
+    from bagel_mcp.agent import capabilities
+
+    reported = [c["path"] for c in list_capabilities() if not c["name"].startswith("user/")]
+    monkeypatch.chdir(tmp_path)
+    for path in reported:
+        resolved = capabilities.resolve_path(path)
+        assert resolved.is_absolute() and resolved.exists(), path
+    # The pre-2.5 spelling (./src/agent/...) that older prompts and saved
+    # transcripts use maps onto the same files.
+    legacy = capabilities.resolve_path("./src/agent/compose/pipeline.poml")
+    assert legacy == capabilities.builtin_path("compose/pipeline.poml")
+    # Anything else is handed back untouched for the caller's existence check.
+    assert capabilities.resolve_path("nope/missing.poml") == pathlib.Path("nope/missing.poml")

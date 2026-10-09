@@ -5,10 +5,10 @@ import stat
 
 import pytest
 
-import server
-from settings import settings
-from src.di.types.data_source import DataSource, resolve
-from src.pipeline.tasks.waffle.snap import WaffleSnap, run_waffle
+from bagel_mcp import server
+from bagel_mcp.di.types.data_source import DataSource, resolve
+from bagel_mcp.pipeline.tasks.waffle.snap import WaffleSnap, run_waffle
+from bagel_mcp.settings import settings
 
 FORM = """robot:
   name: fake-bot

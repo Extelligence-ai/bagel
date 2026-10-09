@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-import server
+from bagel_mcp import server
 
 ROS2_MCAP = pathlib.Path("data/sample/ros2/mcap")
 

@@ -1,0 +1,417 @@
+"""A list of supported data source types and utilities to identify them."""
+
+import csv
+import json
+import pathlib
+from enum import Enum
+from urllib.parse import urlparse
+
+import yaml
+
+from bagel_mcp.source.redact import redact_url
+
+
+class DataSource(Enum):
+    """Supported data source types."""
+
+    ROS1_BAG = "ros1.bag"
+    ROS2_DB3 = "ros2.db3"
+    MCAP = "mcap"
+    ROS2_MCAP = "ros2.mcap"  # back-compat only; resolve() no longer returns this
+    PX4_ULOG = "px4.ulg"
+    ARDUPILOT_BIN = "ardupilot.bin"
+    BETAFLIGHT_BBL = "betaflight.bbl"
+    BETAFLIGHT_BFL = "betaflight.bfl"
+    BAGEL_SINK = "bagel.sink"
+    GANTRY_EVIDENCE = "gantry.evidence"
+    PYARROW_JSON = "pyarrow.json"
+    PYARROW_CSV = "pyarrow.csv"
+    POSTGRES = "postgres"
+    INFLUXDB = "influxdb"
+    ROS_LOG = "ros.log"
+    MDF = "automotive.mf4"
+    CAN = "automotive.can"
+    WAFFLE_FORM = "waffle.form"
+
+
+# URL schemes mapped to their data source types.
+URL_SCHEMES = {
+    "postgres": DataSource.POSTGRES,
+    "postgresql": DataSource.POSTGRES,  # TimescaleDB uses standard postgres URLs
+    "influxdb": DataSource.INFLUXDB,  # InfluxDB 3 (SQL / Arrow Flight)
+}
+
+
+def resolve(path: str) -> DataSource:
+    """Resolve the data source type from the given path or URL."""
+    if not path or not path.strip():
+        raise ValueError("path must be a non-empty data source path or URL")
+    result = urlparse(path)
+    if all([result.scheme, result.netloc]):
+        # path is a URL
+        if result.scheme in URL_SCHEMES:
+            return URL_SCHEMES[result.scheme]
+        raise NotImplementedError(
+            f"URL scheme '{result.scheme}' is not supported. "
+            f"Supported schemes: {', '.join(sorted(URL_SCHEMES))}"
+        )
+    else:
+        # path is a local file or directory
+        return resolve_file_based_data_source(path)
+
+
+def resolve_file_based_data_source(path: str | pathlib.Path) -> DataSource:  # noqa: C901, PLR0911, PLR0912 -- one branch per supported format
+    """Resolve the data source type from the given file or directory path."""
+    path = pathlib.Path(path)
+    if is_bagel_sink_directory(path):
+        return DataSource.BAGEL_SINK
+    elif is_gantry_evidence_directory(path):
+        return DataSource.GANTRY_EVIDENCE
+    elif is_ros1_bag_file(path):
+        return DataSource.ROS1_BAG
+    elif is_ros2_db3_file(path) or is_ros2_db3_zstd_file(path) or is_ros2_db3_directory(path):
+        return DataSource.ROS2_DB3
+    elif is_mcap_file(path) or is_mcap_zstd_file(path) or is_mcap_directory(path):
+        # MCAP is a first-class, middleware-independent format: any bare .mcap file,
+        # zstd-compressed .mcap.zstd, or directory of them (including rosbag2-produced
+        # MCAP bags). Decompression is handled by the generic mcap source.
+        return DataSource.MCAP
+    elif is_px4_ulog_file(path):
+        return DataSource.PX4_ULOG
+    elif is_ardupilot_bin_file(path):
+        return DataSource.ARDUPILOT_BIN
+    elif is_betaflight_bbl_file(path):
+        return DataSource.BETAFLIGHT_BBL
+    elif is_betaflight_bfl_file(path):
+        return DataSource.BETAFLIGHT_BFL
+    elif is_mdf_file(path):
+        return DataSource.MDF
+    elif is_can_blf_file(path) or is_can_asc_file(path):
+        return DataSource.CAN
+    elif is_ros_log_file(path) or is_ros_log_directory(path):
+        # Checked before JSON/CSV: free-form log lines can fool the CSV sniffer.
+        return DataSource.ROS_LOG
+    elif is_waffleform_file(path):
+        return DataSource.WAFFLE_FORM
+    elif is_json_file(path) or is_json_directory(path):
+        return DataSource.PYARROW_JSON
+    elif is_csv_file(path) or is_csv_directory(path):
+        return DataSource.PYARROW_CSV
+    elif is_copper_unified_log_file(path):
+        # Recognized but not directly ingestable: Copper unified logs are
+        # decoded with the generating app's compile-time types. Point the user
+        # at the app-side MCAP export, which Bagel reads natively.
+        raise ValueError(
+            f"{path} is a Copper (copper-rs) unified log. Bagel cannot decode it "
+            "directly because unified logs require the generating application's "
+            "types. Export it to MCAP with your app's log extractor first, e.g. "
+            "`<your-app>-logreader <log>.copper export-mcap --output out.mcap`, "
+            "then point Bagel at the .mcap file. See doc/runbooks/copper.md."
+        )
+    else:
+        # `path` may be a malformed/typo'd URL (e.g. a DSN missing the "//" after the
+        # scheme) that fell through from `resolve()`'s URL branch into this
+        # file-based path, so it can still carry credentials -- redact defensively.
+        raise ValueError(f"Cannot resolve data source type from path: {redact_url(str(path))}")
+
+
+def has_magic_bytes(path: pathlib.Path, magic: bytes) -> bool:
+    """Check if the given path has the specified magic bytes at the beginning."""
+    if not path.is_file():
+        return False
+
+    try:
+        with open(path, "rb") as f:
+            head = f.read(len(magic))
+        return head == magic
+    except OSError:
+        return False
+
+
+def is_zstd_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Zstandard compressed file."""
+    return has_magic_bytes(path, b"\x28\xb5\x2f\xfd")
+
+
+def is_ros1_bag_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a ROS 1 bag file."""
+    return has_magic_bytes(path, b"#ROSBAG V2")
+
+
+def is_ros2_db3_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a ROS 2 DB3 file."""
+    return has_magic_bytes(path, b"SQLite format 3\000")
+
+
+def is_ros2_db3_zstd_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a ROS 2 DB3 Zstandard compressed file."""
+    return is_zstd_file(path) and str(path).endswith(".db3.zstd")
+
+
+def is_ros2_db3_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing ROS 2 DB3 files."""
+    if not path.is_dir():
+        return False
+
+    metadata_file = path / "metadata.yaml"
+    if not metadata_file.exists():
+        return False
+
+    metadata = yaml.safe_load(metadata_file.read_text())
+    if metadata["rosbag2_bagfile_information"]["storage_identifier"] not in {"sqlite3", ""}:
+        return False
+
+    for relative_path in metadata["rosbag2_bagfile_information"]["relative_file_paths"]:
+        file = path / relative_path
+        if not file.exists() or not (is_ros2_db3_file(file) or is_ros2_db3_zstd_file(file)):
+            return False
+
+    return True
+
+
+def is_mcap_file(path: pathlib.Path) -> bool:
+    """Check if the given path is an MCAP file."""
+    return has_magic_bytes(path, b"\x89MCAP0\r\n")
+
+
+def is_copper_unified_log_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Copper (copper-rs) unified log file.
+
+    Copper unified logs start with the MAIN_MAGIC bytes defined in
+    cu29-unifiedlog. They are not directly readable: decoding requires the
+    generating application's compile-time types, so Bagel ingests Copper data
+    through the app's MCAP export instead (see the copper runbook).
+    """
+    return has_magic_bytes(path, b"\xb4\xa5\x50\xff")
+
+
+def is_mcap_zstd_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Zstandard-compressed MCAP file."""
+    return is_zstd_file(path) and path.name.endswith(".mcap.zstd")
+
+
+def is_mcap_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing at least one MCAP file."""
+    if not path.is_dir():
+        return False
+
+    files = [
+        *((file, is_mcap_file) for file in path.glob("*.mcap")),
+        *((file, is_mcap_zstd_file) for file in path.glob("*.mcap.zstd")),
+    ]
+    return bool(files) and all(check(file) for file, check in files)
+
+
+def is_ros2_mcap_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a ROS 2 MCAP file."""
+    return is_mcap_file(path)
+
+
+def is_ros2_mcap_zstd_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a ROS 2 MCAP Zstandard compressed file."""
+    return is_zstd_file(path) and str(path).endswith(".mcap.zstd")
+
+
+def is_ros2_mcap_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing ROS 2 MCAP files."""
+    if not path.is_dir():
+        return False
+
+    metadata_file = path / "metadata.yaml"
+    if not metadata_file.exists():
+        return False
+
+    metadata = yaml.safe_load(metadata_file.read_text())
+    if metadata["rosbag2_bagfile_information"]["storage_identifier"] not in {"mcap", ""}:
+        return False
+
+    for relative_path in metadata["rosbag2_bagfile_information"]["relative_file_paths"]:
+        file = path / relative_path
+        if not file.exists() or not (is_ros2_mcap_file(file) or is_ros2_mcap_zstd_file(file)):
+            return False
+
+    return True
+
+
+def is_px4_ulog_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a PX4 ULog file."""
+    return has_magic_bytes(path, b"ULog")
+
+
+def is_ardupilot_bin_file(path: pathlib.Path) -> bool:
+    """Check if the given path is an ArduPilot binary Dataflash file."""
+    return has_magic_bytes(path, b"\xa3\x95\x80")
+
+
+def is_betaflight_bbl_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Betaflight .bbl file."""
+    return has_magic_bytes(path, b"H Product:") and path.suffix.lower() == ".bbl"
+
+
+def is_betaflight_bfl_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Betaflight .BFL file."""
+    return has_magic_bytes(path, b"H Product:") and path.suffix.lower() == ".bfl"
+
+
+def is_bagel_sink_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing a Bagel topic sink."""
+    if not path.is_dir():
+        return False
+
+    metadata_file = path / "metadata.yaml"
+    if not metadata_file.exists():
+        return False
+    metadata = yaml.safe_load(metadata_file.read_text())
+
+    magic = metadata.get("magic")
+    if magic != "BAGEL_SINK":
+        return False
+
+    return True
+
+
+def is_gantry_evidence_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a Gantry Bench evidence bundle directory.
+
+    Gantry Bench (a robot-dataset evaluation harness) exports a submission's
+    verdict evidence as a directory of CSV tables indexed by a manifest.json
+    whose "magic" field identifies the format.
+    """
+    if not path.is_dir():
+        return False
+
+    manifest_file = path / "manifest.json"
+    if not manifest_file.exists():
+        return False
+
+    try:
+        manifest = json.loads(manifest_file.read_text())
+    except (OSError, ValueError):
+        return False
+
+    return isinstance(manifest, dict) and manifest.get("magic") == "GANTRY_EVIDENCE"
+
+
+def is_standard_json_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a standard JSON file."""
+    if not path.is_file():
+        return False
+
+    try:
+        json.loads(path.read_text())
+        return True
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return False
+
+
+def is_json_lines_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a JSON Lines (JSONL) file."""
+    if not path.is_file():
+        return False
+
+    try:
+        with open(path, encoding="utf-8") as f:
+            json.loads(f.readline().strip())  # only check the first line
+            return True
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return False
+
+
+def is_mdf_file(path: pathlib.Path) -> bool:
+    """Check if the given path is an ASAM MDF measurement file (.mf4 and older)."""
+    return has_magic_bytes(path, b"MDF     ")
+
+
+def is_can_blf_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Vector BLF CAN capture."""
+    return has_magic_bytes(path, b"LOGG")
+
+
+def is_can_asc_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a Vector ASC CAN capture (text, starts with a date line)."""
+    if not path.is_file() or path.suffix.lower() != ".asc":
+        return False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.readline().strip().lower().startswith("date")
+    except OSError:
+        return False
+
+
+def is_ros_log_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a plain-text log file dumped by ROS."""
+    if not path.is_file() or path.suffix != ".log":
+        return False
+    # Deferred so this types module stays import-light; parse has no dependencies
+    # back into bagel_mcp.di, so there is no cycle.
+    from bagel_mcp.source.ros.parse import looks_like_ros_log
+
+    return looks_like_ros_log(path)
+
+
+def is_ros_log_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing at least one ROS log file.
+
+    Matches ROS log directories such as ~/.ros/log and its per-run subdirectories;
+    non-log files (e.g., the "latest" symlink) are tolerated.
+    """
+    if not path.is_dir():
+        return False
+    return any(is_ros_log_file(file) for file in sorted(path.glob("**/*.log")))
+
+
+def is_waffleform_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a waffle-iron WaffleForm (hardware-as-code) file."""
+    if not path.is_file() or not path.name.endswith(".waffleform.yaml"):
+        return False
+    try:
+        content = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return False
+    return isinstance(content, dict) and "robot" in content
+
+
+def is_json_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a JSON or JSONL file."""
+    return is_json_lines_file(path) or is_standard_json_file(path)
+
+
+def is_json_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing **only** JSON or JSONL files."""
+    if not path.is_dir():
+        return False
+
+    for item in path.iterdir():
+        if item.is_file() and not is_json_file(item):
+            return False
+
+    return True
+
+
+def is_csv_file(path: pathlib.Path) -> bool:
+    """Check if the given path is a CSV file."""
+    if not path.is_file():
+        return False
+
+    try:
+        with open(path, encoding="utf-8") as f:
+            sample = f.read(4096)
+            if not sample.strip():
+                return False
+            csv.Sniffer().sniff(sample)
+            return True
+
+    except (csv.Error, UnicodeDecodeError):
+        return False
+
+
+def is_csv_directory(path: pathlib.Path) -> bool:
+    """Check if the given path is a directory containing **only** CSV files."""
+    if not path.is_dir():
+        return False
+
+    for item in path.iterdir():
+        if item.is_file() and not is_csv_file(item):
+            return False
+
+    return True

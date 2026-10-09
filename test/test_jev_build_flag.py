@@ -40,7 +40,7 @@ def test_jev_group_holds_the_model_runtime() -> None:
     # No tomllib on Python 3.10 (still supported), so read the group textually.
     pyproject = pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
     match = re.search(r"^jev = \[(.*?)^\]", pyproject, re.MULTILINE | re.DOTALL)
-    assert match, "no `jev` dependency group in pyproject.toml"
+    assert match, "no `jev` extra in pyproject.toml"
     assert "torch" in match.group(1)
     assert "transformers" in match.group(1)
 
@@ -49,8 +49,8 @@ def test_sync_adds_the_jev_group_only_when_jev_mode_is_true(tmp_path: pathlib.Pa
     assert "jev" not in _sync_args(tmp_path, {}, "ros2")
     assert "jev" not in _sync_args(tmp_path, {"JEV_MODE": "false"}, "ros2")
     args = _sync_args(tmp_path, {"JEV_MODE": "true"}, "ros2")
-    assert args[args.index("jev") - 1] == "--group"
-    assert "ros2" in args
+    assert args[args.index("jev") - 1] == "--extra"
+    assert args[args.index("ros2") - 1] == "--group"
 
 
 def test_every_dockerfile_accepts_the_jev_mode_build_arg() -> None:
@@ -106,4 +106,4 @@ def test_sync_always_adds_the_shared_feature_groups(tmp_path: pathlib.Path) -> N
     for groups in ((), ("ros2",), ("ros1", "cv")):
         args = _sync_args(tmp_path, {}, *groups)
         for shared in ("viz", "automotive", "upload", "cloudini"):
-            assert args[args.index(shared) - 1] == "--group"
+            assert args[args.index(shared) - 1] == "--extra"

@@ -4,9 +4,9 @@ import pathlib
 
 import pytest
 
-from settings import settings
-from src import artifacts
-from src.pipeline import base
+from bagel_mcp import artifacts
+from bagel_mcp.pipeline import base
+from bagel_mcp.settings import settings
 
 
 class _DummyTask(base.ArtifactMixin, base.Task):

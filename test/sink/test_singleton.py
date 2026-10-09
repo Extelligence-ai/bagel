@@ -12,9 +12,9 @@ import pathlib
 import pyarrow as pa
 import pytest
 
-from settings import settings
-from src.sink import base
-from src.sink.buffer import TopicBufferWriter
+from bagel_mcp.settings import settings
+from bagel_mcp.sink import base
+from bagel_mcp.sink.buffer import TopicBufferWriter
 
 _ports = itertools.count(31000)
 
@@ -88,7 +88,7 @@ def test_mqtt_list_then_subscribe_receives_messages(
     pytest.importorskip("paho")
     from conftest import FakePahoClient
 
-    from src.sink import mqtt
+    from bagel_mcp.sink import mqtt
 
     sink = make_sink(retained={"plant/pump": [b'{"pressure": 4.2}']})  # list_live_topics
     connected = sink._paho

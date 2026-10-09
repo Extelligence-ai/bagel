@@ -1,6 +1,6 @@
 import pytest
 
-from src.source.ardupilot import bin as ardubin
+from bagel_mcp.source.ardupilot import bin as ardubin
 
 
 def test_source_factory() -> None:
@@ -50,6 +50,6 @@ class _FakeReader:
 def test_end_seconds_is_max_over_last_message_of_each_type() -> None:
     """pymavlink's last_timestamp() decodes only the highest-offset record, which on
     real logs can be a trailing FMT with no TimeUS (issue #198)."""
-    from src.source.ardupilot.bin import last_timestamp_seconds
+    from bagel_mcp.source.ardupilot.bin import last_timestamp_seconds
 
     assert last_timestamp_seconds(_FakeReader()) == 172.25
