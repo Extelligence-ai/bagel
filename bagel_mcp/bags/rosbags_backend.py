@@ -312,12 +312,15 @@ class Reader:
 def ros1_lz4_compress(data: bytes) -> bytes:
     """Compress a rosbag1 chunk into an lz4 frame that ``roslz4`` can read back.
 
-    `rosbags` writes lz4 frames with linked blocks and a stored content size; the
-    ROS 1 stack's ``roslz4`` decoder supports neither and rejects such chunks as
-    malformed. Independent blocks without the size field are what ``roslz4`` itself
-    writes, and every lz4 frame decoder reads them.
+    `rosbags` writes lz4 frames with linked blocks, a stored content size and no
+    stream checksum; the ROS 1 stack's ``roslz4`` decoder (``lz4s.c``) rejects each
+    of those as malformed. It accepts exactly what it writes itself: independent
+    blocks, no size field, no block checksums, and a stream checksum. Every lz4
+    frame decoder reads that layout.
     """
-    return lz4.frame.compress(data, block_linked=False, store_size=False)
+    return lz4.frame.compress(
+        data, block_linked=False, store_size=False, block_checksum=False, content_checksum=True
+    )
 
 
 class Writer:
