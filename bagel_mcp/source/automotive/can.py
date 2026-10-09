@@ -3,7 +3,7 @@
 A DBC file is the schema of a CAN bus: it names messages and scales their signals
 to physical values. Bagel maps DBC messages to topics and signals to fields, so a
 raw bus capture becomes queryable like any other source. Requires the optional
-``automotive`` dependency group: ``uv sync --group automotive``.
+``automotive`` extra: ``uv sync --extra automotive`` (``pip install "bagel-mcp[automotive]"``).
 """
 
 import functools

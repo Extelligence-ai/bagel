@@ -1,7 +1,11 @@
 """Summarize a window of topic messages into compact per-signal statistics."""
 
 import duckdb
-from duckdb.typing import DuckDBPyType
+
+try:  # duckdb >= 1.5 (what an unpinned pip install resolves)
+    from duckdb.sqltypes import DuckDBPyType
+except ImportError:  # duckdb 1.3 / 1.4
+    from duckdb.typing import DuckDBPyType
 
 from bagel_mcp.settings import settings
 

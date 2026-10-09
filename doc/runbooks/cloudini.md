@@ -14,7 +14,7 @@ Every Bagel image ships the cloudini Python dependencies, `wasmtime` (WebAssembl
 runtime) and `numpy` (since 2.4.2). Running the server outside Docker? Install them with:
 
 ```bash
-uv sync --group cloudini
+uv sync --extra cloudini
 ```
 
 You also need the **cloudini WASM binary** (`cloudini_wasm.wasm`). Build it from the

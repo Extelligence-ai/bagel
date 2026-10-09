@@ -50,6 +50,13 @@ Add the Bagel MCP server to Claude Code:
 claude mcp add --transport sse bagel http://localhost:8000/sse
 ```
 
+No Docker (flight logs, MCAP, CAN/MDF, CSV)? Register the pip package instead
+and skip the running-server check above; Claude Code launches it on demand:
+
+```bash
+claude mcp add bagel -- uvx bagel-mcp --transport stdio
+```
+
 Confirm the connection:
 
 ```bash

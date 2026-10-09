@@ -1,12 +1,20 @@
-"""A data source factory for reading from ROS2 MCAP bags."""
+"""A data source factory for reading from ROS2 MCAP bags.
+
+Back-compat only: ``resolve()`` routes every MCAP file through the format-agnostic
+``bagel_mcp.source.mcap`` reader, which needs no ROS. This factory is reached only
+when a caller asks for the ``ros2.mcap`` type explicitly.
+"""
 
 import pathlib
+from typing import Any
 
-import rosbag2_py
 from pydantic import BaseModel, ConfigDict
 
+from bagel_mcp import ros_native
 from bagel_mcp.di import module
 from bagel_mcp.source.ros2 import base
+
+FEATURE = "Reading ROS 2 MCAP bags through rosbag2"
 
 
 class McapRos2Bag(BaseModel):
@@ -18,7 +26,9 @@ class McapRos2Bag(BaseModel):
     """
 
     path: pathlib.Path
-    metadata: rosbag2_py.BagMetadata
+    # A rosbag2_py.BagMetadata; pydantic evaluates this annotation at import time,
+    # so it stays loose to keep the module importable without native ROS.
+    metadata: Any
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -44,5 +54,6 @@ class SourceFactory(base.SourceFactory):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (only where native ROS 2 is present)."""
+    ros_native.require("rosbag2_py", feature=FEATURE)
     module.global_registry[__name__] = SourceFactory

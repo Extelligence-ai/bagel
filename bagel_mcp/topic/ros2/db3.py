@@ -1,18 +1,23 @@
 """A topic registry for ROS2 sqlite3 bags."""
 
+from __future__ import annotations
+
 import collections
 import functools
 import pathlib
 
 import pyarrow as pa
-import rosbag2_py
-from rosidl_parser.definition import NamespacedType
-from rosidl_runtime_py import get_interface_path
-from rosidl_runtime_py.utilities import get_message
 
+from bagel_mcp import ros_native
 from bagel_mcp.di import module
 from bagel_mcp.topic.ros2 import base
 from bagel_mcp.topic.ros2.ros2msg import parse, schema
+
+FEATURE = "Describing ROS 2 .db3 bag topics"
+rosbag2_py = ros_native.optional("rosbag2_py", feature=FEATURE)
+rosidl_definition = ros_native.optional("rosidl_parser.definition", feature=FEATURE)
+rosidl_runtime = ros_native.optional("rosidl_runtime_py", feature=FEATURE)
+rosidl_utilities = ros_native.optional("rosidl_runtime_py.utilities", feature=FEATURE)
 
 
 @functools.lru_cache
@@ -41,13 +46,13 @@ def locally_installed_ros2msg(type_name: str) -> str:
             continue
         visited.add(current)
         dependencies.append(current)
-        for slot_type in get_message(current).SLOT_TYPES:
-            if isinstance(slot_type, NamespacedType):
+        for slot_type in rosidl_utilities.get_message(current).SLOT_TYPES:
+            if isinstance(slot_type, rosidl_definition.NamespacedType):
                 stack.append("/".join(slot_type.namespaced_name()))
 
     sections = []
     for dependency_type_name in dependencies:
-        msg_file = get_interface_path(dependency_type_name)
+        msg_file = rosidl_runtime.get_interface_path(dependency_type_name)
         section = pathlib.Path(msg_file).read_text(encoding="utf-8")
         if sections:
             section = f"MSG: {dependency_type_name}\n{section}"
@@ -99,5 +104,6 @@ class TopicRegistry(base.TopicRegistry):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (only where native ROS 2 is present)."""
+    ros_native.require("rosbag2_py", feature=FEATURE)
     module.global_registry[__name__] = TopicRegistry

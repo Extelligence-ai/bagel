@@ -2,8 +2,11 @@
 
 import pathlib
 
-import rosbag2_py
 import zstandard as zstd
+
+from bagel_mcp import ros_native
+
+rosbag2_py = ros_native.optional("rosbag2_py", feature="Decompressing ROS 2 bags")
 
 
 def ros2bag(path: pathlib.Path) -> pathlib.Path:

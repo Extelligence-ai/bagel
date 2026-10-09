@@ -1,11 +1,15 @@
 """Provide a data source for reading ROS2 sqlite3 bags."""
 
+from __future__ import annotations
+
 import pathlib
 
-import rosbag2_py
-
+from bagel_mcp import ros_native
 from bagel_mcp.di import module
 from bagel_mcp.source.ros2 import base
+
+FEATURE = "Reading ROS 2 .db3 bags"
+rosbag2_py = ros_native.optional("rosbag2_py", feature=FEATURE)
 
 
 class SourceFactory(base.SourceFactory):
@@ -38,5 +42,6 @@ class SourceFactory(base.SourceFactory):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (only where native ROS 2 is present)."""
+    ros_native.require("rosbag2_py", feature=FEATURE)
     module.global_registry[__name__] = SourceFactory

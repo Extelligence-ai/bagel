@@ -14,7 +14,7 @@ the viewer on your machine to open the recording:
 uvx rerun-sdk@latest --help  # or: pip install rerun-sdk / the desktop app
 ```
 
-Running the server outside Docker? Install the SDK with `uv sync --group viz`.
+Running the server outside Docker? Install the SDK with `pip install "bagel-mcp[viz]"` (`uv sync --extra viz` in a checkout).
 
 ## From a prompt
 

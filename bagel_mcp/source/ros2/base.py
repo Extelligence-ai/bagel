@@ -1,12 +1,15 @@
 """A base class for factories of ROS2 bag data source."""
 
+from __future__ import annotations
+
 import pathlib
 from typing import Any
 
-import rosbag2_py
-
+from bagel_mcp import ros_native
 from bagel_mcp.source import base, errors
 from bagel_mcp.source.ros2 import decompress
+
+rosbag2_py = ros_native.optional("rosbag2_py", feature="Reading ROS 2 bags")
 
 NANOSECOND = 1
 MICROSECOND = 1_000 * NANOSECOND

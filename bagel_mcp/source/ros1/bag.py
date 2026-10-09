@@ -1,12 +1,17 @@
 """Provide a data source for reading ROS1 bags."""
 
+from __future__ import annotations
+
 from typing import Any
 
-import rosbag
 import yaml
 
+from bagel_mcp import ros_native
 from bagel_mcp.di import module
 from bagel_mcp.source import base, errors
+
+FEATURE = "Reading ROS 1 .bag files"
+rosbag = ros_native.optional("rosbag", feature=FEATURE)
 
 
 class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
@@ -86,5 +91,6 @@ class SourceFactory(base.BoundedSourceFactory, base.FileBasedSourceFactory):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (only where native ROS 1 is present)."""
+    ros_native.require("rosbag", feature=FEATURE)
     module.global_registry[__name__] = SourceFactory

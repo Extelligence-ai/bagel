@@ -4,12 +4,14 @@ import logging
 import pathlib
 from collections import deque
 
-import rosbag2_py
-from rclpy.serialization import serialize_message
-
+from bagel_mcp import ros_native
 from bagel_mcp.di import module
 from bagel_mcp.pipeline import base, messages
 from bagel_mcp.pipeline.tasks import ros2_compat
+
+FEATURE = "Writing ROS 2 .db3 bag snippets"
+rosbag2_py = ros_native.optional("rosbag2_py", feature=FEATURE)
+rclpy_serialization = ros_native.optional("rclpy.serialization", feature=FEATURE)
 
 NANOSECOND = 1
 MICROSECOND = 1_000 * NANOSECOND
@@ -95,7 +97,11 @@ class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
                     )
                 )
             for topic, timestamp_seconds, message in messages:
-                writer.write(topic, serialize_message(message), int(timestamp_seconds * SECOND))
+                writer.write(
+                    topic,
+                    rclpy_serialization.serialize_message(message),
+                    int(timestamp_seconds * SECOND),
+                )
         finally:
             writer.close()
 
@@ -105,5 +111,6 @@ class SnipRosbag(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (only where native ROS 2 is present)."""
+    ros_native.require("rosbag2_py", feature=FEATURE)
     module.global_registry[__name__] = SnipRosbag

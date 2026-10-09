@@ -5,7 +5,8 @@ Writes every scalar signal in the window as a Rerun time series, so
 ready to explore. Entity paths are the flattened signal names
 (``/imu/linear_acceleration/x``), matching the naming used by the PlotJuggler export.
 
-Requires the optional ``rerun-sdk`` dependency: ``uv sync --group viz``.
+Requires the optional ``rerun-sdk`` dependency: ``pip install "bagel-mcp[viz]"``
+(``uv sync --extra viz`` in a checkout).
 """
 
 import pathlib
@@ -54,7 +55,7 @@ def export_window(  # noqa: PLR0913
     except ImportError as error:  # pragma: no cover -- exercised only without the dep
         raise ImportError(
             "The Rerun export needs the optional 'rerun-sdk' dependency; "
-            "install it with: uv sync --group viz"
+            "install it with: pip install 'bagel-mcp[viz]' (uv sync --extra viz)"
         ) from error
 
     flat = flatten_module.flatten(relation)

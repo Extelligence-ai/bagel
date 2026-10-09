@@ -48,8 +48,11 @@ Every number comes from a bagel query, never from your own estimate.
 Findings first (what happened and when), then any evidence artifact paths,
 then the SQL queries you ran so the user can rerun or refine them.
 
-If the bagel tools are missing, Bagel is not connected yet. The user must
-start the Docker container for their data format (see references/formats.md
-for the format → image → extra-args table) and, in Codex, connect it once
-with `codex mcp add bagel --url http://localhost:8000/mcp`. Claude Code
-installs connect automatically.
+If the bagel tools are missing, Bagel is not connected yet. The user either
+registers the pip server (`claude mcp add bagel -- uvx bagel-mcp --transport
+stdio`; `codex mcp add bagel -- uvx bagel-mcp --transport stdio`) for flight
+logs, MCAP, CAN/MDF and CSV, or starts the Docker container for their data
+format (ROS `.db3`/`.bag` bags, live robots) and, in Codex, connects it once
+with `codex mcp add bagel --url http://localhost:8000/mcp`. See
+references/formats.md for the format → extra / image → extra-args table.
+Claude Code plugin installs connect to the Docker server automatically.

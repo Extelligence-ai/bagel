@@ -1,5 +1,6 @@
 """Entry point for the Bagel MCP server."""
 
+import argparse
 import hashlib
 import logging
 import pathlib
@@ -1608,8 +1609,29 @@ def snap_hardware(directory: str = ".") -> dict[str, Any]:
     return {"form": str(form), **factory.metadata}
 
 
-def main() -> None:
-    """Start the MCP server: the `bagel-mcp` console script and `python -m bagel_mcp.server`."""
+def main(argv: list[str] | None = None) -> None:
+    """Start the MCP server: the `bagel-mcp` console script and `python -m bagel_mcp.server`.
+
+    Flags override the `MCP_TRANSPORT`, `MCP_SERVER_HOST` and `MCP_SERVER_PORT`
+    settings; `--transport stdio` is what an MCP client config that launches
+    `uvx bagel-mcp` needs.
+    """
+    parser = argparse.ArgumentParser(
+        prog="bagel-mcp",
+        description="Bagel MCP server: plain-English analysis of robotics, drone and IoT data.",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["both", "sse", "streamable-http", "stdio"],
+        default=settings.MCP_TRANSPORT,
+        help="MCP transport (default: %(default)s; stdio for clients that spawn the server)",
+    )
+    parser.add_argument("--host", default=settings.MCP_SERVER_HOST, help="bind address for HTTP")
+    parser.add_argument(
+        "--port", type=int, default=settings.MCP_SERVER_PORT, help="bind port for HTTP"
+    )
+    args = parser.parse_args(argv)
+
     if settings.STARTUP_PIPELINES_FILE and pathlib.Path(settings.STARTUP_PIPELINES_FILE).exists():
         # Standing pipelines: re-establish subscriptions (and their attached pipelines)
         # on boot, so they survive container restarts.
@@ -1625,12 +1647,7 @@ def main() -> None:
         settings.ARTIFACT_DIRECTORY,
         artifacts.directory_size_bytes(settings.ARTIFACT_DIRECTORY),
     )
-    mcp_compat.run_server(
-        server,
-        transport=settings.MCP_TRANSPORT,
-        host=settings.MCP_SERVER_HOST,
-        port=settings.MCP_SERVER_PORT,
-    )
+    mcp_compat.run_server(server, transport=args.transport, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

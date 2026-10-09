@@ -1,14 +1,19 @@
 """A topic registry for ROS1 bags."""
 
+from __future__ import annotations
+
 from typing import Any
 
 import pyarrow as pa
-import rosbag
 import yaml
 
+from bagel_mcp import ros_native
 from bagel_mcp.di import module
 from bagel_mcp.topic import base
 from bagel_mcp.topic.ros1 import parse, schema
+
+FEATURE = "Describing ROS 1 .bag topics"
+rosbag = ros_native.optional("rosbag", feature=FEATURE)
 
 
 class TopicRegistry(base.TopicRegistry):
@@ -52,5 +57,6 @@ class TopicRegistry(base.TopicRegistry):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (only where native ROS 1 is present)."""
+    ros_native.require("rosbag", feature=FEATURE)
     module.global_registry[__name__] = TopicRegistry

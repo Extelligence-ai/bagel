@@ -1,17 +1,27 @@
 """An image dataset for ROS1 bags."""
 
+from __future__ import annotations
+
+import functools
 from collections.abc import Iterator
 
 import cv2
-import genpy
-import rosbag
-from cv_bridge import CvBridge
 from PIL import Image
 
+from bagel_mcp import ros_native
 from bagel_mcp.di import module
 from bagel_mcp.image import base
 
-bridge = CvBridge()
+FEATURE = "Reading ROS 1 .bag images"
+rosbag = ros_native.optional("rosbag", feature=FEATURE)
+genpy = ros_native.optional("genpy", feature=FEATURE)
+cv_bridge = ros_native.optional("cv_bridge", feature=FEATURE)
+
+
+@functools.cache
+def _bridge() -> object:
+    """Build the cv_bridge converter on first use, not at import."""
+    return cv_bridge.CvBridge()
 
 
 class ImageDataset(base.ImageDataset):
@@ -41,12 +51,13 @@ class ImageDataset(base.ImageDataset):
         )
 
         for topic, message, timestamp in messages:
-            cv_image = bridge.imgmsg_to_cv2(message, desired_encoding="passthrough")
+            cv_image = _bridge().imgmsg_to_cv2(message, desired_encoding="passthrough")
             if message.encoding.lower() in ("bgr8", "bgr16"):
                 cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
             yield topic, timestamp.to_sec(), Image.fromarray(cv_image)
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (only where native ROS 1 is present)."""
+    ros_native.require("cv_bridge", feature=FEATURE)
     module.global_registry[__name__] = ImageDataset

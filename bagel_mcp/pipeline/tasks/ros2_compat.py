@@ -6,7 +6,11 @@ Humble's constructor rejects the kwarg outright. Mirroring the approach of
 tasks run unmodified on every supported distro (Humble through Kilted).
 """
 
-import rosbag2_py
+from __future__ import annotations
+
+from bagel_mcp import ros_native
+
+rosbag2_py = ros_native.optional("rosbag2_py", feature="Writing ROS 2 bags")
 
 
 def topic_metadata(

@@ -3,7 +3,7 @@
 MDF is the standard measurement format in automotive (ASAM MDF4, written by CANape,
 INCA, vector tooling, and most DAQ hardware). Channel groups map to Bagel topics and
 channels to fields. Requires the optional ``automotive`` dependency group:
-``uv sync --group automotive``.
+``uv sync --extra automotive`` (``pip install "bagel-mcp[automotive]"``).
 """
 
 import functools

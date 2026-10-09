@@ -1,15 +1,20 @@
 """A message dataset for ROS1 bags."""
 
+from __future__ import annotations
+
 from collections.abc import Iterator
 from typing import Any
 
-import genpy
 import pyarrow as pa
-import rosbag
 
+from bagel_mcp import ros_native
 from bagel_mcp.di import module
 from bagel_mcp.message import base
 from bagel_mcp.message.ros1 import convert
+
+FEATURE = "Reading ROS 1 .bag messages"
+rosbag = ros_native.optional("rosbag", feature=FEATURE)
+genpy = ros_native.optional("genpy", feature=FEATURE)
 
 
 class MessageDataset(base.MessageDataset):
@@ -37,5 +42,6 @@ class MessageDataset(base.MessageDataset):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (only where native ROS 1 is present)."""
+    ros_native.require("rosbag", feature=FEATURE)
     module.global_registry[__name__] = MessageDataset

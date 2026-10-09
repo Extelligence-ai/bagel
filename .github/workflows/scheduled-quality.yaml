@@ -18,7 +18,7 @@ jobs:
         with:
           version: "0.8.0"
           python-version: "3.12"
-      - run: uv sync --locked --group automotive --group iot
+      - run: uv sync --locked --extra automotive --extra iot
       - run: uv run --no-sync pytest test/pipeline/test_streaming_memory.py test/adversarial test/e2e/test_sample_flows.py
       - name: Explain external fixture coverage
         if: vars.BAGEL_EXTERNAL_RUNNER != 'enabled'
@@ -35,7 +35,7 @@ jobs:
         with:
           version: "0.8.0"
           python-version: "3.12"
-      - run: uv sync --locked --group automotive --group iot
+      - run: uv sync --locked --extra automotive --extra iot
       - name: Require configured recordings; no skips allowed
         env:
           BAGEL_EXTERNAL_FIXTURES: ${{ vars.BAGEL_EXTERNAL_FIXTURES }}

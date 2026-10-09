@@ -1,16 +1,21 @@
 """A message dataset for ROS2 sqlite3 bags."""
 
+from __future__ import annotations
+
 from collections.abc import Iterator
 from typing import Any
 
 import pyarrow as pa
-import rosbag2_py
-from rclpy.serialization import deserialize_message
-from rosidl_runtime_py.utilities import get_message
 
+from bagel_mcp import ros_native
 from bagel_mcp.di import module
 from bagel_mcp.message import base
 from bagel_mcp.message.ros2 import convert
+
+FEATURE = "Reading ROS 2 .db3 bag messages"
+rosbag2_py = ros_native.optional("rosbag2_py", feature=FEATURE)
+rclpy_serialization = ros_native.optional("rclpy.serialization", feature=FEATURE)
+rosidl_utilities = ros_native.optional("rosidl_runtime_py.utilities", feature=FEATURE)
 
 NANOSECOND = 1
 MICROSECOND = 1_000 * NANOSECOND
@@ -41,7 +46,9 @@ class MessageDataset(base.MessageDataset):
             timestamp_seconds = nanoseconds / SECOND
             if end_seconds_inclusive is not None and timestamp_seconds > end_seconds_inclusive:
                 return
-            deserialized_msg = deserialize_message(serialized_msg, get_message(type_names[topic]))
+            deserialized_msg = rclpy_serialization.deserialize_message(
+                serialized_msg, rosidl_utilities.get_message(type_names[topic])
+            )
             yield topic, timestamp_seconds, deserialized_msg
 
     def _to_json(self, message: object, struct: pa.StructType) -> dict[str, Any]:
@@ -50,5 +57,6 @@ class MessageDataset(base.MessageDataset):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (only where native ROS 2 is present)."""
+    ros_native.require("rosbag2_py", feature=FEATURE)
     module.global_registry[__name__] = MessageDataset

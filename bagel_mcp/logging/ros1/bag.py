@@ -1,5 +1,6 @@
 """A logging message dataset for ROS1 bags."""
 
+from bagel_mcp import ros_native
 from bagel_mcp.di import module
 from bagel_mcp.logging import base
 from bagel_mcp.message.ros1 import bag
@@ -15,5 +16,6 @@ class LoggingDataset(base.TopicBasedLoggingDataset, bag.MessageDataset):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (only where native ROS is present)."""
+    ros_native.require("rosbag", feature="Reading ROS 1 bag logs")
     module.global_registry[__name__] = LoggingDataset

@@ -4,6 +4,21 @@ Instructions for AI agents asked to set up, use, or develop Bagel.
 
 ## Set up Bagel for a user
 
+Two paths. The data decides:
+
+- **No Docker (pip / uvx)** for flight logs (PX4, ArduPilot, Betaflight), MCAP
+  (including ROS 2 bags recorded as MCAP), CAN / MDF4, CSV / JSON / Parquet, and
+  ROS text logs. Needs [uv](https://docs.astral.sh/uv/) on PATH; the MCP client
+  launches the server over stdio, so nothing runs in the background. Claude
+  Code: `claude mcp add bagel -- uvx bagel-mcp --transport stdio`. Other
+  clients: `{"command": "uvx", "args": ["bagel-mcp", "--transport", "stdio"]}`.
+  Add format extras with `uvx --from "bagel-mcp[px4,automotive]" bagel-mcp
+  --transport stdio` (`px4`, `ardupilot`, `betaflight`, `automotive`, `iot`,
+  `viz`, `upload`, `cloudini`; MCAP and CSV need none). A `.db3` or `.bag` file,
+  live rosbridge, or a fleet/edge deployment needs the Docker path: the native
+  ROS packages are not on PyPI, and Bagel says so, naming the image, if asked.
+- **Docker** for everything else, and for every ROS distro-specific setup:
+
 1. Requires Docker. Pick the service matching their stack (see the table in
    README Quickstart): `ros2-kilted`, `ros2-jazzy`, `ros2-jazzy-jev`, `ros2-iron`, `ros2-humble`,
    `ros1-noetic`, `ros1-noetic-cv`, `px4`, `ardupilot`, `betaflight`, or `iot`.

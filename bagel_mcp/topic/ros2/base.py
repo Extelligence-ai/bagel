@@ -1,12 +1,16 @@
 """A base class for topic registry for ROS2 bags."""
 
+from __future__ import annotations
+
 import abc
 
 import pyarrow as pa
-import rosbag2_py
 
+from bagel_mcp import ros_native
 from bagel_mcp.source.ros2.mcap import McapRos2Bag
 from bagel_mcp.topic import base
+
+rosbag2_py = ros_native.optional("rosbag2_py", feature="Reading ROS 2 bags")
 
 # Shared with the format-agnostic MCAP registry; re-exported here for back-compat.
 UnsupportedEncodingError = base.UnsupportedEncodingError

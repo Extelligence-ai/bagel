@@ -9,6 +9,7 @@ from mcap_protobuf.decoder import DecoderFactory as ProtobufDecoderFactory
 from mcap_ros1.decoder import DecoderFactory as Ros1DecoderFactory
 from mcap_ros2.decoder import DecoderFactory as Ros2DecoderFactory
 
+from bagel_mcp import ros_native
 from bagel_mcp.di import module
 from bagel_mcp.message import base
 from bagel_mcp.message.ros2 import convert
@@ -63,5 +64,6 @@ class MessageDataset(base.MessageDataset):
 
 
 def register() -> None:
-    """Register module for dependency injection."""
+    """Register module for dependency injection (only where native ROS 2 is present)."""
+    ros_native.require("rosbag2_py", feature="Reading ROS 2 MCAP bags through rosbag2")
     module.global_registry[__name__] = MessageDataset
