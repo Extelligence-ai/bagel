@@ -119,9 +119,10 @@ jobs:
         # to actually exercise it instead of skipping (demo.py's default
         # image, ros2-kilted, doesn't install this group -- see demo.py's
         # _default_sample()).
+        # live: roslibpy, so the rosbridge sink tests run here too.
         # ros: the pure-Python bag backend, so the ROS 1/2 bag suites run here too
         # (the service images run them again on the native backend's parity tests).
-        run: uv sync --locked --extra iot --extra automotive --extra upload --extra viz --extra px4 --extra ros
+        run: uv sync --locked --extra iot --extra automotive --extra upload --extra viz --extra px4 --extra ros --extra live
       - name: Run host-side tests
         env:
           COVERAGE_FILE: .coverage.host-${{ matrix.python }}

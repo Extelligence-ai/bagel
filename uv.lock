@@ -269,7 +269,7 @@ wheels = [
 
 [[package]]
 name = "bagel-mcp"
-version = "2.5.2"
+version = "2.5.3"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
@@ -322,6 +322,9 @@ iot = [
 jev = [
     { name = "torch" },
     { name = "transformers" },
+]
+live = [
+    { name = "roslibpy" },
 ]
 px4 = [
     { name = "gitpython" },
@@ -404,6 +407,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.0,<7.0.0" },
     { name = "rerun-sdk", marker = "extra == 'viz'", specifier = ">=0.23.1" },
     { name = "rosbags", marker = "extra == 'ros'", specifier = ">=0.11.5,<0.12" },
+    { name = "roslibpy", marker = "extra == 'live'", specifier = ">=1.8.1,<2.0.0" },
     { name = "torch", marker = "extra == 'cv'", specifier = ">=2.8.0,<3.0.0" },
     { name = "torch", marker = "extra == 'jev'", specifier = ">=2.8.0,<3.0.0" },
     { name = "transformers", marker = "extra == 'cv'", specifier = ">=4.57.0,<5.0.0" },
@@ -411,7 +415,7 @@ requires-dist = [
     { name = "wasmtime", marker = "extra == 'cloudini'", specifier = ">=26.0.0" },
     { name = "zstandard", specifier = ">=0.23.0,<1.0.0" },
 ]
-provides-extras = ["ros", "px4", "ardupilot", "betaflight", "automotive", "iot", "viz", "upload", "cloudini", "cv", "jev"]
+provides-extras = ["ros", "px4", "ardupilot", "betaflight", "automotive", "iot", "live", "viz", "upload", "cloudini", "cv", "jev"]
 
 [package.metadata.requires-dev]
 dev = [
