@@ -7,8 +7,8 @@ server over stdio (`{"command": "uvx", "args": ["bagel-mcp", "--transport",
 "stdio"]}`; Claude Code: `claude mcp add bagel -- uvx bagel-mcp --transport
 stdio`; Codex: `codex mcp add bagel -- uvx bagel-mcp --transport stdio`). Add the
 format's extra with `uvx --from "bagel-mcp[<extra>]" bagel-mcp --transport
-stdio`; `ros` covers `.bag` and `.db3` bags in pure Python. Live rosbridge needs
-Docker; the server names the image if asked for one.
+stdio`; `ros` covers `.bag` and `.db3` bags in pure Python, and `live` covers a
+robot's rosbridge (ROS 1 and ROS 2) with no ROS install.
 
 **Docker** for everything: start the container matching the data format, then
 connect (default `http://localhost:8000/mcp`). Codex: `codex mcp add bagel --url
@@ -28,7 +28,7 @@ http://localhost:8000/mcp` once. Claude Code installs connect automatically.
 | Copper (copper-rs) | app-exported `.mcap` (a raw `.copper` log must be exported by its app's log extractor first; Bagel's error message walks you through it) | none | `apache-arrow` (lightest) | none |
 | CSV / JSON / Parquet | files or partitioned dirs | none | `apache-arrow` (lightest) | optional timestamp column/format args |
 | Live MQTT (incl. Sparkplug B) | broker | `iot` | `iot` | host/port of the broker |
-| Live rosbridge | websocket | Docker only | image matching the robot's ROS stack | host/port of the bridge |
+| Live rosbridge | websocket | `live` | image matching the robot's ROS stack | host/port of the bridge |
 
 Symptoms of a wrong setup: connection refused → container not running or wrong
 port; "needs ROS bag support" → a `.db3`/`.bag` on a `uvx` install without the

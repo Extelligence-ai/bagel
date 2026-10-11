@@ -75,6 +75,9 @@ iot = [
     "influxdb3-python>=0.10.0",
     "paho-mqtt>=2.1.0,<3.0.0",
 ]
+# Live ROS topics over a robot's rosbridge (ROS 1 and ROS 2). roslibpy is pure
+# Python, so no ROS install is needed on the machine running Bagel.
+live = ["roslibpy >=1.8.1,<2.0.0"]
 viz = [
     # The recording/readback API changes between pre-1.0 minor releases.
     "rerun-sdk>=0.23.1,<0.24",
@@ -132,9 +135,9 @@ dev = [
     "ruff ==0.12.4",
 ]
 quality = ["mypy >=1.17.0,<2.0.0", "pip-audit >=2.9.0,<3.0.0"]
-# Companions to the native ROS stacks that only the service images have (the
-# roslibpy live sinks, ROS 1's rosbag helpers); not extras because nothing on
-# PyPI can satisfy the ROS half.
+# Companions to the native ROS stacks that only the service images have (ROS 1's
+# rosbag helpers; roslibpy for the live sinks, also the `live` extra); not extras
+# because nothing on PyPI can satisfy the ROS half.
 ros1 = [
     "numpy <2.0.0",
     "asammdf>=7.4,<8",
