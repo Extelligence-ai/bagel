@@ -1,7 +1,9 @@
-"""Skills must be thin triggers: valid frontmatter, and every POML route real.
+"""Skills carry their own workflow: valid frontmatter, no server-loaded instructions.
 
-Guards the spec's core rule (skills route, POML owns the workflow): if a skill
-references a capability path that stops existing, this fails at CI time instead
+Anthropic's plugin directory requires every instruction Claude acts on to ship
+inside the reviewed plugin. A skill that loads a POML capability from the server
+and follows it would pull behavior from outside the plugin, so this fails at CI
+time instead
 of at a user's session.
 """
 
@@ -25,13 +27,14 @@ def test_every_skill_has_frontmatter_name_and_description() -> None:
         assert re.search(r"^description: .{20,}", frontmatter, re.M), skill_file
 
 
-def test_every_poml_route_in_skills_exists_on_disk() -> None:
-    routed = set()
+def test_no_skill_loads_instructions_from_the_server() -> None:
+    # Looking up data (list_pipeline_capabilities) is fine; loading a capability
+    # or prompt from the server and following it is not.
     for skill_file in SKILL_FILES:
-        routed.update(POML_ROUTE_PATTERN.findall(skill_file.read_text(encoding="utf-8")))
-    assert routed, "expected at least one POML route across the skills"
-    for route in routed:
-        assert pathlib.Path(route).exists(), route
+        text = skill_file.read_text(encoding="utf-8")
+        assert not POML_ROUTE_PATTERN.search(text), skill_file
+        assert "run_poml_capability" not in text, skill_file
+        assert not re.search(r"follow (it|them) exactly", text, re.I), skill_file
 
 
 def test_referenced_reference_files_exist() -> None:
