@@ -177,27 +177,39 @@ jobs:
   # reduce pipeline must write a .db3 bag the backend reopens. The `cv` and `jev` extras are left out on purpose: both pull in
   # PyTorch, which the smoke test does not need and which would dominate the job.
   pip-install:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-24.04-arm
+            python: "3.12"
+          - os: macos-14
+            python: "3.10"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.8.0"
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - name: Build the wheel
         run: uv build --wheel --out-dir dist
-      - name: Install it with every non-ROS extra into a clean virtualenv
+      - name: Install recorded-data extras into a clean virtualenv
         run: |
-          uv venv --python 3.12 "${RUNNER_TEMP}/bagel-venv"
+          uv venv --seed --python "${{ matrix.python }}" "${RUNNER_TEMP}/bagel-venv"
           WHEEL=$(ls dist/bagel_mcp-*.whl)
-          uv pip install --python "${RUNNER_TEMP}/bagel-venv/bin/python" \
+          # Actual pip, no checkout/lockfile, and no compiler fallback for dependencies.
+          "${RUNNER_TEMP}/bagel-venv/bin/python" -m pip install --only-binary=:all: \
             "bagel-mcp[px4,ardupilot,betaflight,automotive,iot,viz,upload,cloudini,ros] @ file://${PWD}/${WHEEL}"
-      - name: Smoke-test every non-ROS source over MCP from outside the checkout
+          "${RUNNER_TEMP}/bagel-venv/bin/python" -m pip check
+      - name: Smoke-test recorded sources over MCP from outside the checkout
         run: |
           cd "${RUNNER_TEMP}"
           "${RUNNER_TEMP}/bagel-venv/bin/python" \
-            "${GITHUB_WORKSPACE}/scripts/smoke_pip_install.py" --repo "${GITHUB_WORKSPACE}"
+            "${GITHUB_WORKSPACE}/scripts/smoke_pip_install.py" --repo "${GITHUB_WORKSPACE}" --without-git
 
   coverage-gate:
     needs: [docker, host-tests]

@@ -2,7 +2,7 @@
 # Distribution name on PyPI (`bagel` is taken by an unrelated project, whose wheel
 # also installs a top-level `bagel/` package -- hence the `bagel_mcp` import name).
 name = "bagel-mcp"
-version = "2.5.2"
+version = "2.5.3"
 description = "Plain-English analysis of robotics, drone, and IoT data over MCP, with edge data reduction"
 readme = "README.md"
 license = "Apache-2.0"
@@ -64,7 +64,8 @@ ardupilot = ["pymavlink >=2.4.0,<3.0.0"]
 # ("scripts/bb2csv"); installers that validate entry points (uv) reject it.
 betaflight = ["orangebox >=0.4.0,<0.5.0"]
 automotive = [
-    "asammdf>=7.4,<8",
+    # 8.7 has ARM wheels; 7.x fails on current GCC and 8.8 adds source-only zstd.
+    "asammdf>=8.7.2,<8.8",
     "cantools>=42.0.3",
     "python-can>=4.6.1",
 ]
@@ -73,7 +74,8 @@ iot = [
     "paho-mqtt>=2.1.0,<3.0.0",
 ]
 viz = [
-    "rerun-sdk>=0.23.1",
+    # The recording/readback API changes between pre-1.0 minor releases.
+    "rerun-sdk>=0.23.1,<0.24",
 ]
 upload = [
     "azure-storage-blob>=12.24.0,<13.0.0",
@@ -100,6 +102,11 @@ bagel-run = "bagel_mcp.run:main"
 [build-system]
 requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+# Native ROS 1 needs NumPy 1.x; its image group carries the legacy MDF reader.
+# Pip users (including ROS bag readers) use the current automotive extra.
+conflicts = [[{ group = "ros1" }, { extra = "automotive" }]]
 
 [tool.hatch.build.targets.wheel]
 # Everything under the package ships, including the files loaded at runtime:
@@ -128,6 +135,9 @@ quality = ["mypy >=1.17.0,<2.0.0", "pip-audit >=2.9.0,<3.0.0"]
 # PyPI can satisfy the ROS half.
 ros1 = [
     "numpy <2.0.0",
+    "asammdf>=7.4,<8",
+    "cantools>=42.0.3",
+    "python-can>=4.6.1",
     "pycryptodomex >=3.23.0,<4.0.0",
     "python-gnupg >=0.5.0,<1.0.0",
     "roslibpy >=1.8.1,<2.0.0",

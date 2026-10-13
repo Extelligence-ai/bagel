@@ -105,5 +105,10 @@ def test_sync_always_adds_the_shared_feature_groups(tmp_path: pathlib.Path) -> N
     # Every image serves these tools and sources; a missing group fails at call time.
     for groups in ((), ("ros2",), ("ros1", "cv")):
         args = _sync_args(tmp_path, {}, *groups)
-        for shared in ("viz", "automotive", "upload", "cloudini"):
+        for shared in ("viz", "upload", "cloudini"):
             assert args[args.index(shared) - 1] == "--extra"
+        if "ros1" in groups:
+            assert "automotive" not in args  # legacy reader belongs to the ros1 group
+            assert args[args.index("ros1") - 1] == "--group"
+        else:
+            assert args[args.index("automotive") - 1] == "--extra"

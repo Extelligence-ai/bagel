@@ -7,15 +7,19 @@ See references:
 - https://github.com/PX4/PX4-Autopilot/tree/main/msg
 """
 
+from __future__ import annotations
+
 import functools
 import pathlib
 import shutil
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
-import git
 import lark
 
 from bagel_mcp import artifacts
+
+if TYPE_CHECKING:
+    import git
 
 REPO_NAME: Final[str] = "PX4-Autopilot"
 REPO_URL: Final[str] = f"https://github.com/PX4/{REPO_NAME}"
@@ -35,6 +39,10 @@ def git_clone(commit_sha: str | None, overwrite: bool) -> git.Repo:
         git.Repo: The cloned git repository.
 
     """
+    # GitPython probes for the Git executable at import time. Local ULog reads
+    # do not need it; callers already tolerate unavailable online descriptions.
+    import git
+
     artifacts.git_clone_directory().mkdir(parents=True, exist_ok=True)
     repo_dir = artifacts.git_clone_directory() / REPO_NAME
     if repo_dir.exists() and not overwrite:

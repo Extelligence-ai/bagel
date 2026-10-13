@@ -166,6 +166,21 @@ claude mcp add bagel -- ~/.bagel-venv/bin/bagel-mcp --transport stdio
 For a JSON config, use the full path as the command:
 `"command": "/Users/you/.bagel-venv/bin/bagel-mcp", "args": ["--transport", "stdio"]`.
 
+**Apple Silicon Macs:** use an ARM Python, not an Intel Python running through
+Rosetta. Check with `python3 -c "import platform; print(platform.machine())"`;
+it should print `arm64`. If it prints `x86_64`, create a separate native environment:
+
+```bash
+uv venv --seed --python cpython-3.12-macos-aarch64-none ~/.bagel-arm-venv
+~/.bagel-arm-venv/bin/python -m pip install "bagel-mcp[ros]"
+claude mcp add bagel -- ~/.bagel-arm-venv/bin/bagel-mcp --transport stdio
+```
+
+This avoids the `cryptography` source build: [upstream removed Intel macOS
+support in version 49](https://cryptography.io/en/49.0.0/changelog/).
+On an Intel Mac, use the Docker path below. Do not downgrade cryptography to
+restore an old wheel; its older releases miss security fixes.
+
 Format support comes as extras, so that a PX4 user never downloads the
 automotive parsers. List the ones you need, comma-separated:
 `uvx --from "bagel-mcp[ros,px4,automotive]" bagel-mcp --transport stdio`, or
@@ -186,6 +201,10 @@ extra is missing, Bagel's error names the exact command to add it.
 
 MCAP, CSV / JSON / Parquet, ROS text logs, PlotJuggler / Lichtblick / LeRobot
 exports and S3 upload need no extra.
+
+PX4 log parsing does not require Git. Git and network access are used only for
+optional field descriptions; pass `download_description: false` in the tool's
+`args` to skip fetching those descriptions.
 
 To upgrade, repeat the extras you installed with, so their dependencies
 update too. `uvx` picks up new releases on its own (force it with

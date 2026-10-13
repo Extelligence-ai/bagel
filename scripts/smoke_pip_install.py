@@ -215,7 +215,48 @@ async def _check_reduce_writes_a_bag(
     return f"reduce.ros2.db3 wrote {outputs[0].name}: {kept}/{total} messages"
 
 
-async def run(repo: pathlib.Path, scratch: pathlib.Path) -> list[str]:
+async def _check_exports(session: ClientSession, samples: pathlib.Path) -> list[str]:
+    """Read exported files back to catch unlocked dependency API changes."""
+    import rerun.dataframe as rrd
+
+    params = {
+        "path": str(samples / "pyarrow" / "csv" / "flight.csv"),
+        "topics": ["message"],
+        "start_seconds": 15.0,
+        "end_seconds": 25.0,
+        "name": "pip export smoke",
+        "args": {"timestamp_column": "t", "timestamp_format": "seconds"},
+    }
+    lichtblick = await session.call_tool("export_for_lichtblick", params)
+    assert not lichtblick.isError, _text(lichtblick)
+    exported = _parsed(lichtblick)[0]
+    readback = await session.call_tool(
+        "query_messages",
+        {
+            "path": exported["mcap"],
+            "topic": "message",
+            "sql_statement": (
+                "SELECT COUNT(*) AS n, MIN(timestamp_seconds) AS lo, "
+                'MAX(timestamp_seconds) AS hi FROM "message"'
+            ),
+        },
+    )
+    assert not readback.isError, _text(readback)
+    assert _parsed(readback) == [{"n": 21, "lo": 15.0, "hi": 25.0}]
+    rerun = await session.call_tool("export_for_rerun", params)
+    assert not rerun.isError, _text(rerun)
+    exported = _parsed(rerun)[0]
+    recording = rrd.load_recording(exported["rrd"])
+    assert exported["signals"], exported
+    for signal in exported["signals"]:
+        table = recording.view(index="time", contents=signal).select().read_all()
+        assert table.num_rows == 21  # noqa: PLR2004 -- fixture's 0.5 s samples, inclusive
+        times = [t.total_seconds() for t in table.column("time").to_pylist()]
+        assert min(times) == params["start_seconds"] and max(times) == params["end_seconds"]
+    return ["Lichtblick MCAP readback: 21 rows", "Rerun recording readback: 21 rows per signal"]
+
+
+async def run(repo: pathlib.Path, scratch: pathlib.Path, *, without_git: bool = False) -> list[str]:
     """Drive the installed server over stdio and return one line per check."""
     installed = importlib.util.find_spec("bagel_mcp")
     assert installed and installed.origin, "bagel_mcp is not installed"
@@ -246,6 +287,8 @@ async def run(repo: pathlib.Path, scratch: pathlib.Path) -> list[str]:
         # PX4 field descriptions come from a clone of PX4-Autopilot (needs git and
         # the network, as in Docker); the parse path itself does not.
         (str(samples / "px4" / "sample.ulg"), {"download_description": False}),
+        # Also exercise default description fallback when Git is unavailable.
+        *([(str(samples / "px4" / "sample.ulg"), {})] if without_git else []),
         (str(samples / "ardupilot" / "sample.bin"), {}),  # topic drill needs ardupilot.org
         (str(samples / "betaflight" / "sample.bbl"), {"log_index": 1}),  # flash chip: n logs/file
         (str(samples / "betaflight" / "sample.BFL"), {}),
@@ -271,6 +314,14 @@ async def run(repo: pathlib.Path, scratch: pathlib.Path) -> list[str]:
             "ARTIFACT_DIRECTORY": str(scratch / "artifacts"),
             "USER_CAPABILITIES_DIRECTORY": str(scratch / "capabilities"),
             "STARTUP_PIPELINES_FILE": "",
+            **(
+                {
+                    "GIT_PYTHON_GIT_EXECUTABLE": str(scratch / "absent-git"),
+                    "GIT_PYTHON_REFRESH": "error",
+                }
+                if without_git
+                else {}
+            ),
         },
     )
     with (scratch / "server-stderr.txt").open("w") as stderr:
@@ -309,6 +360,7 @@ async def run(repo: pathlib.Path, scratch: pathlib.Path) -> list[str]:
                 )
                 assert not logs.isError, _text(logs)
                 lines.append("ROS text logs read")
+                lines.extend(await _check_exports(session, samples))
 
                 caps = await session.call_tool(
                     "list_pipeline_capabilities", {"include_unavailable": True}
@@ -346,9 +398,14 @@ def main() -> None:
     """CLI entry: print one line per check, exit non-zero on the first failure."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--repo", type=pathlib.Path, required=True, help="the Bagel checkout")
+    parser.add_argument(
+        "--without-git", action="store_true", help="also prove PX4 works without a Git executable"
+    )
     options = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="bagel-pip-smoke-") as scratch:
-        for line in asyncio.run(run(options.repo.resolve(), pathlib.Path(scratch))):
+        for line in asyncio.run(
+            run(options.repo.resolve(), pathlib.Path(scratch), without_git=options.without_git)
+        ):
             print(line)  # noqa: T201 -- CI log
 
 
