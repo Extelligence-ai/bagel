@@ -12,7 +12,17 @@ if [[ "$dev_mode" != true ]]; then
 fi
 # Format-, export- and upload-level features every image serves: Rerun export,
 # MDF4/CAN sources, GCS/Azure upload tasks, Cloudini pointcloud tasks.
-set -- "$@" viz automotive upload cloudini
+# The ros1 group already includes the legacy reader compatible with NumPy 1.x.
+automotive_extra=true
+for feature in "$@"; do
+    if [[ "$feature" == ros1 ]]; then
+        automotive_extra=false
+    fi
+done
+set -- "$@" viz upload cloudini
+if [[ "$automotive_extra" == true ]]; then
+    set -- "$@" automotive
+fi
 # JEV_MODE (a Docker build arg) opts the image into the on-robot decision model.
 if [[ "${JEV_MODE:-false}" == true ]]; then
     set -- "$@" jev

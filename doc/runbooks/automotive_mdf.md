@@ -14,7 +14,13 @@ Docker? Install the optional `automotive` dependency group:
 uv sync --extra automotive
 ```
 
-Everything is pure pip (`asammdf`): no vendor tooling required.
+The pip extra uses `asammdf` 8.7, including prebuilt Linux ARM64 wheels, so
+Raspberry Pi and Jetson users do not need a C compiler for the MDF reader on
+supported Python versions. No vendor tooling is required. Native ROS 1 images
+retain the 7.x reader in their `ros1` dependency group because their ROS stack
+requires NumPy 1.x; do not combine that group with the modern `automotive` extra.
+The 8.8 series adds a `zstd` dependency without Linux ARM wheels and is excluded
+until the complete dependency chain can install without a compiler.
 
 ## Prompts to try
 

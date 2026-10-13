@@ -66,7 +66,8 @@ def _message_paths(schema: pa.Schema) -> dict[str, str]:
 
 def write_mcap(relation: duckdb.DuckDBPyRelation, mcap_file: pathlib.Path) -> None:
     """Write the relation's topics as JSON-encoded MCAP channels."""
-    table = relation.arrow()
+    # arrow() returns a RecordBatchReader on newer DuckDB versions.
+    table = relation.fetch_arrow_table()
     topics = [
         field.name for field in table.schema if field.name != settings.TIMESTAMP_SECONDS_COLUMN_NAME
     ]
