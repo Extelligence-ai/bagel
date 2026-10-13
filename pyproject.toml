@@ -66,6 +66,8 @@ betaflight = ["orangebox >=0.4.0,<0.5.0"]
 automotive = [
     # 8.7 has ARM wheels; 7.x fails on current GCC and 8.8 adds source-only zstd.
     "asammdf>=8.7.2,<8.8",
+    # Safe default entity handling for XML metadata (PYSEC-2026-87).
+    "lxml>=6.1.0,<7",
     "cantools>=42.0.3",
     "python-can>=4.6.1",
 ]
@@ -136,6 +138,7 @@ quality = ["mypy >=1.17.0,<2.0.0", "pip-audit >=2.9.0,<3.0.0"]
 ros1 = [
     "numpy <2.0.0",
     "asammdf>=7.4,<8",
+    "lxml>=6.1.0,<7",
     "cantools>=42.0.3",
     "python-can>=4.6.1",
     "pycryptodomex >=3.23.0,<4.0.0",
