@@ -178,8 +178,12 @@ claude mcp add bagel -- ~/.bagel-arm-venv/bin/bagel-mcp --transport stdio
 
 This avoids the `cryptography` source build: [upstream removed Intel macOS
 support in version 49](https://cryptography.io/en/49.0.0/changelog/).
-On an Intel Mac, use the Docker path below. Do not downgrade cryptography to
-restore an old wheel; its older releases miss security fixes.
+Fresh installs currently select MCP 1.30.0, whose dependency chain is
+`bagel-mcp` → `mcp` → `pyjwt[crypto]` → `cryptography`. This applies to the
+base package and `bagel-mcp[ros]`, even without the `upload` extra.
+On an Intel Mac, if installation fails while building `cryptography`, use the
+Docker path below. Do not downgrade cryptography to restore an old wheel;
+its older releases miss security fixes.
 
 Format support comes as extras, so that a PX4 user never downloads the
 automotive parsers. List the ones you need, comma-separated:
