@@ -18,7 +18,7 @@ jobs:
         run: python3 scripts/audit_agent_discovery.py --output discovery-audit
       - name: Retain report and response bodies
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: agent-discovery-audit
           path: discovery-audit
