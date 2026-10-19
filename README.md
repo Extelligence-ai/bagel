@@ -637,3 +637,4 @@ Bagel is open source under the [Apache License 2.0](./LICENSE).
 For maintainers: [discovery audits and evaluation](./docs/agent-discovery/README.md),
 [listing maintenance](./docs/agent-discovery/listings.md), and
 [reproducible user reports](./docs/agent-discovery/community.md).
+
