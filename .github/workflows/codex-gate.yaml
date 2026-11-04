@@ -50,14 +50,29 @@ on:
   # Resolving a thread therefore cannot re-run this gate on its own -- which is
   # why the clearing path below is a fresh REVIEW, not a resolve: a new review
   # fires pull_request_review above and re-runs this job.
+  #
+  # issue_comment drives the rerun-gate job at the bottom, NOT the gate itself.
+  # Codex posts its CLEAN verdict as an issue comment rather than a review, so
+  # pull_request_review never fires for it and the gate sits red until someone
+  # re-runs it by hand -- days lost across #181, #256, #257 and #264, and the
+  # reason three PRs merged minutes before their verdict landed.
+  issue_comment:
+    types: [created]
 
 permissions:
   pull-requests: write
   issues: write
+  # rerun-gate re-runs a workflow run.
+  actions: write
 
 jobs:
   codex-review-gate:
-    if: ${{ !github.event.pull_request.draft }}
+    # Never on issue_comment: that event runs in DEFAULT-BRANCH context, so the
+    # resulting check attaches to main rather than the PR head and the red check
+    # on the PR stays red (claude-review.yaml's header documents the same
+    # behaviour for its OIDC subject). Running the gate logic there would look
+    # like a fix and change nothing; rerun-gate below is the actual mechanism.
+    if: ${{ github.event_name != 'issue_comment' && !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - name: Require a Codex review of the head commit
@@ -285,3 +300,58 @@ jobs:
           esac
           echo "::error::Codex has not yet reviewed head commit $HEAD_SHA. Add the 'codex-rerequest' label when this branch is ready for review; the gate re-runs when the review lands."
           exit 1
+
+  # Re-run the gate's OWN earlier run when the reviewer bot posts a verdict.
+  #
+  # The gate cannot simply also listen to issue_comment: that event runs in
+  # default-branch context, so its check attaches to main and the PR head's
+  # required check stays red. Re-running the EXISTING run works because that run
+  # was created by a pull_request event -- it re-executes in the PR's context and
+  # its check lands back on the head SHA, which is the only thing that can turn
+  # the required check green.
+  rerun-gate:
+    # Only the reviewer bot's comments on a pull request. The "@codex review"
+    # trigger the gate posts is authored by github-actions[bot], which this
+    # excludes, so there is no loop.
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request != null &&
+      github.event.comment.user.login == 'chatgpt-codex-connector[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Re-run the gate for this PR's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          head_sha="$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)"
+          # Newest gate run for this head, whatever its conclusion: a run that
+          # already passed needs no rerun, and one still going will finish on its
+          # own, so only a completed failure is worth restarting.
+          run_json="$(gh api \
+            "repos/$REPO/actions/workflows/codex-gate.yaml/runs?head_sha=$head_sha&per_page=20" \
+            --jq '[.workflow_runs[] | select(.event != "issue_comment")] | sort_by(.created_at) | last // empty')"
+          if [ -z "$run_json" ]; then
+            echo "No gate run for $head_sha yet; nothing to re-run."
+            exit 0
+          fi
+          run_id="$(echo "$run_json" | jq -er .id)"
+          status="$(echo "$run_json" | jq -er .status)"
+          conclusion="$(echo "$run_json" | jq -r '.conclusion // ""')"
+          echo "latest gate run for $head_sha: $run_id ($status/$conclusion)"
+          if [ "$status" != "completed" ]; then
+            echo "Still running; it will report on its own."
+            exit 0
+          fi
+          if [ "$conclusion" = "success" ]; then
+            echo "Already green; nothing to do."
+            exit 0
+          fi
+          gh api -X POST "repos/$REPO/actions/runs/$run_id/rerun" >/dev/null
+          echo "Re-ran gate run $run_id for $head_sha."
