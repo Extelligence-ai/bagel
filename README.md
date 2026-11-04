@@ -348,12 +348,12 @@ Can’t find your LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/
 
 </details>
 
-## 🔌 Agent plugins (Claude Code and Codex)
+## 🔌 Agent plugins (Claude Code, Codex and Grok Build)
 
 Bagel ships an agent plugin: four skills that teach the agent when and how
 to drive the server (log triage, pipeline authoring, live sinks, visualization
 export) plus the MCP connection, wired automatically. The same `plugin/`
-directory serves both Claude Code and OpenAI Codex.
+directory serves Claude Code, OpenAI Codex and xAI Grok Build.
 
 ```
 /plugin marketplace add Extelligence-ai/bagel
@@ -374,7 +374,15 @@ Bagel's runs on your machine), so also connect the server once with
 url = "http://localhost:8000/mcp"
 ```
 
-Repo-marketplace and Claude Code installs wire this connection automatically.
+Grok Build users install straight from this repo; the MCP connection is
+wired automatically:
+
+```
+grok plugin install Extelligence-ai/bagel#plugin
+```
+
+Repo-marketplace, Claude Code and Grok Build installs wire this connection
+automatically.
 Maintainers build the directory ZIP with
 `uv run python scripts/package_codex_directory.py`.
 
