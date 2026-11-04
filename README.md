@@ -87,7 +87,7 @@ robots (rosbridge) and fleet/edge pipelines run in [Docker](#-run-with-docker-li
 - **Natural-language pipelines**: "Keep 10s around every hard brake, drop the rest":
   one sentence becomes an auditable [pipeline](./doc/runbooks/pipelines.md): previewed
   before a byte is written, then run once, across a fleet, or standing at the edge.
-- **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, Grok Build, and more.
+- **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, Grok Build, Grok Bot, and more.
 - **Installs your way**: `pip` / `uvx` for recorded data, Docker images for live robots and the edge.
 - **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
 - **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues).
@@ -343,6 +343,7 @@ Bagel works with any MCP-enabled LLM. Setup runbooks for tested alternatives:
 - [Codex](./doc/runbooks/setup/codex.md)
 - [Cursor](./doc/runbooks/setup/cursor.md)
 - [Grok Build](./doc/runbooks/setup/grok_build.md)
+- [Grok Bot](./doc/runbooks/setup/grok_bot.md) (runs on Grok's cloud computer)
 - [Copilot](./doc/runbooks/setup/copilot.md)
 
 Can’t find your LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues).
