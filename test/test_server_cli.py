@@ -1,5 +1,8 @@
 """`bagel-mcp` flags: an MCP client that spawns the server needs `--transport stdio`."""
 
+import logging
+import pathlib
+
 import pytest
 
 from bagel_mcp import mcp_compat, server
@@ -7,8 +10,9 @@ from bagel_mcp.settings import settings
 
 
 @pytest.fixture
-def run_server(monkeypatch: pytest.MonkeyPatch) -> dict:
+def run_server(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> dict:
     received: dict = {}
+    monkeypatch.setattr(settings, "CACHE_DIRECTORY", str(tmp_path))
 
     def fake(instance: object, transport: str, host: str, port: int) -> None:
         received.update(instance=instance, transport=transport, host=host, port=port)
@@ -38,3 +42,12 @@ def test_unknown_transport_is_rejected(run_server: dict) -> None:
     with pytest.raises(SystemExit):
         server.main(["--transport", "carrier-pigeon"])
     assert run_server == {}
+
+
+def test_star_hint_shows_on_first_start_only(
+    run_server: dict, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        server.main([])
+        server.main([])
+    assert [r.getMessage() for r in caplog.records].count(server.STAR_HINT) == 1

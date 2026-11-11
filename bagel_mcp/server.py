@@ -1625,6 +1625,25 @@ def snap_hardware(directory: str = ".") -> dict[str, Any]:
     return {"form": str(form), **factory.metadata}
 
 
+STAR_HINT = "If Bagel helps, a star on https://github.com/Extelligence-ai/bagel helps us."
+
+
+def star_hint_once() -> None:
+    """Ask the person running the server for a GitHub star, on the first start only.
+
+    Logged to stderr, where the operator sees it; it is never sent to the agent.
+    A marker file in the cache directory keeps it from repeating.
+    """
+    marker = pathlib.Path(settings.CACHE_DIRECTORY) / ".star-hint-shown"
+    if marker.exists():
+        return
+    logging.warning(STAR_HINT)
+    try:
+        marker.touch()
+    except OSError:
+        pass  # read-only cache: the hint repeats, which is harmless
+
+
 def main(argv: list[str] | None = None) -> None:
     """Start the MCP server: the `bagel-mcp` console script and `python -m bagel_mcp.server`.
 
@@ -1663,6 +1682,7 @@ def main(argv: list[str] | None = None) -> None:
         settings.ARTIFACT_DIRECTORY,
         artifacts.directory_size_bytes(settings.ARTIFACT_DIRECTORY),
     )
+    star_hint_once()
     mcp_compat.run_server(server, transport=args.transport, host=args.host, port=args.port)
 
 
