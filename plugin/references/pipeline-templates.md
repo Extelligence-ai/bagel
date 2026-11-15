@@ -1,6 +1,6 @@
 # Pipeline templates
 
-Two starting points for the `authoring-pipelines` skill. Substitute the event
+Three starting points for the `authoring-pipelines` skill. Substitute the event
 topic, predicate, window and data source. The `module` paths below are for a
 ROS 2 `.db3` source; take the right path for the user's format, and its
 argument names, from `list_pipeline_capabilities`.
@@ -31,6 +31,32 @@ tasks:
       post_seconds: 10
       debounce_seconds: 2
 ```
+
+## strip: the whole log, minus some topics
+
+For "share this log without the camera and GPS". No predicate: the whole time
+range is kept and only the listed topics are dropped (`topics` keeps a list
+instead; not both). A misspelled topic is refused rather than silently kept.
+Works on MCAP (`reduce.mcap`) and ROS 2 `.db3` (`reduce.ros2.db3`) sources;
+flight-controller logs (.ulg, .bin, .bbl) can't be rewritten.
+
+```yaml
+name: share_without_camera
+site: warehouse
+asset: forklift
+path: ./data/logs/flight_042
+allow_failure: false
+cadence:
+  topic: /imu
+  when: once_at_end
+tasks:
+  - module: bagel_mcp.pipeline.tasks.reduce.mcap
+    args:
+      exclude_topics: [/camera/image_raw, /gps/fix]
+```
+
+`exclude_topics` also combines with an event predicate (event windows, minus
+those topics).
 
 ## snippet: one clip per event
 
