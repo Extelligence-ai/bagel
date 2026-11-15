@@ -163,10 +163,17 @@ tasks:
       source: ~/.bagel/artifacts        # file, directory, or glob
       prefix: "2026/week-27"
       filter_modified_at: true          # only files modified within the lookback window
+      metadata: { run_id: "2026-11-15-flight-3" }   # optional, set on every object
     lookback: { last: 1, unit: hour }
 ```
 
 Credentials use the standard AWS resolution chain (env vars, `~/.aws`, instance role).
+
+`metadata` tags every uploaded object (S3 user metadata, GCS custom metadata, Azure blob
+metadata). Give the files of one run the same `run_id` and a downstream store can group a
+bag with its sidecars (rosout and node logs, params, calibration). Keys are lowercase
+letters, digits, `_` or `-`; values are printable ASCII, 2 KB in total. Files skipped as
+unchanged keep the metadata they were first uploaded with.
 
 GCS (`bagel_mcp.pipeline.tasks.upload.gcs`, standard Google credential chain) and Azure Blob
 (`bagel_mcp.pipeline.tasks.upload.azure`, connection string or

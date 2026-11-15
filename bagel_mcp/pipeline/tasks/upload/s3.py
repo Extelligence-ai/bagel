@@ -27,6 +27,7 @@ class UploadFilesToS3(base.UploadFilesTask):
         endpoint_url: str | None = None,
         filter_modified_at: bool = False,
         skip_existing: bool = True,
+        metadata: dict[str, str] | None = None,
     ) -> None:
         """Initialize the task.
 
@@ -45,6 +46,8 @@ class UploadFilesToS3(base.UploadFilesTask):
                 Defaults to False.
             skip_existing (bool, optional): If True, skip files whose SHA-256 checksum
                 matches the existing remote object. Defaults to True.
+            metadata (dict[str, str] | None, optional): Object metadata set on every
+                upload (S3 user metadata). Defaults to None.
 
         Raises:
             ValueError: If 'bucket' or 'source' is empty.
@@ -57,6 +60,7 @@ class UploadFilesToS3(base.UploadFilesTask):
             prefix=prefix,
             filter_modified_at=filter_modified_at,
             skip_existing=skip_existing,
+            metadata=metadata,
         )
         self._bucket = bucket
         self._region = region
@@ -80,12 +84,15 @@ class UploadFilesToS3(base.UploadFilesTask):
         local_sha256 = artifacts.checksum_sha256(local_file)
         return response.get("Checksum", {}).get("ChecksumSHA256") == local_sha256
 
+    def _extra_metadata(self) -> dict[str, dict[str, str]]:
+        return {"Metadata": self._metadata} if self._metadata else {}
+
     def _upload_file(self, client: object, local_file: pathlib.Path, key: str) -> None:
         client.upload_file(
             Filename=str(local_file),
             Bucket=self._bucket,
             Key=key,
-            ExtraArgs={"ChecksumAlgorithm": "SHA256"},
+            ExtraArgs={"ChecksumAlgorithm": "SHA256", **self._extra_metadata()},
         )
 
 

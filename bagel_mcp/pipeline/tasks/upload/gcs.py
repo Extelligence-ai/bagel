@@ -36,6 +36,7 @@ class UploadFilesToGcs(base.UploadFilesTask):
         project: str | None = None,
         filter_modified_at: bool = False,
         skip_existing: bool = True,
+        metadata: dict[str, str] | None = None,
     ) -> None:
         """Initialize the task.
 
@@ -52,6 +53,8 @@ class UploadFilesToGcs(base.UploadFilesTask):
                 Defaults to False.
             skip_existing (bool, optional): If True, skip files whose MD5 matches the
                 existing remote object. Defaults to True.
+            metadata (dict[str, str] | None, optional): Object metadata set on every
+                upload (GCS custom metadata). Defaults to None.
 
         Raises:
             ValueError: If 'bucket' or 'source' is empty.
@@ -64,6 +67,7 @@ class UploadFilesToGcs(base.UploadFilesTask):
             prefix=prefix,
             filter_modified_at=filter_modified_at,
             skip_existing=skip_existing,
+            metadata=metadata,
         )
         self._bucket = bucket
         self._project = project
@@ -81,7 +85,10 @@ class UploadFilesToGcs(base.UploadFilesTask):
         return blob.md5_hash == md5_base64(local_file)
 
     def _upload_file(self, client: object, local_file: pathlib.Path, key: str) -> None:
-        client.bucket(self._bucket).blob(key).upload_from_filename(str(local_file))
+        blob = client.bucket(self._bucket).blob(key)
+        if self._metadata:
+            blob.metadata = self._metadata
+        blob.upload_from_filename(str(local_file))
 
 
 def register() -> None:
