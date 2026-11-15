@@ -14,7 +14,7 @@ import filelock
 import yaml
 from poml import poml
 
-from bagel_mcp import artifacts, mcp_compat, query
+from bagel_mcp import artifacts, compare, mcp_compat, query
 from bagel_mcp.agent import capabilities as agent_capabilities
 from bagel_mcp.di import module
 from bagel_mcp.di.types.base_module import BaseModule
@@ -304,6 +304,62 @@ def read_loggings(
     except NoLoggingTopicsFoundError:
         return []
     return relation.to_df().to_dict(orient="records")
+
+
+@server.tool(
+    title="Compare two logs",
+    description=(
+        "Diff two recorded logs (e.g. before and after a code, config, firmware or hardware "
+        "change) over the topics they share. Returns topics present in only one log, topics "
+        "whose message rate changed, signals whose mean or spread changed (ranked by effect "
+        "size, with both logs' count/min/max/mean/std), log-level counts, and WARN/ERROR lines "
+        "new in the candidate. All numbers are DuckDB aggregates; report only what it lists "
+        "as changed, quoting the numbers."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def compare_logs(  # noqa: PLR0913
+    baseline_path: str,
+    candidate_path: str,
+    topics: list[str] | None = None,
+    baseline_args: dict[str, Any] | None = None,
+    candidate_args: dict[str, Any] | None = None,
+    min_effect: float = compare.DEFAULT_MIN_EFFECT,
+) -> dict[str, Any]:
+    """Compare two logs topic by topic and rank what changed.
+
+    Args:
+        baseline_path (str): The reference log ("before", or a known-good run).
+        candidate_path (str): The log to explain ("after", or the run that misbehaved).
+        topics (list[str] | None, optional): Topics to compare; defaults to every topic
+            both logs share.
+        baseline_args (dict[str, Any] | None, optional): Source arguments for the baseline
+            (the same `args` other tools take, e.g. a CSV timestamp column).
+        candidate_args (dict[str, Any] | None, optional): Source arguments for the candidate.
+        min_effect (float, optional): How far a signal's mean must move, in pooled standard
+            deviations, to count as changed (a spread change of 1.5x or more always
+            counts). Defaults to 0.5.
+
+    Returns:
+        dict[str, Any]: `topics_only_in_baseline` / `_candidate`, `topics` (rate changes
+        with messages, rate_hz and max_gap_seconds as [baseline, candidate]),
+        `signals_changed` (ranked; `effect_size`, `spread_ratio`, both logs' stats),
+        `signals_unchanged` (count), `log_levels` ([baseline, candidate] per level) and
+        `new_warnings_and_errors`.
+
+    Examples:
+        As an LLM prompt:
+            What changed between "./flights/before.ulg" and "./flights/after.ulg"?
+
+    """
+    return compare.compare(
+        expand_user(baseline_path),
+        expand_user(candidate_path),
+        topics=topics,
+        baseline_args=baseline_args,
+        candidate_args=candidate_args,
+        min_effect=min_effect,
+    )
 
 
 @server.tool(
