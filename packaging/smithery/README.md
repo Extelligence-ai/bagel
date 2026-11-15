@@ -3,7 +3,7 @@
 Source for <https://smithery.ai/servers/extelligence-ai/bagel>. The MCPB bridges
 stdio to an already running local Bagel Docker service. See the bundled
 [user instructions](bundle/README.md) for prerequisites, privacy, and costs.
-It never hosts Bagel or requires a Matcha account.
+It never hosts Bagel or requires an account.
 
 ## Build and validate
 

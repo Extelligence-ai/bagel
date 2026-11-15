@@ -2,7 +2,7 @@
 
 This bundle connects a stdio MCP client to a locally running Bagel server over
 SSE. It uses the bundled, pinned `mcp-remote` bridge; it does not install or start
-Bagel, host a server, or require a Matcha account.
+Bagel, host a server, or require an account.
 
 ## Prerequisites
 

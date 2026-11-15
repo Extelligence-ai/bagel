@@ -36,6 +36,8 @@ jobs:
         with:
           version-file: pyproject.toml
           args: format --check
+      - name: Boundary rule (no vendor names in Bagel)
+        run: scripts/check_boundary.sh
 
   hadolint:
     runs-on: ubuntu-latest

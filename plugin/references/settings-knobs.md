@@ -19,3 +19,19 @@ Defined in `bagel_mcp/settings.py`; set via the container environment or `.env`.
 | `MIN_ARROW_RECORD_BATCH_SIZE_COUNT` | 500 | Minimum records per arrow batch |
 | `ROSBRIDGE_QUEUE_LENGTH` | 1000 | Messages buffered in rosbridge before sending |
 | `CLOUDINI_ENABLED` | true | Cloudini pointcloud decompression in pipelines |
+| `FLEET_ENABLED` | true | Kill switch for fleet streaming (beta). `0` makes the publish subsystem inert: nothing connects, nothing leaves the box |
+| `FLEET_SPOOL_MAX_BYTES` | 256 MB | Disk cap for the fleet spool's channels lane; oldest segments evicted first. Events/heartbeats are never dropped and are exempt |
+| `FLEET_QUEUE_MAX_SAMPLES` | 10000 | Max samples in the router's bounded queue between the buffer tap and the router thread; oldest sample dropped on overflow, queue never blocks the tap |
+| `FLEET_ARTIFACTS_MAX_BYTES` | 256 MB | Disk cap for the fleet event-artifact store (`CACHE_DIRECTORY/publish-artifacts/`); oldest MCAP files evicted first |
+| `FLEET_EVENTS_MAX_PER_MINUTE` | 6 | Per-rule event rate cap in any trailing 60 s window; excess firings are counted and reported as `summary.suppressed`, never silently dropped |
+| `FLEET_EVENT_RING_MAX_SAMPLES` | 10000 | Per-topic ring buffer sample cap for event capture windows (rules sharing a topic share one ring); oldest samples dropped first |
+| `FLEET_EVENT_RING_MAX_BYTES` | 64 MB | Per-topic ring buffer byte budget for event capture windows (approximate JSON-encoded size); oldest samples dropped first |
+| `FLEET_HEALTH_INTERVAL_S` | 21600 (6 h) | Interval between scheduled `health_report` events; health is a slow-moving summary, not a liveness signal |
+| `FLEET_HEALTH_SETTLE_S` | 60 | Grace period after a streaming session starts before its first `health_report`, so boot-time transients aren't reported as failures |
+| `BAGEL_BUILD_ID` | unset | Build provenance: when set, heartbeats and event summaries carry a `build` block with this id. Bake into images at build time |
+| `BAGEL_VCS_REF` | unset | Optional VCS ref for the `build` block; only included when `BAGEL_BUILD_ID` is also set |
+| `FLEET_IDENTITY_DIRECTORY` | `~/.bagel/identity` | Directory holding this robot's fleet enrollment identity: `robot.key` (0600), `robot.crt`, `ca.crt`, `identity.yaml` |
+| `FLEET_DEV_INSECURE` | false | Dev-only escape hatch: allows an unencrypted `mqtt://` fleet broker when the host resolves to loopback/private. Production stays `mqtts://` with an enrolled identity |
+| `FLEET_ENROLL_TOKEN` | unset | One-time enrollment token for first-boot fleet enrollment. Consumed at first boot, never persisted |
+| `FLEET_ENROLL_URL` | unset | Enrollment server base URL, paired with `FLEET_ENROLL_TOKEN`, used for first-boot enrollment and identity renewal |
+| `BAGEL_FLEET` (build arg) | true | Compose build arg; `false` omits the MQTT client from the iot/ros2 images entirely |

@@ -1,0 +1,448 @@
+# Bagel fleet wire protocol v1
+
+This document is the binding v1 contract between a Bagel robot and a fleet service.
+Everything below is stated as built: a fleet service can pin automated conformance
+probes to this page. Additive change (a new OPTIONAL field, a new topic kind) does not
+bump the version; any breaking change ships as `bagel/v2/...` alongside v1.
+
+Consumers MUST ignore unknown fields in every payload.
+
+## 1. Versioning and namespace
+
+All traffic for one robot lives under one topic subtree:
+
+```
+bagel/v1/{tenant}/{robot}/{kind}
+```
+
+where `{kind}` is one of `schema`, `channels`, `events`, `heartbeat`, `cmd`.
+`cmd` is reserved for a future release and is not published or subscribed in v1.
+
+- Transport is MQTT v5. Payloads are JSON, UTF-8. The robot emits compact JSON
+  (no insignificant whitespace), but that is an emission detail, not a parsing
+  contract.
+- Every publish is QoS 1 (see §3). The robot never publishes at QoS 0 or 2.
+
+## 2. Identity and authorization
+
+- The robot authenticates with mTLS. Its client certificate's CN is
+  `{tenant}/{robot}`, assigned and signed by the fleet service at enrollment
+  (the CSR's own CN is advisory only and is ignored).
+- Broker ACLs restrict each certificate to its own
+  `bagel/v1/{tenant}/{robot}/#` subtree. Because identity is carried entirely
+  by the certificate and the topic, **payloads contain no tenant or robot
+  fields**.
+- The MQTT client id is `bagel/{tenant}/{robot}`. Neither id ever contains `/`
+  (robot ids match `^[a-z0-9][a-z0-9_-]{0,62}$`), so the delimiter is
+  unambiguous. The client id is deterministic per robot: a reconnecting robot
+  displaces its own stale session rather than leaking a second one.
+- MQTT keepalive is 30 s.
+
+## 3. QoS and retain
+
+| kind        | QoS | retained |
+|-------------|-----|----------|
+| `schema`    | 1   | yes      |
+| `channels`  | 1   | no       |
+| `events`    | 1   | no       |
+| `heartbeat` | 1   | yes      |
+| LWT (on `heartbeat`) | 1 | yes |
+
+A late subscriber therefore always sees the current schema and the robot's
+last-known liveness state immediately; channel batches and events are only
+seen live (plus at-least-once replay, §6).
+
+## 4. Last will and offline reasons
+
+At connect time the robot arms a retained last-will on its `heartbeat` topic:
+
+```json
+{"v": 1, "online": false, "reason": "lwt"}
+```
+
+An ungraceful drop (crash, power loss, network partition) makes the broker
+publish it after the keepalive lapses. The LWT payload carries no `t` field.
+
+A graceful disconnect publishes a retained clean-stop heartbeat before closing:
+
+```json
+{"v": 1, "t": <epoch seconds>, "online": false, "reason": "stopped"}
+```
+
+`reason` is `"stopped"` for a stop or shutdown and `"paused"` for a deliberate
+pause -- a paused robot is distinguishable from a stopped one by the retained
+payload alone. Consumers MUST treat any `online: false` heartbeat as
+offline regardless of `reason`, and MUST tolerate new `reason` values.
+
+## 5. `schema` payload
+
+```json
+{
+  "v": 1,
+  "channels": [
+    {
+      "c": "telemetry.battery.percent",
+      "type": "number",
+      "unit": "%",
+      "source_topic": "robot/telemetry",
+      "source_field": "battery.percent"
+    }
+  ]
+}
+```
+
+- `c`: the channel name every `channels` sample refers to (unique per robot).
+- `type`: one of `number`, `string`, `bool`, `geo`.
+- `unit`: a unit string or `null` (source metadata is often absent).
+- `source_topic` / `source_field`: provenance on the robot. For a `geo`
+  channel, `source_field` is the comma-joined component map (e.g.
+  `"lat=lat,lon=lon"`).
+
+The schema is republished (retained) on **every** (re)connect, and a rule
+change on the robot restarts its streaming session -- reconnect, then a fresh
+schema -- so the retained schema always describes the samples that follow it.
+Consumers must tolerate re-receiving an identical schema.
+
+## 6. `channels` payload and seq semantics
+
+```json
+{
+  "v": 1,
+  "seq": 42,
+  "t_batch": 1767312000.5,
+  "samples": [
+    {"c": "telemetry.battery.percent", "t": 1767312000.1, "v": 87.5},
+    {"c": "telemetry.gps.geo", "t": 1767312000.2,
+     "v": {"lat": 52.5, "lon": 13.4, "alt": 34.2}}
+  ]
+}
+```
+
+- `t_batch`: epoch seconds when the batch was flushed. `t`: the sample's
+  source timestamp, epoch seconds. Both are floats.
+- `v` is typed per the schema: JSON number for `number`, string for `string`,
+  boolean for `bool`, and for `geo` an object `{"lat": <num>, "lon": <num>}`
+  with an OPTIONAL `"alt"` key (present only when the robot's rule mapped an
+  altitude field).
+- Sample density: each channel is rate-capped on the robot at its configured
+  `rate_hz` (at most one sample per `1/rate_hz` interval, capped at 50 Hz).
+
+**Batching.** The robot flushes a batch every `flush_interval_s` (default
+1 s) or as soon as 500 samples are pending, whichever comes first. A batch
+carries at most 500 samples; a wider backlog is split into consecutive
+batches in the same flush pass, each with its own `seq`.
+
+**seq.** Monotonic per lane (`channels` and `events` are separate seq
+spaces), per robot, starting at 1, persisted on the robot's disk spool across
+restarts -- a rebooted robot continues its seq, it never restarts from 1.
+
+**Delivery.** At-least-once: QoS 1 plus spool replay after reconnect means a
+consumer can see a batch twice. The dedupe key is
+`(tenant, robot, kind, seq)` -- tenant and robot from the topic, `kind` the
+topic's last segment. Replay is strictly seq-ordered: batches never arrive
+out of order within a lane. A **gap** in the `channels` seq therefore means
+exactly one thing: the robot's capped spool evicted oldest batches during a
+sustained disconnect (reported in the heartbeat's `spool.evicted`, §8) --
+never reordering.
+
+## 7. `events` payload
+
+```json
+{
+  "v": 1,
+  "seq": 7,
+  "event_id": "e0a1...",
+  "name": "hard_decel",
+  "t_start": 1767312000.0,
+  "t_end": 1767312002.0,
+  "source_topic": "robot/telemetry",
+  "summary": {
+    "predicate": "\"robot/telemetry\"['decel'] > 8",
+    "pre_seconds": 5.0,
+    "post_seconds": 2.0,
+    "debounce_seconds": 30.0,
+    "samples": 350
+  },
+  "artifact": {"kind": "mcap", "uri": "file:///..."}
+}
+```
+
+- Events have their **own lane and seq space**, independent of `channels`,
+  with the same at-least-once + seq-ordered semantics and the same dedupe key.
+  The events lane is never evicted: an event, once recorded, is delivered.
+- `event_id` is a globally unique id; `name` is the robot-side rule name;
+  `summary` is a free-form JSON object.
+- `artifact` is OPTIONAL. When present, `kind` is `"mcap"` (the only v1 kind)
+  and `uri` points at the captured artifact.
+
+The on-robot event *emitter* is live: `stream_live_topics`/`stop_live_streams`
+accept, persist, and now evaluate event rules on the robot. The conformance
+selftest (§10) still publishes one synthetic event (without `artifact`).
+
+**Rule-event `summary`.** For an event fired by a configured rule, `summary`
+carries the rule's configuration and the firing's window: `predicate` (the
+rule's SQL predicate string), `pre_seconds`/`post_seconds`/`debounce_seconds`
+(the configured windows), and `samples` (the number of source samples in the
+captured window). Three OPTIONAL keys may join them:
+
+- `suppressed`: present **only when > 0** -- the number of firings the
+  robot's per-rule rate cap suppressed since the previous delivered firing
+  of this rule. Absent means zero.
+- `artifact_error`: present when the rule requested an artifact but capturing
+  it failed (byte budget exceeded, write error). The event itself is always
+  delivered; artifact failure never suppresses an event.
+- `build`: the robot's build-provenance block, same shape and gating as the
+  heartbeat's (§8).
+
+**Artifact URIs are robot-local.** In v1, `artifact.uri` is a `file://` URI
+naming a path on the robot's own filesystem. Retrieval is out of band --
+v1 defines no upload or fetch mechanism -- so consumers MUST treat the URI
+as an opaque reference. The file itself is best-effort: the robot's artifact
+store is byte-budgeted and evicts oldest files first, so a URI may name a
+file that has since been evicted.
+
+**Robot-internal events.** `source_topic` values beginning `internal:` mark
+events generated by the robot's own runtime rather than by a rule over a
+tapped source topic. Tapped event source topics also appear in the
+heartbeat's `subscriptions` list (§8) -- `subscriptions` covers every tapped
+topic, whether it sources channels, event rules, or both. This is deliberate.
+
+### 7.1 `health_report`
+
+The robot publishes a scheduled self-diagnosis as an ordinary event on the
+`events` lane (same envelope, same seq space, same never-drop delivery):
+`name` is `"health_report"` and `source_topic` is `"internal:health"`.
+
+Cadence: once per streaming session start (after a settle delay, default
+60 s), then every `FLEET_HEALTH_INTERVAL_S` (default 21600 s = 6 h). There is
+no on-demand trigger in v1 -- no tool or `cmd` topic requests one.
+`t_start`/`t_end` span the reporting period the report's delta metrics cover:
+from the previous report (or the session start, for a session's first report)
+up to this report's build time.
+
+The `summary` shape is binding:
+
+```json
+{
+  "schema_rev": 1,
+  "source": {"component": "bagel", "bagel_version": "2.2.3", "uptime_s": 3600.5},
+  "checks": [
+    {"name": "connection", "status": "pass", "metrics": {"online": true, "...": "..."}},
+    {"name": "disk", "status": "warn", "reason": "...", "metrics": {"disk_free_bytes": 1000000}}
+  ],
+  "verdict": "warn: disk",
+  "build": {"build_id": "..."}
+}
+```
+
+- `schema_rev`: `1`. Bumped only if this summary's shape changes incompatibly.
+- `source`: `component` is `"bagel"`; `bagel_version` as in the heartbeat;
+  `uptime_s` is seconds since the streaming session started.
+- `checks`: one entry per check. `status` is a **CLOSED enum**:
+  `pass | warn | fail | skipped` -- v1 never emits anything else, and a
+  consumer may reject an unknown status as a conformance violation.
+  Consumers rank severity `fail > warn > skipped > pass`; when aggregating
+  across robots or reports, break ties by the earliest failing report time.
+  `reason` (a human-readable string) is present exactly when `status` is not
+  `"pass"`. `metrics` is a check-specific JSON object of plain numbers,
+  strings, booleans and lists; consumers MUST tolerate new metrics keys.
+- The v1 check list (ten checks, always all present, in this order):
+  `connection`, `queue`, `events_pipeline`, `spool`, `events_backlog`,
+  `disk`, `certificate`, `topic_staleness`, `heartbeat`, `artifacts`.
+  `skipped` marks a check that could not apply (e.g. `certificate` on an
+  unenrolled robot, `artifacts` with no artifact-bearing rules), never a
+  problem. Additive growth of this list does not bump `schema_rev`.
+- Several checks are **delta checks**: they compare cumulative counters
+  (queue drops, spool evictions, reconnects, heartbeat spool failures)
+  against the previous report, so they warn/fail only while a problem is
+  actively occurring within the `t_start`..`t_end` period -- a one-time blip
+  does not warn forever.
+- `verdict`: one deterministic summary line. With any `warn`/`fail` present:
+  `"{worst}: {comma-joined sorted names at that worst status}"` (`fail`
+  outranks `warn`), e.g. `"fail: disk, spool"`. Otherwise `"all {n} checks
+  pass"`, with `" ({k} skipped)"` appended when `k` checks were skipped.
+- `build`: OPTIONAL, same shape and gating as the heartbeat's (§8).
+
+## 8. `heartbeat` payload
+
+Published retained every **30 s** (first beat immediately at session start):
+
+```json
+{
+  "v": 1,
+  "t": 1767312000.0,
+  "online": true,
+  "bagel_version": "2.2.3",
+  "uptime_s": 3600.5,
+  "subscriptions": ["robot/telemetry"],
+  "channels_active": 3,
+  "queue": {"depth": 0, "dropped": 0},
+  "spool": {"bytes": 12288, "pending": 0, "evicted": 0},
+  "disk_free_bytes": 52000000000,
+  "cert_expires_at": "2026-12-01T00:00:00Z",
+  "reconnects": 2
+}
+```
+
+- `bagel_version`: version string, or `"unknown"` when the robot cannot
+  determine its own version.
+- `uptime_s`: seconds since the streaming session started.
+- `subscriptions`: the source topics currently tapped; `channels_active`: the
+  number of resolved channels in the current schema.
+- `queue`: the robot's in-memory sample queue -- `depth` now, `dropped`
+  cumulative (oldest-dropped on overflow).
+- `spool`: on-disk store-and-forward totals summed across lanes -- `bytes` on
+  disk, `pending` records not yet acknowledged by the broker, and
+  **`evicted`: the eviction indicator.** A nonzero (or growing) `evicted`
+  count is how data loss is reported: it counts batches discarded from the
+  capped `channels` lane under sustained disconnect, and it is exactly what a
+  consumer's observed gaps in the `channels` seq (§6) correspond to.
+- `disk_free_bytes`: free space on the robot's cache filesystem.
+- `cert_expires_at`: ISO-8601 expiry of the robot's client certificate, or
+  `null` until the robot is enrolled. Consumers MUST tolerate `null`.
+- `reconnects`: cumulative unexpected disconnects this session.
+
+**OPTIONAL, active:** a `build` block -- `"build": {"build_id": "...",
+"vcs_ref": "..."}` -- carries the robot's build provenance. `build_id` is
+required within the block; `vcs_ref` is OPTIONAL. The whole block is absent
+when the robot has no `BAGEL_BUILD_ID` configured (a `vcs_ref` alone is never
+emitted). Consumers MUST tolerate its absence. The same block, with the same
+gating, appears in every event's `summary` (§7).
+
+Heartbeats are point-in-time liveness: a beat that cannot be published while
+offline is recorded to the robot's spool for diagnostics but is not replayed
+to the broker -- the retained heartbeat/LWT is the liveness source of truth.
+The robot prunes its spooled heartbeat diagnostics on each successful
+reconnect, which keeps that lane bounded; there is no wire-visible change.
+
+## 9. Enrollment and renewal protocol
+
+Both endpoints take JSON bodies and return JSON. `enroll_url` and `renew_url`
+are **BASE** URLs: the client appends the `/v1/...` path itself (a trailing
+slash on the base is tolerated). They may point at entirely different hosts.
+
+### Enroll
+
+```
+POST {enroll_url}/v1/enroll
+{"token": "<one-time token>", "csr_pem": "<PEM CSR>"}
+```
+
+- The private key is generated on the robot and never leaves it; only the CSR
+  crosses the network. The token appears in the request body only -- the
+  client never logs or stores it.
+- `200` response:
+
+```json
+{
+  "cert_pem": "...", "ca_pem": "...", "broker_url": "mqtts://...",
+  "tenant": "...", "robot_id": "...", "expires_at": "2026-12-01T00:00:00Z",
+  "renew_url": "https://..."
+}
+```
+
+  The first six fields are required. `renew_url` is **OPTIONAL**: when
+  present it is the BASE the client's future renewals target; when absent the
+  client renews against `enroll_url`.
+- Error statuses: `401` = unknown token; `410` = token already used or
+  expired. Tokens are single-use.
+- `expires_at` (here and in renew) is ISO-8601 with an explicit timezone
+  (`Z` accepted).
+
+### Renew
+
+```
+POST {renew_url or enroll_url}/v1/renew        (over mTLS)
+{"csr_pem": "<PEM CSR>"}
+```
+
+- Authenticated by the robot's CURRENT client certificate over mTLS; no token.
+  The CSR is backed by a brand-new private key every time.
+- `200` response:
+
+```json
+{"cert_pem": "...", "expires_at": "...", "ca_pem": "...", "renew_url": "..."}
+```
+
+  `cert_pem` and `expires_at` are required. `ca_pem` is OPTIONAL (present
+  only when the CA is being rotated). `renew_url` is **OPTIONAL here too**,
+  with the same BASE semantics: present means the fleet service is rotating
+  the base future renewals target (without re-enrollment); **absent means no
+  change** to whatever base the client already uses.
+- `404` or `501` = renewal not offered on this deployment; the client treats
+  this as expected (quiet), keeps its current certificate, and retries later.
+
+**Client timing** (what a fleet service can rely on): renewal attempts begin
+30 days before `expires_at`, are rate-limited to at most one attempt per day
+(persisted across robot restarts), and use a 30 s HTTP timeout. A failed
+renewal never damages the stored identity. The live MQTT session keeps its
+old certificate until its next reconnect.
+
+## 10. Conformance
+
+What a fleet service MUST accept: everything in §§1-8, including duplicate
+batches (dedupe on seq), seq gaps on `channels` (evictions), re-published
+identical schemas, `null` units and `null` `cert_expires_at`, unknown fields,
+and all three offline `reason` values.
+
+To validate an ingestion pipeline without a robot, run the selftest against
+the target broker from any Bagel checkout or image with the fleet group
+installed:
+
+```bash
+uv run python -m bagel_mcp.sink.publish.selftest [--broker mqtt(s)://...] \
+    [--batches N] [--interval-s S]
+```
+
+It publishes, in order, using the enrolled identity (or `--broker` on a dev
+rig): one schema, N channel batches (default 10, default 0.5 s apart), one
+heartbeat, one event -- then prints a one-line JSON summary and exits 0 (any
+expected failure prints to stderr and exits 1). It requires both spool lanes
+(`channels`, `events`) to be fully drained (no pending unacked entries)
+before it will start -- it allocates and acks real seqs on those lanes, so
+pending backlog would otherwise be silently advanced past; run it with fleet
+streaming paused or stopped. It also refuses outright, before publishing
+anything, if the robot's live fleet session is already connected (detected
+via a bounded subscribe-probe for a retained `online: true` heartbeat) --
+retention and a distinct client id alone don't stop this run's fixture
+schema from reaching a connected live subscriber as a schema update. That
+same check keeps running for the rest of the run, not just at the start: it
+watches for any live activity on the robot's session topics (heartbeat AND
+schema, not heartbeat alone -- a resuming service's heartbeat can be stuck
+behind a lock while its router still reconnects and republishes the schema)
+and aborts the instant any of it appears, since a service could resume
+partway through a multi-batch run just as easily as it could already be
+connected at the start.
+
+All of the selftest's own publishes -- schema, heartbeat, and its final
+close() beat -- are deliberately NOT retained (unlike a real robot's own
+schema/heartbeat) and it arms no last-will either, so a run leaves no
+retained residue on the robot's shared topics for a late subscriber to find;
+retention isn't load-bearing for conformance since a validator subscribes
+before or during the run.
+
+The fixture is fixed and deterministic. The schema is exactly these four
+channels:
+
+| c | type | unit | source_topic | source_field |
+|---|------|------|--------------|--------------|
+| `selftest.number` | `number` | `"1"` | `selftest` | `number` |
+| `selftest.bool`   | `bool`   | `null` | `selftest` | `bool` |
+| `selftest.string` | `string` | `null` | `selftest` | `string` |
+| `selftest.geo`    | `geo`    | `null` | `selftest` | `lat=lat,lon=lon` |
+
+Every batch carries exactly 4 samples (one per channel; the batch size is
+fixed). For batch index `i` (0-based) at publish time `t`:
+
+- `selftest.number`: `v = float(i)`
+- `selftest.bool`: `v = (i % 2 == 0)`
+- `selftest.string`: `v = "selftest-{i}"`
+- `selftest.geo`: `v = {"lat": 52.0 + i*0.001, "lon": 13.0 + i*0.001}`
+
+The heartbeat reports `subscriptions: ["selftest"]` and `channels_active: 4`.
+The event has `name: "selftest"`, an `event_id` of the form
+`selftest-<uuid4>`, a `summary` that contains at least
+`{"kind": "selftest", "batches": N}` (future fields may be added; existing
+readers must not require an exact match), and no `artifact`. Seqs come from
+the robot's real lanes, so they continue from whatever the robot last used
+rather than starting at 1.

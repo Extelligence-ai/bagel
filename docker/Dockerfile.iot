@@ -36,7 +36,16 @@ COPY --chown=${USERNAME}:${USERNAME} uv.lock ./
 COPY --chown=${USERNAME}:${USERNAME} docker/sync-deps.sh ./sync-deps.sh
 ARG DEV_MODE
 ARG JEV_MODE=false
-RUN bash ./sync-deps.sh "${DEV_MODE}" iot
+# Fleet streaming (beta) is opt-in per image: BAGEL_FLEET only controls the
+# fleet extra (signed identity); the iot extra already ships the MQTT client.
+ARG BAGEL_FLEET=true
+# hadolint ignore=SC2086
+RUN set -eux; \
+    groups="iot"; \
+    if [ "_${BAGEL_FLEET}" = "_true" ]; then \
+    groups="${groups} fleet"; \
+    fi; \
+    bash ./sync-deps.sh "${DEV_MODE}" ${groups}
 ENV UV_NO_SYNC=1
 
 # Pre-install the DuckDB postgres extension so TimescaleDB/Postgres sources

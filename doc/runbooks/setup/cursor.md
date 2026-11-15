@@ -16,7 +16,7 @@ full listing metadata as well as the nested skills and MCP connection.
 
 The plugin connects to a local server; it does not install or start Docker.
 Start the container for your data format using the Quickstart below before
-using the plugin. Bagel runs locally and requires no Matcha account. The manual
+using the plugin. Bagel runs locally and requires no account. The manual
 MCP setup below remains available if you only need the server connection.
 
 ## ✅ Verify Bagel Is Running

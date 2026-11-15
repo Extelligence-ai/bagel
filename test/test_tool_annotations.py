@@ -7,6 +7,9 @@ whether caller-selected external endpoints can be reached (open-world).
 A new tool fails here until it classifies itself.
 """
 
+import subprocess
+import sys
+
 from bagel_mcp import server
 
 # name: (read_only, idempotent, destructive, open_world)
@@ -38,6 +41,13 @@ EXPECTED = {
     "export_for_lichtblick": (False, True, False, False),
     "export_for_lerobot": (False, True, False, False),
     "snap_hardware": (False, False, False, False),
+    "enroll_fleet_identity": (False, False, False, True),
+    "stream_live_topics": (False, False, False, True),
+    "stop_live_streams": (False, True, False, True),
+    "pause_fleet_streaming": (False, True, False, True),
+    "resume_fleet_streaming": (False, True, False, True),
+    "describe_stream_status": (True, True, False, False),
+    "unenroll_fleet_identity": (False, True, True, False),
 }
 
 
@@ -60,3 +70,25 @@ def test_annotations_match_the_declared_matrix() -> None:
             annotations.openWorldHint,
         )
         assert got == (read_only, idempotent, destructive, open_world), name
+
+
+def test_server_module_does_not_import_paho_or_cryptography_eagerly() -> None:
+    """Lazy-import regression: server.py imports the fleet `control` and `identity`
+    modules at module scope to register the fleet tools, and neither may drag paho
+    or cryptography in eagerly (see each module's own docstring).
+
+    Runs in a fresh interpreter: in the suite, other tests have already imported
+    both packages, so a sys.modules sweep here could never fail. pyOpenSSL is
+    hidden because botocore (boto3 is a core dependency) loads it, and with it
+    cryptography, whenever it is installed (the `live` extra brings it through
+    roslibpy[tls]); botocore falls back to the ssl module without it.
+    """
+    probe = (
+        "import sys; sys.modules['OpenSSL'] = None; import bagel_mcp.server; "
+        "print(sorted(m for m in sys.modules "
+        "if m.split('.')[0] in ('paho', 'cryptography')))"
+    )
+    result = subprocess.run(  # noqa: S603 -- fixed argv, no user input
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "[]", result.stdout

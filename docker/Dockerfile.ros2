@@ -50,7 +50,16 @@ COPY --chown=${USERNAME}:${USERNAME} uv.lock ./
 COPY --chown=${USERNAME}:${USERNAME} docker/sync-deps.sh ./sync-deps.sh
 ARG DEV_MODE
 ARG JEV_MODE=false
-RUN bash ./sync-deps.sh "${DEV_MODE}" ros2
+# Fleet streaming (beta) is opt-in per image: BAGEL_FLEET=false drops the
+# fleet extra (MQTT client, signed identity) from the container entirely.
+ARG BAGEL_FLEET=true
+# hadolint ignore=SC2086
+RUN set -eux; \
+    groups="ros2"; \
+    if [ "_${BAGEL_FLEET}" = "_true" ]; then \
+    groups="${groups} fleet"; \
+    fi; \
+    bash ./sync-deps.sh "${DEV_MODE}" ${groups}
 ENV UV_NO_SYNC=1
 
 # Expose MCP server port

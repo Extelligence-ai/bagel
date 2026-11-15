@@ -8,11 +8,23 @@ services:
         ROS_DISTRO: kilted
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -37,6 +49,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-jazzy:
@@ -48,11 +72,23 @@ services:
         ROS_DISTRO: jazzy
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -77,6 +113,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   # ROS2 Jazzy plus the on-robot Jev decision model (decide gate, backend: local).
@@ -91,6 +139,7 @@ services:
         UV_VERSION: 0.8.0
         DEV_MODE: false
         JEV_MODE: true
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
@@ -106,6 +155,17 @@ services:
               capabilities: [gpu]
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -130,6 +190,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-iron:
@@ -141,11 +213,23 @@ services:
         ROS_DISTRO: iron
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -170,6 +254,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros2-humble:
@@ -181,11 +277,23 @@ services:
         ROS_DISTRO: humble
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -210,6 +318,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic:
@@ -226,6 +346,17 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -248,6 +379,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   ros1-noetic-cv:
@@ -264,6 +407,17 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -286,6 +440,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   px4:
@@ -301,6 +467,17 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -323,6 +500,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   ardupilot:
@@ -338,6 +527,17 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -360,6 +560,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   betaflight:
@@ -375,6 +587,17 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -397,6 +620,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   apache-arrow:
@@ -412,6 +647,17 @@ services:
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -434,6 +680,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   iot:
@@ -444,11 +702,23 @@ services:
       args:
         UV_VERSION: 0.8.0
         DEV_MODE: false
+        BAGEL_FLEET: ${BAGEL_FLEET:-true}
         MCP_SERVER_PORT: ${MCP_SERVER_PORT}
         JUPYTER_HOST: ${JUPYTER_HOST}
         JUPYTER_PORT: ${JUPYTER_PORT}
     environment:
       CONTAINER_MODE: true
+      # Runtime kill switch for fleet streaming (beta); build-time opt-out is BAGEL_FLEET.
+      FLEET_ENABLED: ${FLEET_ENABLED:-1}
+      # Fleet enrollment/identity settings (settings.py); forwarded
+      # unconditionally like FLEET_ENABLED itself so flipping FLEET_ENABLED
+      # at runtime never also requires editing this file. Unset host vars
+      # resolve to Settings' own defaults inside the container (empty
+      # string is falsy for the two optional str fields). FLEET_IDENTITY_DIRECTORY
+      # is deliberately NOT forwarded -- see the volume mount below.
+      FLEET_ENROLL_TOKEN: ${FLEET_ENROLL_TOKEN:-}
+      FLEET_ENROLL_URL: ${FLEET_ENROLL_URL:-}
+      FLEET_DEV_INSECURE: ${FLEET_DEV_INSECURE:-false}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT}
       # Containers must listen on all container interfaces for Docker port
       # publishing; host-side exposure stays behind the 127.0.0.1 mapping.
@@ -473,6 +743,18 @@ services:
       # list_agent_capabilities and written by save_agent_capability. On Linux,
       # run `mkdir -p ~/.bagel/capabilities` once so the directory is owned by you.
       - ${HOME}/.bagel/capabilities:/home/ubuntu/.bagel/capabilities
+      # Fleet enrollment identity (robot.key, robot.crt, ca.crt,
+      # identity.yaml) -- persisted on the host so it survives container
+      # recreation. Without this mount, the identity written by
+      # `docker compose run` lives only in that one-off container's
+      # writable layer: it is lost the moment the container exits, and
+      # because FLEET_ENROLL_TOKEN is single-use, a later run cannot
+      # re-enroll to replace it (Codex review). On Linux, run
+      # `mkdir -p ~/.bagel/identity` once so the directory is owned by you.
+      # Identity lives on this volume; to relocate it, change the HOST side
+      # of this mapping -- do not set FLEET_IDENTITY_DIRECTORY inside the
+      # container (writes would land off-volume and be lost).
+      - ${HOME}/.bagel/identity:/home/ubuntu/.bagel/identity
       # - <path-to-local-data>:/home/ubuntu/data
 
   # Local LLM for a fully offline stack: your data AND your model never leave

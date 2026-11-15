@@ -1,6 +1,7 @@
 """File-backed topic buffer writer and reader."""
 
 import json
+import logging
 import pathlib
 import pickle
 import shutil
@@ -126,6 +127,7 @@ class TopicBufferWriter:
         self._message_count = 0
         self._last_run_at = None
         self._last_timestamp_seconds = None
+        self._tap: Callable[[str, float, dict[str, Any]], None] | None = None
 
         # For an OnEvent cadence, edge-record the live stream: fire the pipeline on each
         # rising edge of the predicate, delayed by the cadence's forward window so the
@@ -147,6 +149,11 @@ class TopicBufferWriter:
     def topic(self) -> str:
         """Topic name for the messages held by this buffer."""
         return self._topic
+
+    @property
+    def struct(self) -> pa.StructType:
+        """PyArrow StructType for the topic (read-only; used to resolve fleet-stream channels)."""
+        return self._struct
 
     @property
     def pipeline(self) -> Pipeline | None:
@@ -175,6 +182,15 @@ class TopicBufferWriter:
 
         """
         return self._last_timestamp_seconds
+
+    def set_tap(self, tap: Callable[[str, float, dict[str, Any]], None] | None) -> None:
+        """Set (or clear, with None) an opaque callback fed every appended message.
+
+        The tap fires after this buffer's own pipeline dispatch, with the raw
+        message dict as passed to `append()`. It must never block or raise:
+        exceptions are caught and logged, never propagated.
+        """
+        self._tap = tap
 
     def append(self, msg: dict[str, Any]) -> None:
         """Append a message to the buffer."""
@@ -211,6 +227,12 @@ class TopicBufferWriter:
         ):
             self._worker.submit(timestamp_seconds)
             self._last_run_at = timestamp_seconds
+
+        if self._tap is not None:
+            try:
+                self._tap(self._topic, timestamp_seconds, msg)
+            except Exception:  # the tap is opaque; it must never break append
+                logging.getLogger(__name__).debug("buffer tap raised", exc_info=True)
 
         self._message_count += 1
         self._last_timestamp_seconds = timestamp_seconds
