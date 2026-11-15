@@ -207,9 +207,10 @@ extra is missing, Bagel's error names the exact command to add it.
 MCAP, CSV / JSON / Parquet, ROS text logs, PlotJuggler / Lichtblick / LeRobot
 exports and S3 upload need no extra.
 
-PX4 log parsing does not require Git. Git and network access are used only for
-optional field descriptions; pass `download_description: false` in the tool's
-`args` to skip fetching those descriptions.
+PX4 log parsing works offline. Network access is used only for optional field
+descriptions: Bagel fetches each message type's `.msg` file from PX4-Autopilot at
+the log's firmware commit (a few KB each, cached on disk). Pass
+`download_description: false` in the tool's `args` to skip them.
 
 To upgrade, repeat the extras you installed with, so their dependencies
 update too. `uvx` picks up new releases on its own (force it with

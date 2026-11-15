@@ -1,4 +1,4 @@
-"""PX4's optional online descriptions must not prevent local ULog reads."""
+"""PX4's optional online descriptions must not need Git or block local ULog reads."""
 
 import os
 import pathlib
@@ -13,8 +13,8 @@ def test_px4_reads_without_a_git_executable(
     tmp_path: pathlib.Path, download_description: bool
 ) -> None:
     pytest.importorskip("pyulog")
-    # A fresh interpreter exercises GitPython's import-time executable probe,
-    # even when another test has already imported it successfully on this host.
+    # A fresh interpreter, with no usable Git executable: descriptions are plain HTTPS
+    # file fetches, so Git must never be needed (it used to clone all of PX4-Autopilot).
     script = f"""
 from bagel_mcp.source.px4.ulg import SourceFactory
 from bagel_mcp.topic.px4.ulg import TopicRegistry
@@ -26,7 +26,8 @@ registry = TopicRegistry(download_description={download_description!r})
 topic = 'vehicle_imu_0'
 assert registry.message_count(topic, data) == 83
 assert registry.struct(topic, data).get_field_index('timestamp') >= 0
-assert registry.describe(topic, data) is None
+description = registry.describe(topic, data)
+assert description is None or "delta_angle" in description  # None offline
 dataset = MessageDataset(use_cache=False)
 assert dataset.to_duckdb(source, registry, topics=[topic]).shape == (83, 2)
 """

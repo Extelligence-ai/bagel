@@ -10,70 +10,84 @@ See references:
 from __future__ import annotations
 
 import functools
+import logging
 import pathlib
-import shutil
-from typing import TYPE_CHECKING, Final
+import re
+import urllib.error
+import urllib.request
+from typing import Final
 
 import lark
 
 from bagel_mcp import artifacts
 
-if TYPE_CHECKING:
-    import git
-
 REPO_NAME: Final[str] = "PX4-Autopilot"
 REPO_URL: Final[str] = f"https://github.com/PX4/{REPO_NAME}"
+RAW_URL: Final[str] = f"https://raw.githubusercontent.com/PX4/{REPO_NAME}"
 DEFAULT_BRANCH: Final[str] = "main"
+FETCH_TIMEOUT_SECONDS: Final[float] = 5.0
+_MISSING: Final[str] = ".missing"
+_REF = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+# Set after the first network failure, so an offline machine pays one timeout per
+# process instead of one per message type.
+_offline = False
 
 
-@functools.lru_cache(maxsize=16)
-def git_clone(commit_sha: str | None, overwrite: bool) -> git.Repo:
-    """Clone the PX4-Autopilot repository.
+def _candidate_paths(type_name: str) -> list[str]:
+    """Return where the .msg file may live, newest layout first.
 
-    Args:
-        commit_sha (str | None): The specific commit SHA to checkout, or None to use the
-            default branch.
-        overwrite (bool): Whether to overwrite the local repo copy if it exists.
-
-    Returns:
-        git.Repo: The cloned git repository.
-
+    PX4 >= 1.14 names files in CamelCase (some under msg/versioned/); older releases
+    use the snake_case type name.
     """
-    # GitPython probes for the Git executable at import time. Local ULog reads
-    # do not need it; callers already tolerate unavailable online descriptions.
-    import git
-
-    artifacts.git_clone_directory().mkdir(parents=True, exist_ok=True)
-    repo_dir = artifacts.git_clone_directory() / REPO_NAME
-    if repo_dir.exists() and not overwrite:
-        repo = git.Repo(repo_dir)
-    else:
-        if repo_dir.exists():
-            shutil.rmtree(repo_dir)
-        repo = git.Repo.clone_from(REPO_URL, repo_dir)
-
-    repo.git.fetch()
-    if commit_sha is None:
-        repo.git.checkout(DEFAULT_BRANCH)
-        repo.git.pull("origin", DEFAULT_BRANCH)
-
-    return repo
+    camel = "".join(word.capitalize() for word in type_name.split("_"))
+    return [f"msg/{camel}.msg", f"msg/versioned/{camel}.msg", f"msg/{type_name}.msg"]
 
 
-@functools.lru_cache(maxsize=256)
+def _fetch(ref: str, path: str) -> str | None:
+    """Return a file's content at a ref, None if it doesn't exist there."""
+    global _offline  # noqa: PLW0603 -- process-wide circuit breaker
+    if _offline:
+        return None
+    url = f"{RAW_URL}/{ref}/{path}"
+    try:
+        with urllib.request.urlopen(url, timeout=FETCH_TIMEOUT_SECONDS) as response:  # noqa: S310 -- fixed https host
+            return response.read().decode("utf-8")
+    except urllib.error.HTTPError as error:
+        if error.code == 404:  # noqa: PLR2004
+            return None
+        raise
+    except (urllib.error.URLError, TimeoutError):
+        _offline = True
+        raise
+
+
 def msg_definition(type_name: str, commit_sha: str | None, overwrite: bool) -> str | None:
-    """Return the uORB message definition (.msg) file content for the given message type."""
-    repo = git_clone(commit_sha, overwrite)
+    """Return the uORB message definition (.msg) file content for the given message type.
 
-    file_stem = "".join([word.capitalize() for word in type_name.split("_")])
-    file_name = f"{file_stem}.msg"
-    for path in [f"msg/{file_name}", f"msg/versioned/{file_name}"]:
-        try:
-            blob = repo.commit(commit_sha or DEFAULT_BRANCH).tree / path
-            return blob.data_stream.read().decode("utf-8")
-        except KeyError:
-            pass
-
+    Fetches only that file from the PX4-Autopilot repository at the log's commit (or
+    the default branch), and caches it on disk, found or not, so each type is fetched
+    once per commit.
+    """
+    ref = commit_sha or DEFAULT_BRANCH
+    if not _REF.match(ref) or not re.match(r"^\w+$", type_name):
+        return None
+    cache = artifacts.git_clone_directory() / "px4-msg" / ref
+    cached, missing = cache / f"{type_name}.msg", cache / f"{type_name}{_MISSING}"
+    if not overwrite:
+        if cached.exists():
+            return cached.read_text(encoding="utf-8")
+        if missing.exists():
+            return None
+    for path in _candidate_paths(type_name):
+        content = _fetch(ref, path)
+        if content is not None:
+            cache.mkdir(parents=True, exist_ok=True)
+            cached.write_text(content, encoding="utf-8")
+            return content
+    cache.mkdir(parents=True, exist_ok=True)
+    missing.touch()
+    logging.info("No .msg for %s at %s", type_name, ref)
     return None
 
 
