@@ -14,7 +14,7 @@ import filelock
 import yaml
 from poml import poml
 
-from bagel_mcp import artifacts, compare, mcp_compat, query
+from bagel_mcp import artifacts, compare, health, mcp_compat, query
 from bagel_mcp.agent import capabilities as agent_capabilities
 from bagel_mcp.di import module
 from bagel_mcp.di.types.base_module import BaseModule
@@ -359,6 +359,61 @@ def compare_logs(  # noqa: PLR0913
         baseline_args=baseline_args,
         candidate_args=candidate_args,
         min_effect=min_effect,
+    )
+
+
+@server.tool(
+    title="Check robot health",
+    description=(
+        "One-call health report card for a recorded log, a time window of it, an event's "
+        "captured artifact, or a live sink buffer's last N seconds (preflight go/no-go). "
+        "Checks power (voltage min/max/end, largest drop), IMU (per-axis spread, worst "
+        "vibration burst), GPS fix quality, data gaps and logged errors. Fields are matched "
+        "across PX4, ArduPilot, ROS and other formats; a check the log can't support is "
+        "'skipped' with a reason, never failed. Returns ok/warn/fail per check, the numbers "
+        "behind each, and a verdict (go / investigate / no-go). Quote its numbers."
+    ),
+    annotations=mcp_compat.tool_annotations(read_only=True, idempotent=True),
+)
+def check_robot_health(  # noqa: PLR0913
+    path: str,
+    start_seconds: float | None = None,
+    end_seconds: float | None = None,
+    last_seconds: float | None = None,
+    topics: list[str] | None = None,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run the robot health checks on a log, a window of it, or its last N seconds.
+
+    Args:
+        path (str): A recorded log, an event artifact, or a live sink directory (the path
+            `subscribe_live_topics` returned).
+        start_seconds (float | None, optional): Window start, source time (inclusive).
+        end_seconds (float | None, optional): Window end, source time (inclusive).
+        last_seconds (float | None, optional): Check only the last N seconds before
+            `end_seconds` (or the end of the data): the live preflight window. Silent
+            topics count as faults in this mode. Not together with `start_seconds`.
+        topics (list[str] | None, optional): Topics whose gaps to check (and that must be
+            publishing); defaults to the topics the other checks used.
+        args (dict[str, Any] | None, optional): Source arguments, as for other tools.
+
+    Returns:
+        dict[str, Any]: `checks` (power, imu, gps, data_gaps, errors: each with `status`
+        ok / warn / fail / skipped and its numbers), `verdict` (go / investigate / no-go),
+        `window_seconds`, and the `rules` (thresholds) behind the statuses.
+
+    Examples:
+        As an LLM prompt:
+            Is the robot OK to run? Check the last 30 seconds of the live buffer.
+
+    """
+    return health.check(
+        expand_user(path),
+        args=args,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        last_seconds=last_seconds,
+        topics=topics,
     )
 
 
