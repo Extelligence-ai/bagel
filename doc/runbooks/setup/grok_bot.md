@@ -41,8 +41,9 @@ Grok Bot's computer can't reach your laptop. Get logs onto it by asking Grok Bot
 
 Then ask questions about them by path, the same as with any other client.
 
-Live robots (ROS 2 topics, rosbridge, MQTT on your network) aren't reachable
-from Grok Bot's computer. For those, run Bagel locally with Docker.
+Live robots (ROS topics over rosbridge, MQTT on your network) aren't reachable
+from Grok Bot's computer. For those, run Bagel on a machine on the robot's
+network: `uvx --from "bagel-mcp[live,iot]" bagel-mcp --transport stdio`, or Docker.
 
 ## 🎉 Congrats! You are all set.
 
