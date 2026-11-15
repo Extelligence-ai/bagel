@@ -7,7 +7,7 @@ import pathlib
 from bagel_mcp import bags
 from bagel_mcp.di import module
 from bagel_mcp.pipeline import base, messages
-from bagel_mcp.pipeline.tasks.reduce.base import ReduceMixin
+from bagel_mcp.pipeline.tasks.reduce.base import ReduceMixin, check_options
 
 FEATURE = "Writing reduced ROS 2 .db3 bags"
 
@@ -27,43 +27,52 @@ class ReduceRosbag(base.ArtifactMixin, ReduceMixin, messages.TopicMessageMixin, 
 
     def __init__(  # noqa: PLR0913
         self,
-        event_topic: str,
-        predicate: str,
-        pre_seconds: float,
+        event_topic: str | None = None,
+        predicate: str | None = None,
+        pre_seconds: float = 0.0,
         post_seconds: float = 0.0,
         debounce_seconds: float = 0.0,
         topics: list[str] | None = None,
+        exclude_topics: list[str] | None = None,
         output_serialization_format: str = "cdr",
     ) -> None:
         """Initialize the task.
 
         Args:
-            event_topic (str): The topic whose messages are tested against ``predicate``.
-            predicate (str): A SQL boolean expression over ``event_topic`` columns
-                (the same table contract as the ``gates.sql`` gate), e.g.
-                ``"linear_acceleration_x < -10"``. An event is the rising edge where the
-                predicate transitions from False to True.
-            pre_seconds (float): Seconds to keep *before* each event.
+            event_topic (str | None, optional): The topic whose messages are tested
+                against ``predicate``. Omit with ``predicate`` to keep the whole time range
+                (e.g. only to strip topics). Defaults to None.
+            predicate (str | None, optional): A SQL boolean expression over
+                ``event_topic`` columns (the same table contract as the ``gates.sql``
+                gate), e.g. ``"linear_acceleration_x < -10"``. An event is the rising
+                edge where the predicate transitions from False to True. Defaults to None.
+            pre_seconds (float, optional): Seconds to keep *before* each event.
+                Defaults to 0.0.
             post_seconds (float, optional): Seconds to keep *after* each event.
                 Defaults to 0.0.
             debounce_seconds (float, optional): Minimum seconds between consecutive
                 events; closer events are coalesced. Defaults to 0.0 (no debounce).
             topics (list[str] | None, optional): Topics to write to the reduced bag. If
                 None, all available topics are written. Defaults to None.
+            exclude_topics (list[str] | None, optional): Topics to drop instead; every
+                other topic is written. Not together with ``topics``. Defaults to None.
             output_serialization_format (str, optional): Serialization format for the
                 output. Defaults to "cdr".
 
         Raises:
-            ValueError: If 'topics' is specified but empty.
-            ValueError: If any of pre_seconds, post_seconds, or debounce_seconds is negative.
+            ValueError: If only one of event_topic/predicate is set, both topics and
+                exclude_topics are set, either list is empty, or a duration is negative.
 
         """
-        if topics is not None and len(topics) == 0:
-            raise ValueError("If 'topics' is specified, it must contain at least one topic name.")
-        if pre_seconds < 0 or post_seconds < 0:
-            raise ValueError("'pre_seconds' and 'post_seconds' must be non-negative.")
-        if debounce_seconds < 0:
-            raise ValueError(f"'debounce_seconds' must be non-negative, got {debounce_seconds}.")
+        check_options(
+            event_topic,
+            predicate,
+            pre_seconds,
+            post_seconds,
+            debounce_seconds,
+            topics,
+            exclude_topics,
+        )
 
         self._event_topic = event_topic
         self._predicate = predicate
@@ -71,6 +80,7 @@ class ReduceRosbag(base.ArtifactMixin, ReduceMixin, messages.TopicMessageMixin, 
         self._post_seconds = post_seconds
         self._debounce_seconds = debounce_seconds
         self._topics = topics
+        self._exclude_topics = exclude_topics
         self._output_serialization_format = output_serialization_format
 
         self._output_storage_id = "sqlite3"
@@ -78,7 +88,7 @@ class ReduceRosbag(base.ArtifactMixin, ReduceMixin, messages.TopicMessageMixin, 
     def execute(self, asof_seconds: float, lookback: base.Lookback | None) -> list[pathlib.Path]:
         """Execute the task at the given time."""
         data_source = self.factory.build()
-        topics = self._topics or self.registry.available_topics(data_source)
+        topics = self._kept_topics(self.registry.available_topics(data_source))
 
         events, intervals = self._kept_intervals(asof_seconds)
         logging.info(

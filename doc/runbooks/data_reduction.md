@@ -103,6 +103,34 @@ tasks:
     args: {post_seconds: 10}
 ```
 
+## Strip topics (no event windows)
+
+To share a log without some topics (camera, GPS) or just to shrink it, leave out
+`event_topic` and `predicate`: the whole time range is copied and only the topic
+selection applies. `exclude_topics` drops the listed topics; `topics` keeps only the
+listed ones (one or the other). Names that aren't in the log are refused, so a typo
+can't silently leave the camera in, and dropping every topic is refused too.
+
+```yaml
+name: share_without_camera
+site: warehouse
+asset: forklift
+path: ./data/logs/flight_042
+allow_failure: false
+cadence:
+  topic: /imu
+  when: once_at_end
+tasks:
+  - module: bagel_mcp.pipeline.tasks.reduce.mcap
+    args:
+      exclude_topics: [/camera/image_raw, /gps/fix]
+```
+
+`exclude_topics` combines with a predicate as well: event windows, minus those topics.
+Use `bagel_mcp.pipeline.tasks.reduce.ros2.db3` for `.db3` bags. Flight-controller logs
+(.ulg, .bin, .bbl) can't be rewritten; export the topics you need with
+`write_topics_to_file` instead.
+
 ## Live edge-recording
 
 Attach the reduction to a live stream so only event windows are ever written. Use an

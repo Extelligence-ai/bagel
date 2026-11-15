@@ -12,7 +12,7 @@ import pathlib
 
 from bagel_mcp.di import module
 from bagel_mcp.pipeline import base, mcap_raw, messages
-from bagel_mcp.pipeline.tasks.reduce.base import ReduceMixin
+from bagel_mcp.pipeline.tasks.reduce.base import ReduceMixin, check_options
 
 NANOSECOND = 1
 MICROSECOND = 1_000 * NANOSECOND
@@ -32,37 +32,47 @@ class ReduceMcap(base.ArtifactMixin, ReduceMixin, messages.TopicMessageMixin, ba
 
     def __init__(  # noqa: PLR0913
         self,
-        event_topic: str,
-        predicate: str,
-        pre_seconds: float,
+        event_topic: str | None = None,
+        predicate: str | None = None,
+        pre_seconds: float = 0.0,
         post_seconds: float = 0.0,
         debounce_seconds: float = 0.0,
         topics: list[str] | None = None,
+        exclude_topics: list[str] | None = None,
     ) -> None:
         """Initialize the task.
 
         Args:
-            event_topic (str): The topic whose messages are tested against ``predicate``.
-            predicate (str): A SQL boolean expression over ``event_topic`` columns, e.g.
-                ``"imu['linear_acceleration']['x'] < -10"``.
-            pre_seconds (float): Seconds to keep before each event.
+            event_topic (str | None, optional): The topic whose messages are tested
+                against ``predicate``. Omit with ``predicate`` to keep the whole time range
+                (e.g. only to strip topics). Defaults to None.
+            predicate (str | None, optional): A SQL boolean expression over
+                ``event_topic`` columns, e.g. ``"imu['linear_acceleration']['x'] < -10"``.
+                Defaults to None.
+            pre_seconds (float, optional): Seconds to keep before each event. Defaults to 0.0.
             post_seconds (float, optional): Seconds to keep after each event. Defaults to 0.0.
             debounce_seconds (float, optional): Minimum seconds between consecutive events.
                 Defaults to 0.0.
             topics (list[str] | None, optional): Topics to keep in the reduced bag. If None,
                 all topics present in the source are kept. Defaults to None.
+            exclude_topics (list[str] | None, optional): Topics to drop instead (e.g.
+                camera or GPS before sharing a log); every other topic is kept. Not
+                together with ``topics``. Defaults to None.
 
         Raises:
-            ValueError: If 'topics' is specified but empty.
-            ValueError: If any of pre_seconds, post_seconds, or debounce_seconds is negative.
+            ValueError: If only one of event_topic/predicate is set, both topics and
+                exclude_topics are set, either list is empty, or a duration is negative.
 
         """
-        if topics is not None and len(topics) == 0:
-            raise ValueError("If 'topics' is specified, it must contain at least one topic name.")
-        if pre_seconds < 0 or post_seconds < 0:
-            raise ValueError("'pre_seconds' and 'post_seconds' must be non-negative.")
-        if debounce_seconds < 0:
-            raise ValueError(f"'debounce_seconds' must be non-negative, got {debounce_seconds}.")
+        check_options(
+            event_topic,
+            predicate,
+            pre_seconds,
+            post_seconds,
+            debounce_seconds,
+            topics,
+            exclude_topics,
+        )
 
         self._event_topic = event_topic
         self._predicate = predicate
@@ -70,25 +80,39 @@ class ReduceMcap(base.ArtifactMixin, ReduceMixin, messages.TopicMessageMixin, ba
         self._post_seconds = post_seconds
         self._debounce_seconds = debounce_seconds
         self._topics = topics
+        self._exclude_topics = exclude_topics
 
     def execute(self, asof_seconds: float, lookback: base.Lookback | None) -> list[pathlib.Path]:
         """Execute the task at the given time."""
+        data_source = self.factory.build()
+        if not hasattr(data_source, "mcap_files"):
+            raise ValueError(
+                "This reduce task rewrites MCAP files (use reduce.ros2.db3 for .db3 bags). "
+                "Flight-controller logs (.ulg, .bin, .bbl) can't be rewritten; export the "
+                "topics you need with write_topics_to_file instead."
+            )
+        topics = self._kept_topics(self.registry.available_topics(data_source))
         _events, intervals = self._kept_intervals(asof_seconds)
         logging.info(
-            "Reduce MCAP: %d event(s) -> %d kept window(s) on topic '%s'",
+            "Reduce MCAP: %d event(s) -> %d kept window(s) on topic '%s', %d topic(s) kept",
             len(_events),
             len(intervals),
             self._event_topic,
+            len(topics),
         )
-        intervals_ns = [(int(start * SECOND), int(end * SECOND)) for start, end in intervals]
+        whole_log = intervals == [(None, None)]
+        intervals_ns = (
+            []
+            if whole_log
+            else [(int(start * SECOND), int(end * SECOND)) for start, end in intervals]
+        )
 
-        data_source = self.factory.build()
         output_file = self.artifact_path(asof_seconds, ".mcap")
 
         records = (
             record
-            for record in mcap_raw.iter_raw_messages(data_source.mcap_files, self._topics)
-            if mcap_raw.in_intervals(record[2].log_time, intervals_ns)
+            for record in mcap_raw.iter_raw_messages(data_source.mcap_files, topics)
+            if whole_log or mcap_raw.in_intervals(record[2].log_time, intervals_ns)
         )
         mcap_raw.write_raw_messages(output_file, records)
 
