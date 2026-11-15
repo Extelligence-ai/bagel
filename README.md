@@ -76,9 +76,9 @@ Open your agent and ask:
 
 > Summarize the bag "~/logs/run_42.mcap".
 
-The `ros` extra reads ROS 1 and ROS 2 bags. Flight logs, CAN / MDF4, live MQTT
-and the rest are [extras too](#-install-with-uvx-or-pip-no-docker). Live ROS
-robots (rosbridge) and fleet/edge pipelines run in [Docker](#-run-with-docker-live-robots-fleet-and-edge-distro-specific-ros).
+The `ros` extra reads ROS 1 and ROS 2 bags, and the `live` extra connects to a
+running robot's rosbridge. Flight logs, CAN / MDF4, live MQTT and the rest are
+[extras too](#-install-with-uvx-or-pip-no-docker). Fleet/edge pipelines run in [Docker](#-run-with-docker-fleet-and-edge-distro-specific-ros).
 
 ### 🥯 Key Features
 
@@ -88,7 +88,7 @@ robots (rosbridge) and fleet/edge pipelines run in [Docker](#-run-with-docker-li
   one sentence becomes an auditable [pipeline](./doc/runbooks/pipelines.md): previewed
   before a byte is written, then run once, across a fleet, or standing at the edge.
 - **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, Grok Build, Grok Bot, and more.
-- **Installs your way**: `pip` / `uvx` for recorded data, Docker images for live robots and the edge.
+- **Installs your way**: `pip` / `uvx` for recorded data and live robots, Docker images for the edge.
 - **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
 - **Fleet streaming (beta)**: publish live channels, events, and heartbeats from the
   edge to your own fleet broker ([runbook](./doc/runbooks/fleet_streaming.md)). On in
@@ -128,8 +128,8 @@ Two ways to run Bagel. Pick by data:
 
 | You have | Run Bagel with |
 | --- | --- |
-| Recorded data: ROS 1 `.bag` and ROS 2 `.db3` / `.mcap` bags, flight logs (PX4, ArduPilot, Betaflight), CAN / MDF4, CSV / JSON / Parquet, ROS text logs; live MQTT robots | **`uvx` or `pip`**, below: no Docker, no ROS install |
-| Live ROS robots (rosbridge), fleet and edge deployments | **Docker**, further down: the images carry the ROS stacks and the standing-pipeline runtime |
+| Recorded data: ROS 1 `.bag` and ROS 2 `.db3` / `.mcap` bags, flight logs (PX4, ArduPilot, Betaflight), CAN / MDF4, CSV / JSON / Parquet, ROS text logs; live ROS robots (rosbridge) and MQTT | **`uvx` or `pip`**, below: no Docker, no ROS install |
+| Fleet and edge deployments, distro-specific ROS | **Docker**, further down: the images carry the ROS stacks and the standing-pipeline runtime |
 
 ### 🐍 Install with uvx or pip (no Docker)
 
@@ -202,6 +202,7 @@ extra is missing, Bagel's error names the exact command to add it.
 | `ardupilot` | ArduPilot `.bin` |
 | `betaflight` | Betaflight `.bbl` / `.bfl` |
 | `automotive` | CAN captures (`.blf`, `.asc` + DBC) and ASAM MDF4 |
+| `live` | Live ROS 1 and ROS 2 topics over the robot's rosbridge websocket |
 | `iot` | Live MQTT (incl. Sparkplug B) and InfluxDB sources |
 | `viz` | Rerun export |
 | `upload` | GCS and Azure Blob upload tasks |
@@ -228,9 +229,10 @@ Then prompt, pointing at your own file:
 > them with the pure-Python [rosbags](https://pypi.org/project/rosbags/) library
 > (sqlite3 and MCAP storage, zstd / bz2 / lz4 compression, message types from the
 > bag itself or from the bundled interface definitions of every distro from Humble
-> on). Live ROS topics (rosbridge) and the fleet/edge runtime stay with Docker.
+> on). Live ROS topics need no ROS install either: the `live` extra talks to the
+> robot's rosbridge websocket. The fleet/edge runtime stays with Docker.
 
-### 🐳 Run with Docker (live robots, fleet and edge, distro-specific ROS)
+### 🐳 Run with Docker (fleet and edge, distro-specific ROS)
 
 > [!TIP]
 > **Already have Claude Code?** Just paste the link to this repo and tell Claude
