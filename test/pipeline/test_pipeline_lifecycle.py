@@ -95,6 +95,26 @@ def test_list_pipelines_falls_back_for_unparseable_yaml(pipelines_dir: pathlib.P
     assert entries[0]["summary"]  # some fallback text, non-empty
 
 
+def test_list_pipelines_keeps_listing_when_a_file_vanishes(
+    pipelines_dir: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #234: a file deleted (or made unreadable) between the glob and the read is
+    # noted, and the rest of the listing still comes back.
+    _save("keeps")
+    _save("vanishes")
+    real_read_text = pathlib.Path.read_text
+
+    def flaky_read_text(self: pathlib.Path, *args: object, **kwargs: object) -> str:
+        if self.stem == "vanishes":
+            raise FileNotFoundError(self)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "read_text", flaky_read_text)
+    entries = {entry["name"]: entry["summary"] for entry in server.list_pipelines()}
+    assert entries["vanishes"] == "unreadable: FileNotFoundError"
+    assert "unreadable" not in entries["keeps"]
+
+
 def test_list_pipelines_summary_handles_non_string_fields(pipelines_dir: pathlib.Path) -> None:
     """A hand-edited pipeline can give site/asset a non-string value (Codex/Copilot review)."""
     (pipelines_dir / "weird.yaml").write_text(
