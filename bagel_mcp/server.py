@@ -1171,22 +1171,23 @@ def list_pipelines() -> list[dict[str, str]]:
     root = pathlib.Path(settings.PIPELINES_DIRECTORY)
     if not root.is_dir():
         return []
-    entries = [
-        {
-            "name": yaml_file.stem,
-            "path": str(yaml_file),
-            "summary": _pipeline_summary(
-                yaml_file.read_text(encoding="utf-8", errors="replace"), yaml_file
-            ),
-        }
-        for yaml_file in root.glob("*.yaml")
+    entries = []
+    for yaml_file in root.glob("*.yaml"):
         # is_symlink() excludes a *.yaml symlink whose target is outside the
         # trusted root: is_file() alone follows it, so read_text() would read
         # and summarize a file this listing has no business exposing -- and
         # one delete_pipeline refuses anyway, since its containment check
         # resolves the same symlink (review #224).
-        if yaml_file.is_file() and not yaml_file.is_symlink()
-    ]
+        if not yaml_file.is_file() or yaml_file.is_symlink():
+            continue
+        try:
+            text = yaml_file.read_text(encoding="utf-8", errors="replace")
+        except OSError as error:
+            # Deleted or made unreadable after the glob (#234): note it, keep listing.
+            summary = f"unreadable: {type(error).__name__}"
+        else:
+            summary = _pipeline_summary(text, yaml_file)
+        entries.append({"name": yaml_file.stem, "path": str(yaml_file), "summary": summary})
     entries.sort(key=lambda entry: entry["name"])
     return entries
 
