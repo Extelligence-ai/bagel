@@ -7,10 +7,8 @@ whether caller-selected external endpoints can be reached (open-world).
 A new tool fails here until it classifies itself.
 """
 
-import importlib
+import subprocess
 import sys
-
-import pytest
 
 from bagel_mcp import server
 
@@ -72,28 +70,23 @@ def test_annotations_match_the_declared_matrix() -> None:
         assert got == (read_only, idempotent, destructive, open_world), name
 
 
-def test_server_module_does_not_import_paho_or_cryptography_eagerly(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Lazy-import regression: server.py now imports `control` at module scope
-    (alongside the existing `fleet_identity` import) to register the fleet
-    tools below -- neither drags paho or cryptography in eagerly (see each
-    module's own docstring), mirroring test_control.py's/test_service.py's
-    sweep idiom.
+def test_server_module_does_not_import_paho_or_cryptography_eagerly() -> None:
+    """Lazy-import regression: server.py imports the fleet `control` and `identity`
+    modules at module scope to register the fleet tools, and neither may drag paho
+    or cryptography in eagerly (see each module's own docstring).
+
+    Runs in a fresh interpreter: in the suite, other tests have already imported
+    both packages, so a sys.modules sweep here could never fail. pyOpenSSL is
+    hidden because botocore (boto3 is a core dependency) loads it, and with it
+    cryptography, whenever it is installed (the `live` extra brings it through
+    roslibpy[tls]); botocore falls back to the ssl module without it.
     """
-    stray = [
-        m
-        for m in sys.modules
-        if m == "paho"
-        or m.startswith("paho.")
-        or m == "cryptography"
-        or m.startswith("cryptography.")
-    ]
-    if stray:
-        pytest.skip(f"paho/cryptography already preloaded by another plugin: {stray}")
-    monkeypatch.delitem(sys.modules, "bagel_mcp.server", raising=False)
-    importlib.import_module("bagel_mcp.server")
-    assert not any(
-        m == "paho" or m.startswith("paho.") or m == "cryptography" or m.startswith("cryptography.")
-        for m in sys.modules
+    probe = (
+        "import sys; sys.modules['OpenSSL'] = None; import bagel_mcp.server; "
+        "print(sorted(m for m in sys.modules "
+        "if m.split('.')[0] in ('paho', 'cryptography')))"
     )
+    result = subprocess.run(  # noqa: S603 -- fixed argv, no user input
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "[]", result.stdout
