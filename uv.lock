@@ -321,7 +321,7 @@ wheels = [
 
 [[package]]
 name = "bagel-mcp"
-version = "2.5.5"
+version = "2.5.6"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
