@@ -44,6 +44,8 @@ class TopicSqlQuery(base.ArtifactMixin, messages.TopicMessageMixin, base.Task):
             topics=[self._topic], asof_seconds=asof_seconds, lookback=lookback
         )
         result = query.sql(relation, self._topic, self._statement)
+        # The sandbox can't write files; write the result from the ordinary connection.
+        result = query.from_arrow(result.fetch_arrow_reader())
 
         output_file = self.artifact_path(asof_seconds, f".{self._output_format.value}")
 

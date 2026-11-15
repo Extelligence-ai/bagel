@@ -104,6 +104,5 @@ def evaluate_predicate(topic: str, struct: pa.StructType, message: dict, predica
             topic: pa.array([message], type=struct),
         }
     )
-    relation = query.from_arrow(table)
-    row = relation.project(f"({predicate}) AS hit").fetchone()
+    row = query.sandbox().from_arrow(table).project(f"({predicate}) AS hit").fetchone()
     return bool(row[0]) if row and row[0] is not None else False

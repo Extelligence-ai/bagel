@@ -1,5 +1,6 @@
 """Shared logic for reduce tasks across data source formats."""
 
+from bagel_mcp import query
 from bagel_mcp.pipeline import windows
 from bagel_mcp.settings import settings
 from bagel_mcp.source.context import SourceContext
@@ -21,9 +22,7 @@ class ReduceMixin:
         """
         relation = self.to_duckdb(topics=[self._event_topic], asof_seconds=asof_seconds)
         ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
-        rows = windows.relation_rows(
-            relation.project(f"{ts_column} AS ts, ({self._predicate}) AS hit").order("ts")
-        )
+        rows = windows.relation_rows(query.predicate_hits(relation, ts_column, self._predicate))
         bounds = SourceContext(self.factory, self.registry, self.dataset).bounds()
         plan = windows.plan_reduction(
             rows,

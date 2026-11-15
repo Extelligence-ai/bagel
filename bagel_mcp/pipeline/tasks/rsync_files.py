@@ -28,6 +28,66 @@ JSON_LINE_FORMAT = (
     "}"
 )
 
+# Options are an allowlist: rsync flags such as -e/--rsh and --rsync-path run commands,
+# and --log-file/--write-batch write files (GHSA-gx2g-3pch-43q5). For an SSH port or
+# key, use a Host entry in ~/.ssh/config instead of -e.
+ALLOWED_SHORT_FLAGS = frozenset("acdhlmprtuvzSHAX")
+ALLOWED_LONG_FLAGS = frozenset(
+    {
+        "--archive",
+        "--recursive",
+        "--verbose",
+        "--compress",
+        "--times",
+        "--perms",
+        "--links",
+        "--checksum",
+        "--update",
+        "--human-readable",
+        "--prune-empty-dirs",
+        "--size-only",
+        "--ignore-existing",
+        "--partial",
+        "--delete",
+        "--dirs",
+        "--sparse",
+        "--hard-links",
+        "--acls",
+        "--xattrs",
+        "--whole-file",
+    }
+)
+ALLOWED_LONG_VALUE_FLAGS = frozenset(
+    {
+        "--include",
+        "--exclude",
+        "--min-size",
+        "--max-size",
+        "--bwlimit",
+        "--timeout",
+        "--contimeout",
+        "--max-age",
+        "--chmod",
+        "--compress-level",
+    }
+)
+
+
+def _check_option(option: str) -> None:
+    """Raise ValueError unless an rsync option is on the allowlist."""
+    if option.startswith("--"):
+        name = option.split("=", 1)[0]
+        if option in ALLOWED_LONG_FLAGS or ("=" in option and name in ALLOWED_LONG_VALUE_FLAGS):
+            return
+    elif option.startswith("-") and len(option) > 1 and set(option[1:]) <= ALLOWED_SHORT_FLAGS:
+        return
+    raise ValueError(
+        f"rsync option {option!r} is not allowed. "
+        f"Allowed: -{''.join(sorted(ALLOWED_SHORT_FLAGS))}, "
+        f"{', '.join(sorted(ALLOWED_LONG_FLAGS))}, and "
+        f"{', '.join(f'{flag}=VALUE' for flag in sorted(ALLOWED_LONG_VALUE_FLAGS))}"
+    )
+
 
 class Operation(BaseModel):
     """Represent a single rsync operation."""
@@ -65,8 +125,8 @@ class RsyncFilesToLocalDirectory(base.Task):
                 modified time when executing the task. Defaults to False.
 
         Raises:
-            ValueError: If '--quiet' is provided in options.
-            ValueError: If '--log-format' is provided in options.
+            ValueError: If an option is not on the allowlist, or the source looks like
+                an option.
 
         """
         self._source = source
@@ -74,11 +134,11 @@ class RsyncFilesToLocalDirectory(base.Task):
 
         options = options or []
 
-        if any("--quiet" in option for option in options):
-            raise ValueError("'--quiet' option is not allowed since output parsing is needed")
+        for option in options:
+            _check_option(option)
 
-        if any("--log-format" in option for option in options):
-            raise ValueError("'--log-format' is a reserved option that cannot be set")
+        if source.startswith("-"):
+            raise ValueError(f"rsync source must not start with '-': {source!r}")
 
         log_format = f"--log-format={JSON_LINE_PREFIX}{JSON_LINE_FORMAT}"
         self._options = [*options, log_format]
