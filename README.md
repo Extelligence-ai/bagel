@@ -90,6 +90,10 @@ robots (rosbridge) and fleet/edge pipelines run in [Docker](#-run-with-docker-li
 - **Broad LLM support**: Claude Code, Gemini, Cursor, Codex, Grok Build, Grok Bot, and more.
 - **Installs your way**: `pip` / `uvx` for recorded data, Docker images for live robots and the edge.
 - **Extensible capabilities**: Bagel can learn [new tricks](#-teach-bagel-a-new-trick).
+- **Fleet streaming (beta)**: publish live channels, events, and heartbeats from the
+  edge to your own fleet broker ([runbook](./doc/runbooks/fleet_streaming.md)). On in
+  the `iot` and ROS 2 images; opt out at build time with `BAGEL_FLEET=false`, or at
+  runtime with `FLEET_ENABLED=0`.
 - **Wide format coverage**: Missing your data format? [Open a ticket](https://github.com/Extelligence-ai/bagel/issues).
 
 ## 🥯 Try it in 60 seconds

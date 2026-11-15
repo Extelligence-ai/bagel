@@ -10,7 +10,7 @@ class Baseline(Protocol):
     """A source of normal per-signal statistics.
 
     `RollingBaseline` learns on the robot. Reference-log and fleet-pushed baselines
-    (Matcha roadmap) implement the same three methods.
+    (planned) implement the same three methods.
     """
 
     def add(self, window: dict, present_topics: set[str] | None = None) -> None:

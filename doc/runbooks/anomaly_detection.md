@@ -270,7 +270,7 @@ also hands its decision to `write_annotations`.
 - **The baseline is per run.** It is learned from the data the pipeline sees and
   resets when the pipeline restarts, including a live pipeline when the container
   restarts; in screen mode the first `warmup_minutes` are never flagged.
-  Known-good reference logs and fleet baselines pushed from Matcha are planned.
+  Known-good reference logs and fleet baselines pushed from a fleet service are planned.
 - **Slow drift can hide.** A signal that creeps up over longer than
   `baseline_window_minutes` moves the baseline with it.
 - **Uploads are per artifact directory.** Each passing window runs the upload task over

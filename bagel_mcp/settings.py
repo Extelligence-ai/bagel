@@ -95,6 +95,77 @@ class Settings(BaseSettings):
     # Whether to use cloudini for pointcloud compression/decompression by default
     CLOUDINI_ENABLED: bool = True
 
+    # Fleet streaming (beta). False makes the whole publish subsystem inert
+    # regardless of configuration: nothing connects, nothing leaves the box.
+    FLEET_ENABLED: bool = True
+
+    # Disk budget for the fleet spool's channels lane (store-and-forward
+    # outbox under CACHE_DIRECTORY/publish/). Oldest segments are dropped
+    # first when over budget; events and heartbeats are never dropped and
+    # don't count against this cap. Transient overshoot of one segment
+    # (~4 MB) is possible while rotating.
+    FLEET_SPOOL_MAX_BYTES: int = 268_435_456
+
+    # Disk budget for the fleet event-artifact store (MCAP windows written on
+    # events, under CACHE_DIRECTORY/publish-artifacts/). Deliberately outside
+    # the spool root -- Spool.stats() lane-scans its root's subdirectories, and
+    # an artifact directory there would be misread as a lane. Oldest files are
+    # dropped first when over budget.
+    FLEET_ARTIFACTS_MAX_BYTES: int = 268_435_456
+
+    # Max samples held in the router's bounded queue between the buffer tap
+    # and the router thread. On overflow the oldest sample is dropped to make
+    # room for the newest; the queue never blocks the tap.
+    FLEET_QUEUE_MAX_SAMPLES: int = 10_000
+
+    # Suppression cap for the fleet event engine: at most this many firings
+    # per rule in any trailing 60s window; the rest are counted and reported
+    # as `suppressed` on the next firing that passes the gate. See
+    # bagel_mcp/sink/publish/events.py.
+    FLEET_EVENTS_MAX_PER_MINUTE: int = 6
+
+    # Per-topic ring buffer sample cap for the fleet event engine (rules
+    # sharing a topic share one ring). Oldest samples are dropped first when
+    # over budget. See bagel_mcp/sink/publish/events.py.
+    FLEET_EVENT_RING_MAX_SAMPLES: int = 10_000
+
+    # Per-topic ring buffer byte budget for the fleet event engine, using an
+    # approximate (json.dumps-based) per-sample size. Oldest samples are
+    # dropped first when over budget. See bagel_mcp/sink/publish/events.py.
+    FLEET_EVENT_RING_MAX_BYTES: int = 67_108_864
+
+    # Directory holding this robot's fleet enrollment identity: robot.key
+    # (mode 0600), robot.crt, ca.crt, identity.yaml (tenant, robot_id,
+    # broker_url, enroll_url, expires_at). See bagel_mcp/sink/publish/identity.py.
+    FLEET_IDENTITY_DIRECTORY: str = str(pathlib.Path.home() / ".bagel" / "identity")
+
+    # Dev-only escape hatch: allows an unencrypted mqtt:// fleet broker when
+    # the host resolves to loopback or a private (RFC1918/RFC4193) address.
+    # False in production -- mqtts:// with an enrolled identity is the only
+    # transport allowed. See bagel_mcp/sink/publish/connect.py.
+    FLEET_DEV_INSECURE: bool = False
+
+    # One-time enrollment token for first-boot fleet enrollment. Consumed at
+    # first boot (POSTed to FLEET_ENROLL_URL to obtain identity; once
+    # identity.yaml exists this and FLEET_ENROLL_URL are no longer needed)
+    # and never persisted -- it never reaches disk or a log line.
+    FLEET_ENROLL_TOKEN: str | None = None
+
+    # Enrollment server base URL used for first-boot enrollment (paired with
+    # FLEET_ENROLL_TOKEN) and identity renewal. See bagel_mcp/sink/publish/identity.py.
+    FLEET_ENROLL_URL: str | None = None
+
+    # How often the fleet health report (bagel_mcp/sink/publish/health.py) is built
+    # and published. 6 hours by default -- health is a slow-moving summary,
+    # not a liveness signal (that's the heartbeat's job).
+    FLEET_HEALTH_INTERVAL_S: float = 21_600.0
+
+    # Grace period after startup before the first health report is built, so
+    # transient boot-time conditions (still connecting, still enrolling)
+    # don't get reported as failures before the runtime has had a chance to
+    # settle.
+    FLEET_HEALTH_SETTLE_S: float = 60.0
+
     # Default quantization resolution in meters for cloudini lossy compression
     CLOUDINI_DEFAULT_RESOLUTION: float = 0.001
     ###############################################
@@ -137,6 +208,16 @@ class Settings(BaseSettings):
     # clients (Codex's native MCP client) connect without configuration (#168).
     # Set "sse" or "streamable-http" to pin a single transport.
     MCP_TRANSPORT: str = "both"
+
+    # Fleet build provenance: unique identifier for this build (image layer, CI run ID, etc.).
+    # When set, stamped into heartbeat and event payloads under a "build" key.
+    # Images may bake this in at build time; otherwise sourced from environment at runtime.
+    BAGEL_BUILD_ID: str | None = None
+
+    # Fleet build provenance: version control reference (tag, branch, commit hash, etc.).
+    # Optional; only included in provenance when BAGEL_BUILD_ID is also set.
+    # Images may bake this in at build time; otherwise sourced from environment at runtime.
+    BAGEL_VCS_REF: str | None = None
 
 
 settings = Settings()

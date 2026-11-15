@@ -72,6 +72,8 @@ Two paths. The data decides:
 - Every test file must be reachable by CI: `test/test_ci_reachability.py`
   fails the build otherwise (add new paths to `host-tests` or a Dockerfile).
 - Lint: `uv run ruff check` and `uv run ruff format` before committing.
+- Boundary rule: Bagel never names a specific fleet product; say "fleet
+  broker" / "fleet service". `scripts/check_boundary.sh` enforces it in CI.
 - Versioning: image tags and `server.json` follow `pyproject.toml`; published
   semver image tags are immutable (bump the version instead of retagging).
   This makes a bump MANDATORY whenever a change alters what an image *is* —

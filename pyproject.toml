@@ -75,6 +75,12 @@ iot = [
     "influxdb3-python>=0.10.0",
     "paho-mqtt>=2.1.0,<3.0.0",
 ]
+# Fleet streaming: publish a robot's buffers and events to a fleet broker over MQTT,
+# with signed device identity.
+fleet = [
+    "paho-mqtt>=2.1.0,<3.0.0",
+    "cryptography>=43.0.0,<47.0.0",
+]
 viz = [
     # The recording/readback API changes between pre-1.0 minor releases.
     "rerun-sdk>=0.23.1,<0.24",

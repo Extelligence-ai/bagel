@@ -1,0 +1,65 @@
+"""Fleet streaming: publish live channels, events and heartbeats to a fleet broker.
+
+This package is optional. ``require_fleet()`` is the single gate every fleet
+entry point calls first; it never imports the MQTT client at module import
+time so the rest of Bagel does not depend on it.
+"""
+
+from bagel_mcp.settings import settings
+
+INSTALL_HINT = (
+    "Fleet streaming is not installed: the `fleet` extra (paho-mqtt, cryptography) is "
+    "missing. Install it with: pip install 'bagel-mcp[fleet]' (uv sync --extra fleet in "
+    "a checkout), or use an image built with BAGEL_FLEET=true (the default)."
+)
+
+
+class FleetNotInstalledError(Exception):
+    """Raised when the optional `fleet` extra is not installed."""
+
+
+class FleetDisabledError(Exception):
+    """Raised when FLEET_ENABLED=0 has switched the publish subsystem off."""
+
+
+class FleetNotEnrolledError(Exception):
+    """Raised when fleet identity is required but the robot has not enrolled."""
+
+
+class EnrollmentError(Exception):
+    """Raised when the enrollment server rejects or fails an enroll/renew request."""
+
+    def __init__(self, status: int, reason: str) -> None:
+        """Initialize EnrollmentError with the HTTP status and a reason (never the token)."""
+        self.status = status
+        self.reason = reason
+        super().__init__(f"enrollment failed ({status}): {reason}")
+
+
+class StreamConfigError(Exception):
+    """Raised when the manifest's `streams:` section fails load-time validation."""
+
+    def __init__(self, field: str, reason: str) -> None:
+        """Initialize StreamConfigError with field and reason."""
+        self.field = field
+        self.reason = reason
+        super().__init__(f"streams config: {field}: {reason}")
+
+
+def require_fleet() -> None:
+    """Check the kill switch, then that the MQTT client is importable.
+
+    Raises:
+        FleetDisabledError: if ``settings.FLEET_ENABLED`` is false.
+        FleetNotInstalledError: if ``paho`` cannot be imported.
+
+    """
+    if not settings.FLEET_ENABLED:
+        raise FleetDisabledError(
+            "Fleet streaming is disabled on this server (FLEET_ENABLED=0). "
+            "Set FLEET_ENABLED=1 and restart to use fleet tools."
+        )
+    try:
+        import paho.mqtt.client  # noqa: F401  (deferred: optional dependency)
+    except ImportError as exc:
+        raise FleetNotInstalledError(INSTALL_HINT) from exc

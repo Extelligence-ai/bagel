@@ -73,6 +73,7 @@ def test_cursor_marketplace_resolves_shared_plugin_and_components() -> None:
     assert {p.parent.name for p in skills.glob("*/SKILL.md")} == {
         "authoring-pipelines",
         "exporting-visualizations",
+        "operating-fleet-streams",
         "operating-live-sinks",
         "triaging-robot-logs",
     }

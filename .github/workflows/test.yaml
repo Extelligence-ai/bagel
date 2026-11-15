@@ -121,7 +121,8 @@ jobs:
         # _default_sample()).
         # ros: the pure-Python bag backend, so the ROS 1/2 bag suites run here too
         # (the service images run them again on the native backend's parity tests).
-        run: uv sync --locked --extra iot --extra automotive --extra upload --extra viz --extra px4 --extra ros
+        # fleet: the fleet streaming publisher, spool and identity suites.
+        run: uv sync --locked --extra iot --extra automotive --extra upload --extra viz --extra px4 --extra ros --extra fleet
       - name: Run host-side tests
         env:
           COVERAGE_FILE: .coverage.host-${{ matrix.python }}
@@ -210,6 +211,40 @@ jobs:
           cd "${RUNNER_TEMP}"
           "${RUNNER_TEMP}/bagel-venv/bin/python" \
             "${GITHUB_WORKSPACE}/scripts/smoke_pip_install.py" --repo "${GITHUB_WORKSPACE}" --without-git
+
+  # MQTT round-trip integration tests against a real broker. The broker is
+  # started as a step, not a `services:` container: GitHub starts service
+  # containers before `actions/checkout`, so a workspace-path config volume mount
+  # would be empty at container start, and service containers don't support
+  # command overrides either. Running mosquitto via `docker run` with its
+  # built-in /mosquitto-no-auth.conf sidesteps both problems.
+  #
+  # test_stream_e2e.py's chaos test manages its OWN mosquitto container on
+  # MQTT_CHAOS_PORT (default 1884, set in that test file) -- never this job's
+  # `mosq` container on 1883 -- so MQTT_TEST_BROKER_MANAGED=1 is safe to set
+  # here: it only tells that one test its broker (a container IT starts) is
+  # safe to kill and restart.
+  fleet-broker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.8.0"
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --locked --extra fleet
+      - name: Start mosquitto
+        run: docker run -d --name mosq -p 1883:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf
+      - name: Broker round-trip tests
+        env:
+          MQTT_TEST_BROKER: mqtt://localhost:1883
+          MQTT_TEST_BROKER_MANAGED: "1"
+        run: |
+          uv run --no-sync pytest -q -p no:cacheprovider \
+            test/sink/publish/test_mqtt_integration.py \
+            test/sink/publish/test_stream_e2e.py
 
   coverage-gate:
     needs: [docker, host-tests]
