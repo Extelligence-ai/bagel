@@ -6,7 +6,7 @@ version = "2.5.5"
 description = "Plain-English analysis of robotics, drone, and IoT data over MCP, with edge data reduction"
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Extelligence" }]
 requires-python = ">=3.10,<3.13"
 keywords = ["robotics", "rosbag", "mcap", "drone", "iot", "mcp", "duckdb", "data-analysis"]
