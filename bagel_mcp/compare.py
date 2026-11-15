@@ -7,6 +7,7 @@ the two sources, and the result is ranked so the caller reports only what differ
 import math
 from typing import Any
 
+from bagel_mcp import health
 from bagel_mcp.di import module
 from bagel_mcp.di.types.base_module import BaseModule
 from bagel_mcp.di.types.data_source import resolve
@@ -88,11 +89,10 @@ def _log_levels(source: SourceContext, path: str) -> tuple[dict[str, int], set[s
     levels: dict[str, int] = {}
     problems: set[str] = set()
     for record in records:
-        message = record.get("message") or {}
-        level = str(message.get("log_level") or "UNKNOWN").upper()
+        level, text = health.log_record(record.get("message") or {})
         levels[level] = levels.get(level, 0) + 1
         if level in {"WARN", "WARNING", "ERROR", "FATAL", "CRITICAL", "EMERGENCY"}:
-            problems.add(f"{level}: {str(message.get('message', '')).strip()}")
+            problems.add(f"{level}: {text}")
     return levels, problems
 
 

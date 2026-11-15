@@ -13,6 +13,11 @@ standing pipelines run against them.
   (`JSONL_BUFFER_SIZE_PER_TOPIC_BYTES`, default 1 GB per topic).
 - The subscription's directory path is returned; pass it as the `path` for
   queries and pipelines over the live data.
+- "Is it OK to run?" is `check_robot_health` on the subscription path with
+  `last_seconds` (e.g. 30): power, IMU, GPS, gaps and errors over the buffer's
+  most recent window, counted back from now, so a robot that stopped
+  publishing fails. Report its verdict (go / investigate / no-go) and the
+  numbers behind any warn or fail; skipped checks are not failures.
 - Stop topics with `unsubscribe_live_topics` (omit `topics` to stop all). A
   standing pipeline finishes its queued runs and its end-of-stream run first;
   the recorded buffer stays on disk, and the connection closes once nothing is

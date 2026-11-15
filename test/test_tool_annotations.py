@@ -16,6 +16,7 @@ EXPECTED = {
     "query_messages": (True, True, False, False),
     "read_loggings": (True, True, False, False),
     "compare_logs": (True, True, False, False),
+    "check_robot_health": (True, True, False, False),
     "list_live_topics": (True, True, False, True),
     "subscribe_live_topics": (False, False, True, True),
     "unsubscribe_live_topics": (False, True, False, True),

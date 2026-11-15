@@ -37,12 +37,18 @@ Every number comes from a bagel query, never from your own estimate.
 4. **Query narrow windows.** Pass `start_seconds`/`end_seconds` to
    `query_messages`. Start with a coarse aggregate (COUNT, MIN/MAX, bucketed
    averages) to locate regions, then query inside them.
-5. **Two logs? Compare them in one call.** For "what changed between these
+5. **"Is this log healthy?" or "explain this event": one call.** Call
+   `check_robot_health` on the log (or with `start_seconds`/`end_seconds`
+   around the event, or on an event's captured artifact). It returns
+   ok/warn/fail for power, IMU, GPS, data gaps and errors with the numbers;
+   skipped checks name what the log lacks. Lead with the verdict, then
+   drill into any warn/fail with `query_messages`.
+6. **Two logs? Compare them in one call.** For "what changed between these
    runs" (before/after a fix, a good flight vs a bad one), call `compare_logs`
    with the reference as `baseline_path`. Report only what it lists as
    changed, with its numbers, then drill into those signals with
    `query_messages` on each log.
-6. **Evidence is a pipeline.** Snippets (one clip per event), GIFs for
+7. **Evidence is a pipeline.** Snippets (one clip per event), GIFs for
    camera topics, and "keep windows around every such event" are all
    pipeline tasks. Hand off to the `authoring-pipelines` skill with the
    times you found; it previews, gets the user's OK, then runs and reports
