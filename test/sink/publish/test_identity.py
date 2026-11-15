@@ -51,7 +51,7 @@ def _build_ca_and_robot_cert(common_name: str, robot_public_key: object) -> tupl
 
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test fleet CA")])
-    now = datetime.datetime.now(datetime.UTC)
+    now = datetime.datetime.now(datetime.timezone.utc)
     ca_cert = (
         x509.CertificateBuilder()
         .subject_name(ca_name)
@@ -1176,7 +1176,9 @@ def test_identity_module_does_not_import_paho_or_cryptography_eagerly(
 
 def _iso_in(now_epoch: float, days: float) -> str:
     """An ISO-8601 "Z" timestamp `days` (may be negative/fractional) from `now_epoch`."""
-    dt = datetime.datetime.fromtimestamp(now_epoch, tz=datetime.UTC) + datetime.timedelta(days=days)
+    dt = datetime.datetime.fromtimestamp(now_epoch, tz=datetime.timezone.utc) + datetime.timedelta(
+        days=days
+    )
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

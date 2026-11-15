@@ -217,7 +217,7 @@ def _build_ca_and_robot_cert(common_name: str, robot_public_key: object) -> tupl
 
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "e2e test fleet CA")])
-    now = datetime.datetime.now(datetime.UTC)
+    now = datetime.datetime.now(datetime.timezone.utc)
     ca_cert = (
         x509.CertificateBuilder()
         .subject_name(ca_name)

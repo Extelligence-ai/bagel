@@ -195,7 +195,15 @@ class _Subscriber:
         self._subscribed.set()
 
     def connect(self, timeout_s: float = 10.0) -> None:
-        self._client.connect(self._host, self._port, 30)
+        from paho.mqtt.packettypes import PacketTypes
+        from paho.mqtt.properties import Properties
+
+        # A persistent session: if this subscriber reconnects while the broker is
+        # up (paho's own retry, or a session takeover), the broker keeps queueing
+        # its QoS-1 messages instead of dropping them. `reconnect()` reuses these.
+        properties = Properties(PacketTypes.CONNECT)
+        properties.SessionExpiryInterval = 300
+        self._client.connect(self._host, self._port, 30, clean_start=False, properties=properties)
         self._client.loop_start()
         assert _wait_until(self._subscribed.is_set, timeout_s=timeout_s), (
             "subscriber never subscribed"
@@ -672,12 +680,70 @@ def _collect_seqs(sub: _Subscriber, topic: str, want_through: int, timeout_s: fl
     return seqs
 
 
+class _GatedProxy:
+    """TCP pass-through to the broker that refuses new connections while closed.
+
+    The chaos test points the fleet service at this proxy and the test subscriber
+    at the broker directly. Keeping the gate closed until the subscriber has
+    resubscribed after a restart means the service cannot drain its QoS-1 backlog
+    while nobody is listening (no session survives the container restart), which
+    used to make the test race its own subscriber.
+    """
+
+    def __init__(self, target_port: int) -> None:
+        self._target_port = target_port
+        self.gate = threading.Event()
+        self.gate.set()
+        self._listener = socket.create_server(("127.0.0.1", 0))
+        self.port = self._listener.getsockname()[1]
+        self._closed = False
+        threading.Thread(target=self._accept_loop, daemon=True).start()
+
+    def _accept_loop(self) -> None:
+        while not self._closed:
+            try:
+                client, _ = self._listener.accept()
+            except OSError:
+                return
+            if not self.gate.is_set():
+                client.close()
+                continue
+            try:
+                upstream = socket.create_connection(("localhost", self._target_port), timeout=2.0)
+            except OSError:
+                client.close()
+                continue
+            upstream.settimeout(None)
+            for source, sink in ((client, upstream), (upstream, client)):
+                threading.Thread(target=self._pump, args=(source, sink), daemon=True).start()
+
+    @staticmethod
+    def _pump(source: socket.socket, sink: socket.socket) -> None:
+        try:
+            while data := source.recv(65536):
+                sink.sendall(data)
+        except OSError:
+            pass
+        finally:
+            for sock in (source, sink):
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                sock.close()
+
+    def close(self) -> None:
+        self._closed = True
+        self._listener.close()
+
+
 @requires_managed_broker
 def test_chaos_kill_and_restart_broker_drains_spool_in_order(tmp_path: pathlib.Path) -> None:
     broker = _ChaosBroker(CHAOS_PORT)
     broker.start()
+    proxy = _GatedProxy(CHAOS_PORT)
     try:
-        broker_url = f"mqtt://localhost:{CHAOS_PORT}"
+        broker_url = f"mqtt://localhost:{proxy.port}"
         tenant, robot = "chaos", uuid.uuid4().hex[:8]
         channels_topic = wire_topic(tenant, robot, "channels")
 
@@ -696,6 +762,7 @@ def test_chaos_kill_and_restart_broker_drains_spool_in_order(tmp_path: pathlib.P
                 first_seq = json.loads(first[1])["seq"]
                 assert _wait_until(lambda: spool.stats()["channels"].pending == 0, timeout_s=15.0)
 
+                proxy.gate.clear()
                 broker.kill()
                 sub.prepare_for_outage()
 
@@ -714,6 +781,8 @@ def test_chaos_kill_and_restart_broker_drains_spool_in_order(tmp_path: pathlib.P
                 restart_thread.start()
                 sub.reconnect_now()
                 restart_thread.join()
+                # Only now may the service reach the broker again.
+                proxy.gate.set()
 
                 assert _wait_until(
                     lambda: spool.stats()["channels"].pending == 0, timeout_s=60.0
@@ -746,6 +815,7 @@ def test_chaos_kill_and_restart_broker_drains_spool_in_order(tmp_path: pathlib.P
         finally:
             sub.close()
     finally:
+        proxy.close()
         broker.cleanup()
 
 
