@@ -803,9 +803,7 @@ def preview_pipeline(  # noqa: PLR0913
     bounds = source.bounds()
     relation = source.dataset.to_duckdb(source.factory, source.registry, [event_topic])
     ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
-    rows = windows.relation_rows(
-        relation.project(f"{ts_column} AS ts, ({predicate}) AS hit").order("ts")
-    )
+    rows = windows.relation_rows(query.predicate_hits(relation, ts_column, predicate))
     span_seconds = bounds[1] - bounds[0]
 
     plan = windows.plan_reduction(

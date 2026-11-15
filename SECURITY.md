@@ -33,7 +33,10 @@ the product working as intended:
 
 **Out of scope — by design, not vulnerabilities:**
 - Executing operator-supplied SQL over operator-specified data — that is the
-  product (`query_messages` is an intentional SQL interface, as documented)
+  product (`query_messages` is an intentional SQL interface, as documented).
+  Since 2.5.5 that SQL, and every event predicate, runs in a DuckDB sandbox: one
+  SELECT over the loaded topic, with no file, network or extension access. SQL
+  that escapes the sandbox **is** in scope.
 - Reading files the operator's own prompts point Bagel at
 - Anything requiring the attacker to already control the MCP client or the
   operator's machine

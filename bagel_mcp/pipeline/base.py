@@ -14,7 +14,7 @@ import botocore
 import duckdb
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from bagel_mcp import artifacts
+from bagel_mcp import artifacts, query
 from bagel_mcp.di import module
 from bagel_mcp.pipeline import progress, windows
 from bagel_mcp.pipeline.results import RunSummary
@@ -560,9 +560,7 @@ class Pipeline:
         Consecutive events closer together than the debounce window are coalesced.
         """
         ts_column = settings.TIMESTAMP_SECONDS_COLUMN_NAME
-        rows = windows.relation_rows(
-            relation.project(f"{ts_column} AS ts, ({when.predicate}) AS hit").order("ts")
-        )
+        rows = windows.relation_rows(query.predicate_hits(relation, ts_column, when.predicate))
         yield from windows.iter_rising_edges(rows, when.min_gap_seconds())
 
     def run_at(self, asof_seconds: float) -> None:
