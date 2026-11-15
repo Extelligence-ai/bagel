@@ -10,10 +10,34 @@ import abc
 import glob
 import logging
 import pathlib
+import re
 
 from bagel_mcp.pipeline import base
 
 _GLOB_CHARS = "*?["
+
+# Object metadata travels as HTTP headers on every provider: keep keys to header-safe
+# names and values to printable ASCII, under S3's 2 KB budget for user metadata.
+_METADATA_KEY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_METADATA_VALUE = re.compile(r"^[\x20-\x7e]*$")
+_METADATA_MAX_BYTES = 2048
+
+
+def check_metadata(metadata: dict[str, str] | None) -> dict[str, str]:
+    """Return validated object metadata, or raise ValueError naming the bad entry."""
+    metadata = dict(metadata or {})
+    for key, value in metadata.items():
+        if not isinstance(key, str) or not _METADATA_KEY.match(key):
+            raise ValueError(
+                f"metadata key {key!r} must be lowercase letters, digits, '_' or '-' "
+                "(up to 64 characters)"
+            )
+        if not isinstance(value, str) or not _METADATA_VALUE.match(value):
+            raise ValueError(f"metadata value for {key!r} must be printable ASCII text")
+    size = sum(len(key) + len(value) for key, value in metadata.items())
+    if size > _METADATA_MAX_BYTES:
+        raise ValueError(f"metadata is {size} bytes; the limit is {_METADATA_MAX_BYTES}")
+    return metadata
 
 
 def glob_root(pattern: str) -> pathlib.Path:
@@ -45,6 +69,7 @@ class UploadFilesTask(base.Task):
         prefix: str = "",
         filter_modified_at: bool = False,
         skip_existing: bool = True,
+        metadata: dict[str, str] | None = None,
     ) -> None:
         """Initialize the shared upload options.
 
@@ -59,9 +84,13 @@ class UploadFilesTask(base.Task):
                 Defaults to False.
             skip_existing (bool, optional): If True, skip files whose checksum matches
                 the existing remote object. Defaults to True.
+            metadata (dict[str, str] | None, optional): Key/value metadata set on every
+                uploaded object, e.g. ``{"run_id": "2026-11-15-flight-3"}`` so a
+                downstream store can group the files of one run. Skipped (unchanged)
+                files keep their existing metadata. Defaults to None.
 
         Raises:
-            ValueError: If 'source' is empty.
+            ValueError: If 'source' is empty, or the metadata is not header-safe.
 
         """
         if not source:
@@ -70,6 +99,7 @@ class UploadFilesTask(base.Task):
         self._prefix = prefix.strip("/")
         self._filter_modified_at = filter_modified_at
         self._skip_existing = skip_existing
+        self._metadata = check_metadata(metadata)
 
     def setup(self, path: str, **kwargs) -> None:  # noqa: ANN003
         """Nothing to set up in this task."""

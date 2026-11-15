@@ -37,6 +37,7 @@ class UploadFilesToAzure(base.UploadFilesTask):
         connection_string: str | None = None,
         filter_modified_at: bool = False,
         skip_existing: bool = True,
+        metadata: dict[str, str] | None = None,
     ) -> None:
         """Initialize the task.
 
@@ -54,6 +55,8 @@ class UploadFilesToAzure(base.UploadFilesTask):
                 Defaults to False.
             skip_existing (bool, optional): If True, skip files whose MD5 matches the
                 existing remote blob's Content-MD5. Defaults to True.
+            metadata (dict[str, str] | None, optional): Object metadata set on every
+                upload (Azure blob metadata). Defaults to None.
 
         Raises:
             ValueError: If 'container' or 'source' is empty, or no connection string
@@ -67,6 +70,7 @@ class UploadFilesToAzure(base.UploadFilesTask):
             prefix=prefix,
             filter_modified_at=filter_modified_at,
             skip_existing=skip_existing,
+            metadata=metadata,
         )
         self._container = container
         self._connection_string = connection_string or os.environ.get(
@@ -98,6 +102,7 @@ class UploadFilesToAzure(base.UploadFilesTask):
                 stream,
                 overwrite=True,
                 content_settings=ContentSettings(content_md5=md5_digest(local_file)),
+                metadata=self._metadata or None,
             )
 
 

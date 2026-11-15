@@ -143,3 +143,34 @@ def test_registry_discovers_all_upload_tasks() -> None:
         "bagel_mcp.pipeline.tasks.upload.azure",
     }
     assert all(entry["kind"] == "task" for entry in modules.values())
+
+
+def test_gcs_sets_metadata(tmp_path: pathlib.Path) -> None:
+    (tmp_path / "run.mcap").write_text("bag")
+
+    client = _gcs_client()
+    task = UploadFilesToGcs(bucket="bkt", source=str(tmp_path), metadata={"run_id": "flight-3"})
+    with patch("bagel_mcp.pipeline.tasks.upload.gcs.storage.Client", return_value=client):
+        task.execute(asof_seconds=1e12, lookback=None)
+
+    blob = client.bucket.return_value.blob.return_value
+    assert blob.metadata == {"run_id": "flight-3"}
+    blob.upload_from_filename.assert_called_once()
+
+
+def test_azure_sets_metadata(tmp_path: pathlib.Path) -> None:
+    source = tmp_path / "run.mcap"
+    source.write_bytes(b"bag")
+
+    client = _azure_client()
+    task = UploadFilesToAzure(
+        container="ctr", source=str(source), connection_string="cs", metadata={"run_id": "f3"}
+    )
+    with patch(
+        "bagel_mcp.pipeline.tasks.upload.azure.ContainerClient.from_connection_string",
+        return_value=client,
+    ):
+        task.execute(asof_seconds=1e12, lookback=None)
+
+    upload = client.get_blob_client.return_value.upload_blob
+    assert upload.call_args.kwargs["metadata"] == {"run_id": "f3"}

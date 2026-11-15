@@ -151,3 +151,33 @@ def test_registry_discovers_upload_task() -> None:
     assert upload["kind"] == "task"
     param_names = {p["name"] for p in upload["parameters"]}
     assert {"bucket", "source", "prefix", "endpoint_url", "filter_modified_at"} <= param_names
+
+
+def test_metadata_is_set_on_every_object(tmp_path: pathlib.Path) -> None:
+    (tmp_path / "run.mcap").write_text("bag")
+    (tmp_path / "rosout.log").write_text("log")
+
+    client = _client()
+    task = UploadFilesToS3(bucket="bkt", source=str(tmp_path), metadata={"run_id": "flight-3"})
+    _run(task, client)
+
+    extra = [call.kwargs["ExtraArgs"] for call in client.upload_file.call_args_list]
+    assert extra == [{"ChecksumAlgorithm": "SHA256", "Metadata": {"run_id": "flight-3"}}] * 2
+
+
+def test_no_metadata_sends_no_metadata(tmp_path: pathlib.Path) -> None:
+    (tmp_path / "a.csv").write_text("a")
+
+    client = _client()
+    _run(UploadFilesToS3(bucket="bkt", source=str(tmp_path)), client)
+
+    assert client.upload_file.call_args.kwargs["ExtraArgs"] == {"ChecksumAlgorithm": "SHA256"}
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{"Run ID": "x"}, {"run_id": "line\nbreak"}, {"run_id": "café"}, {"k": "v" * 3000}],
+)
+def test_metadata_that_is_not_header_safe_is_rejected(metadata: dict[str, str]) -> None:
+    with pytest.raises(ValueError, match="metadata"):
+        UploadFilesToS3(bucket="bkt", source="x", metadata=metadata)
