@@ -55,4 +55,4 @@ data (bags with the `ros` extra, flight logs, MCAP, CAN/MDF, CSV), or starts the
 Docker container for their data format (live robots, fleet/edge) and, in Codex, connects it once
 with `codex mcp add bagel --url http://localhost:8000/mcp`. See
 references/formats.md for the format → extra / image → extra-args table.
-Claude Code plugin installs start the pip server automatically (needs `uv`).
+Codex and Cursor plugin installs start the pip server automatically (needs `uv`).

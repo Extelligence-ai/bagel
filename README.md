@@ -354,13 +354,24 @@ Can’t find your LLM? [Open a ticket](https://github.com/Extelligence-ai/bagel/
 
 Bagel ships an agent plugin: four skills that teach the agent when and how
 to drive the server (log triage, pipeline authoring, live sinks, visualization
-export) plus the MCP connection, wired automatically. The same `plugin/`
-directory serves Claude Code, OpenAI Codex and xAI Grok Build.
+export). The same `plugin/` directory serves Claude Code, OpenAI Codex, Cursor
+and xAI Grok Build.
+
+Claude Code: install the plugin, then connect the server once. The plugin
+carries the skills only (the Claude plugin directory accepts servers that run
+on your machine only from Verified organizations).
 
 ```
 /plugin marketplace add Extelligence-ai/bagel
 /plugin install bagel@bagel
+claude mcp add bagel -- uvx bagel-mcp --transport stdio
 ```
+
+`uvx` needs [uv](https://docs.astral.sh/uv/); the first start downloads Bagel
+(about 15 s). Add a format's extra with
+`uvx --from "bagel-mcp[ros,px4]" bagel-mcp --transport stdio`. For live robots,
+start the Docker container for your data format (see Quickstart) and connect it
+by URL instead: `claude mcp add --transport http bagel http://localhost:8000/mcp`.
 
 Codex and ChatGPT users: install bagel from the
 [OpenAI Plugins Directory](https://chatgpt.com/plugins/plugins_6a8623a0fe288191833ee0ca3fa883e7)
@@ -368,34 +379,21 @@ Codex and ChatGPT users: install bagel from the
 carries `.agents/plugins/marketplace.json`). Directory installs bundle the
 skills only (the directory accepts only public HTTPS MCP servers, and
 Bagel's runs on your machine), so also connect the server once with
-`codex mcp add bagel --url http://localhost:8000/mcp`, or in
-`~/.codex/config.toml`:
+`codex mcp add bagel -- uvx bagel-mcp --transport stdio`, or for Docker
+`codex mcp add bagel --url http://localhost:8000/mcp`. Repo-marketplace Codex
+and Cursor installs start the server with `uvx` automatically.
 
-```toml
-[mcp_servers.bagel]
-url = "http://localhost:8000/mcp"
-```
-
-Grok Build users install straight from this repo; the MCP connection is
-wired automatically:
+Grok Build users install straight from this repo and connect the server once:
 
 ```
 grok plugin install Extelligence-ai/bagel#plugin
 ```
 
-Repo-marketplace, Claude Code and Grok Build installs wire this connection
-automatically.
-Maintainers build the directory ZIP with
+Maintainers build the OpenAI directory ZIP with
 `uv run python scripts/package_codex_directory.py`.
 
-The Claude Code, Cursor and Grok Build plugin launches the server itself with
-`uvx` over stdio (install [uv](https://docs.astral.sh/uv/) first; the first
-start downloads Bagel, about 15 s). It covers every recorded format; for live
-robots, start the Docker container for your data format (see Quickstart) and
-add it by URL:
-`claude mcp add --transport http bagel-docker http://localhost:8000/mcp`.
-Any other MCP client can
-discover the same workflows server-side via the `list_agent_capabilities` tool.
+Any other MCP client can discover the same workflows server-side via the
+`list_agent_capabilities` tool.
 
 ## Keep what matters, drop the rest
 

@@ -12,9 +12,9 @@ Docker; the server names the image if asked for one.
 
 **Docker** for everything: start the container matching the data format, then
 connect (default `http://localhost:8000/mcp`). Codex: `codex mcp add bagel --url
-http://localhost:8000/mcp` once. Claude Code plugin installs launch the
-uvx server instead; for Docker, add it by URL
-(`claude mcp add --transport http bagel-docker http://localhost:8000/mcp`).
+http://localhost:8000/mcp` once. Claude Code: `claude mcp add --transport http bagel
+http://localhost:8000/mcp`. Codex and Cursor plugin installs launch the uvx
+server instead.
 
 | Data | Typical files | pip extra (`uvx`) | Compose service (Docker) | Extra args needed |
 |---|---|---|---|---|
