@@ -7,8 +7,8 @@ This runbook explains how to connect your Bagel MCP server to Cursor.
 The repository includes a Cursor marketplace manifest at
 `.cursor-plugin/marketplace.json`, pointing to the shared `plugin/` directory.
 Its Cursor manifest loads all four skills (log triage, pipeline authoring, live
-sinks, and visualization export) and the existing `.mcp.json` connection to
-`http://localhost:8000/mcp`.
+sinks, and visualization export) and the `mcp-servers.json` connection, which starts the server with
+`uvx bagel-mcp --transport stdio` (needs uv).
 
 The root `.cursor-plugin/plugin.json` exposes the same metadata and component
 paths for repository-level importers. This lets Cursor Directory import the

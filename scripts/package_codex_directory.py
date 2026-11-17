@@ -2,9 +2,9 @@
 
 The directory only accepts MCP servers on a public HTTPS origin, and Bagel's
 server runs on the user's machine (localhost). So the directory package ships
-the skills without the MCP connection: no `.mcp.json`, no `mcpServers` in the
-Codex manifest. Claude Code and repo-marketplace installs keep using `plugin/`
-as-is, connection included.
+the skills without the MCP connection: no `mcp-servers.json`, no `mcpServers` in
+the Codex manifest. Repo-marketplace Codex and Cursor installs keep using
+`plugin/` as-is, connection included.
 """
 
 import argparse
@@ -14,7 +14,7 @@ import zipfile
 from pathlib import Path
 
 PLUGIN = Path("plugin")
-EXCLUDED = {".mcp.json", ".claude-plugin", ".DS_Store"}
+EXCLUDED = {"mcp-servers.json", ".claude-plugin", ".DS_Store"}
 
 
 def directory_manifest() -> dict:

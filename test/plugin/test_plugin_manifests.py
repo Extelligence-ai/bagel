@@ -15,10 +15,10 @@ def test_plugin_manifest_is_valid_json_with_required_fields() -> None:
 
 
 def test_bundled_mcp_config_launches_the_pip_server_over_stdio() -> None:
-    config = json.loads(pathlib.Path("plugin/.mcp.json").read_text())
+    config = json.loads(pathlib.Path("plugin/mcp-servers.json").read_text())
     bagel = config["mcpServers"]["bagel"]
-    # The plugin directory refuses local URLs from unverified orgs, so the plugin
-    # spawns the server instead of connecting to http://localhost:8000/mcp.
+    # Codex and Cursor read this file through their manifests; it is not at
+    # Claude Code's default .mcp.json path (see the skills-only test below).
     assert bagel["type"] == "stdio"
     assert bagel["command"] == "uvx"
     assert bagel["args"][-3:] == ["bagel-mcp", "--transport", "stdio"]
@@ -44,7 +44,7 @@ def test_codex_manifest_mirrors_the_claude_plugin() -> None:
 
 def test_codex_manifest_reuses_the_shared_mcp_config() -> None:
     codex = json.loads(pathlib.Path("plugin/.codex-plugin/plugin.json").read_text())
-    assert codex["mcpServers"] == "./.mcp.json"
+    assert codex["mcpServers"] == "./mcp-servers.json"
     assert isinstance(codex["author"], dict) and codex["author"]["name"]
     assert isinstance(codex["interface"]["capabilities"], list)
     assert codex["interface"]["capabilities"]
@@ -68,7 +68,7 @@ def test_cursor_marketplace_resolves_shared_plugin_and_components() -> None:
     manifest = json.loads((plugin_root / ".cursor-plugin/plugin.json").read_text())
     assert entry["name"] == manifest["name"] == "bagel"
     assert (plugin_root / manifest["mcpServers"]).resolve() == pathlib.Path(
-        "plugin/.mcp.json"
+        "plugin/mcp-servers.json"
     ).resolve()
     skills = plugin_root / manifest["skills"]
     assert skills.resolve() == pathlib.Path("plugin/skills").resolve()
@@ -113,8 +113,16 @@ def test_directory_package_ships_skills_without_local_mcp(tmp_path: pathlib.Path
     with zipfile.ZipFile(out) as archive:
         names = set(archive.namelist())
         manifest = json.loads(archive.read(".codex-plugin/plugin.json"))
-    assert ".mcp.json" not in names
+    assert "mcp-servers.json" not in names
     assert not any(name.startswith(".claude-plugin/") for name in names)
     assert "mcpServers" not in manifest
     skills = {f"skills/{skill.name}/SKILL.md" for skill in pathlib.Path("plugin/skills").iterdir()}
     assert skills <= names
+
+
+def test_claude_plugin_ships_no_mcp_server() -> None:
+    # The Claude plugin directory refuses servers that run on the user's
+    # machine from unverified organizations, so Claude Code gets skills only.
+    claude = json.loads(pathlib.Path("plugin/.claude-plugin/plugin.json").read_text())
+    assert "mcpServers" not in claude
+    assert not pathlib.Path("plugin/.mcp.json").exists()

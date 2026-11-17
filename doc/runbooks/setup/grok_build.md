@@ -42,18 +42,14 @@ grok plugin install Extelligence-ai/bagel#plugin
 ```
 
 The plugin adds four skills (log triage, pipeline authoring, live sinks,
-visualization export) and connects Grok to `http://localhost:8000/mcp`
-automatically.
-
-To connect manually instead, without the skills:
+visualization export). It carries the skills only, so connect the server once:
 
 ```bash
 grok mcp add bagel http://localhost:8000/mcp -t http
 ```
 
 If you changed `MCP_SERVER_PORT` (for example because another service holds
-8000), use that port in the URL. The plugin always points at 8000, so use the
-manual command in that case.
+8000), use that port in the URL.
 
 Now confirm the connection:
 
