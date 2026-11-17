@@ -388,8 +388,13 @@ automatically.
 Maintainers build the directory ZIP with
 `uv run python scripts/package_codex_directory.py`.
 
-Then start the container for your data format (see Quickstart): the plugin
-connects to `http://localhost:8000/mcp` by default. Any other MCP client can
+The Claude Code, Cursor and Grok Build plugin launches the server itself with
+`uvx` over stdio (install [uv](https://docs.astral.sh/uv/) first; the first
+start downloads Bagel, about 15 s). It covers every recorded format; for live
+robots, start the Docker container for your data format (see Quickstart) and
+add it by URL:
+`claude mcp add --transport http bagel-docker http://localhost:8000/mcp`.
+Any other MCP client can
 discover the same workflows server-side via the `list_agent_capabilities` tool.
 
 ## Keep what matters, drop the rest
