@@ -1,7 +1,7 @@
 {
   "name": "bagel",
   "description": "Skills for Bagel: query rosbags, MCAP, CAN, MDF4, PX4/ArduPilot/Betaflight logs and live robot data in plain language; author event-windowed data-reduction pipelines; export to Rerun, Lichtblick, PlotJuggler, and LeRobot. The Bagel server runs on your machine (`uvx bagel-mcp`, or Docker for live robots); setup: https://github.com/Extelligence-ai/bagel",
-  "version": "0.2.9",
+  "version": "0.3.0",
   "author": {
     "name": "Extelligence"
   },
