@@ -51,4 +51,4 @@ bagel-mcp --transport stdio`; `codex mcp add bagel -- uvx --from
 for their data format (live ROS robots, fleet/edge) and, in Codex, connects it
 once with `codex mcp add bagel --url http://localhost:8000/mcp`. See
 references/formats.md for the format → extra / image → extra-args table.
-Claude Code plugin installs connect to the Docker server automatically.
+Claude Code plugin installs start the pip server automatically (needs `uv`).

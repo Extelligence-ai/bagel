@@ -14,13 +14,15 @@ def test_plugin_manifest_is_valid_json_with_required_fields() -> None:
     assert manifest["version"]
 
 
-def test_bundled_mcp_config_points_at_default_local_server() -> None:
+def test_bundled_mcp_config_launches_the_pip_server_over_stdio() -> None:
     config = json.loads(pathlib.Path("plugin/.mcp.json").read_text())
     bagel = config["mcpServers"]["bagel"]
-    # Streamable HTTP: natively supported by Claude Code AND Codex (#168);
-    # the default server serves it alongside legacy /sse.
-    assert bagel["url"] == "http://localhost:8000/mcp"
-    assert bagel["type"] == "http"
+    # The plugin directory refuses local URLs from unverified orgs, so the plugin
+    # spawns the server instead of connecting to http://localhost:8000/mcp.
+    assert bagel["type"] == "stdio"
+    assert bagel["command"] == "uvx"
+    assert bagel["args"][-3:] == ["bagel-mcp", "--transport", "stdio"]
+    assert "url" not in bagel
 
 
 def test_marketplace_lists_the_plugin() -> None:

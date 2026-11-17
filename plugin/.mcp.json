@@ -1,8 +1,15 @@
 {
   "mcpServers": {
     "bagel": {
-      "type": "http",
-      "url": "http://localhost:8000/mcp"
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "bagel-mcp[ros,px4,ardupilot,betaflight,automotive]",
+        "bagel-mcp",
+        "--transport",
+        "stdio"
+      ]
     }
   }
 }
